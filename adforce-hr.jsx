@@ -43,6 +43,17 @@ async function apiSave(collection, data) {
   }
 }
 
+async function apiSendCredentials({ to, name, email, password, role, isReset = false }) {
+  const res = await fetch(`${API_URL}/send-credentials`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, name, email, password, role, isReset }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to send email");
+  return data;
+}
+
 function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -1262,6 +1273,8 @@ function PeoplePage({
   const [resetResult, setResetResult] = useState("");
   const [newEmail,  setNewEmail]  = useState("");
   const [ferr,      setFerr]      = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [pageOk, setPageOk] = useState("");
 
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
@@ -1301,10 +1314,25 @@ function PeoplePage({
       shift: { shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes },
       id: genId(), password: tempPw, leaveBalance: 15, sickBalance: 8, skills: [], firstLogin: true, tempPassword: tempPw,
     };
-    setUsers(p => [...p, newUser]);
+    setEmailSending(true);
     setFerr("");
-    alert(`Employee added!\n\nEmail: ${email}\nTemporary Password: ${tempPw}\n\nShare these credentials with the employee. They must change their password on first login.`);
-    setAddOpen(false);
+    setUsers(p => [...p, newUser]);
+    apiSendCredentials({
+      to: email,
+      name: form.name.trim(),
+      email,
+      password: tempPw,
+      role: rest.role || "Employee",
+    })
+      .then(() => {
+        setAddOpen(false);
+        setPageOk(`Login credentials sent to ${email}. They must change their password on first login.`);
+        setTimeout(() => setPageOk(""), 6000);
+      })
+      .catch(e => {
+        setFerr(`Account was created, but the email could not be sent: ${e.message}`);
+      })
+      .finally(() => setEmailSending(false));
   }
 
   function saveEdit() {
@@ -1336,8 +1364,24 @@ function PeoplePage({
   function doPasswordReset() {
     if (!canResetPersonCredentials(currentUser, resetTgt, roles)) return;
     const tempPw = genTempPw();
+    setEmailSending(true);
+    setResetResult("");
     setUsers(p => p.map(u => u.id === resetTgt.id ? { ...u, password: tempPw, firstLogin: true, tempPassword: tempPw } : u));
-    setResetResult(`New temporary password: ${tempPw}\n\nShare this with the employee. They must change it on next login.`);
+    apiSendCredentials({
+      to: resetTgt.email,
+      name: resetTgt.name,
+      email: resetTgt.email,
+      password: tempPw,
+      role: resetTgt.role,
+      isReset: true,
+    })
+      .then(() => {
+        setResetResult(`A new temporary password was emailed to ${resetTgt.email}. They must change it on next login.`);
+      })
+      .catch(e => {
+        setResetResult(`Password was reset, but the email could not be sent: ${e.message}`);
+      })
+      .finally(() => setEmailSending(false));
   }
 
   function doEmailChange() {
@@ -1416,6 +1460,8 @@ function PeoplePage({
         {canManage && <Btn onClick={openAdd}><UserPlus size={14} />Add employee</Btn>}
       </div>
 
+      {pageOk && <div className="mb-4"><OkBox msg={pageOk} /></div>}
+
       {readOnly && (
         <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
           <Eye size={16} className="mt-0.5 shrink-0" />
@@ -1427,7 +1473,7 @@ function PeoplePage({
         <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
           <Users size={16} className="mt-0.5 shrink-0" />
           <div>
-            <b>No employees yet.</b> Click "Add employee" to get started. Each employee receives a unique email and temporary password — they must change it on first login.
+            <b>No employees yet.</b> Click "Add employee" to get started. Login credentials are emailed automatically — they must change their password on first login.
           </div>
         </div>
       )}
@@ -1499,11 +1545,11 @@ function PeoplePage({
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add new employee" wide>
         <EmployeeForm form={form} setForm={setForm} ferr={ferr} />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
-          A temporary password will be generated and shown after adding. Share it with the employee — they must change it on first login.
+          A temporary password will be generated and emailed to the work address above. They must change it on first login.
         </div>
         <div className="flex gap-2 mt-4">
-          <Btn onClick={saveAdd}><UserPlus size={14} />Add employee</Btn>
-          <Btn variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Btn>
+          <Btn onClick={saveAdd} disabled={emailSending}><UserPlus size={14} />{emailSending ? "Sending email…" : "Add employee"}</Btn>
+          <Btn variant="ghost" onClick={() => setAddOpen(false)} disabled={emailSending}>Cancel</Btn>
         </div>
       </Modal>
 
@@ -1540,8 +1586,8 @@ function PeoplePage({
 
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-1">Reset password</h4>
-            <p className="text-xs text-slate-500 mb-3">Generates a new temporary password. The employee must change it on next login.</p>
-            <Btn onClick={doPasswordReset}><RefreshCw size={14} />Generate new temporary password</Btn>
+            <p className="text-xs text-slate-500 mb-3">Generates a new temporary password and emails it to the employee. They must change it on next login.</p>
+            <Btn onClick={doPasswordReset} disabled={emailSending}><RefreshCw size={14} />{emailSending ? "Sending email…" : "Email new temporary password"}</Btn>
           </div>
 
           <div className="border-t border-slate-100 pt-4">
@@ -1555,7 +1601,7 @@ function PeoplePage({
           </div>
 
           {resetResult && (
-            <div className={`p-3 rounded-lg text-sm whitespace-pre-wrap font-mono ${resetResult.startsWith("Error") ? "bg-red-50 text-red-700 border border-red-200" : "bg-emerald-50 text-emerald-800 border border-emerald-200"}`}>
+            <div className={`p-3 rounded-lg text-sm ${resetResult.includes("could not be sent") || resetResult.startsWith("Error") ? "bg-red-50 text-red-700 border border-red-200" : "bg-emerald-50 text-emerald-800 border border-emerald-200"}`}>
               {resetResult}
             </div>
           )}
@@ -3040,6 +3086,8 @@ function ExecutivesPage({ users, setUsers }) {
   const [resetTgt, setResetTgt] = useState(null);
   const [resetResult, setResetResult] = useState("");
   const [ferr, setFerr] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [pageOk, setPageOk] = useState("");
   const blank = { name: "", email: "", phone: "", title: "CEO", password: "", status: "active" };
   const [form, setForm] = useState(blank);
 
@@ -3077,9 +3125,25 @@ function ExecutivesPage({ users, setUsers }) {
       skills: [],
       firstLogin: true,
     };
+    setEmailSending(true);
+    setFerr("");
     setUsers(p => [...p, newUser]);
-    setAddOpen(false);
-    alert(`Executive account created.\n\nEmail: ${email}\nPassword: ${form.password}\n\nShare these credentials securely.`);
+    apiSendCredentials({
+      to: email,
+      name: form.name.trim(),
+      email,
+      password: form.password,
+      role: "Executive",
+    })
+      .then(() => {
+        setAddOpen(false);
+        setPageOk(`Login credentials sent to ${email}.`);
+        setTimeout(() => setPageOk(""), 6000);
+      })
+      .catch(e => {
+        setFerr(`Account was created, but the email could not be sent: ${e.message}`);
+      })
+      .finally(() => setEmailSending(false));
   }
 
   function saveEdit() {
@@ -3108,8 +3172,24 @@ function ExecutivesPage({ users, setUsers }) {
 
   function doPasswordReset() {
     const tempPw = genTempPw();
+    setEmailSending(true);
+    setResetResult("");
     setUsers(p => p.map(u => u.id === resetTgt.id ? { ...u, password: tempPw, firstLogin: true, tempPassword: tempPw } : u));
-    setResetResult(`New temporary password: ${tempPw}`);
+    apiSendCredentials({
+      to: resetTgt.email,
+      name: resetTgt.name,
+      email: resetTgt.email,
+      password: tempPw,
+      role: "Executive",
+      isReset: true,
+    })
+      .then(() => {
+        setResetResult(`A new temporary password was emailed to ${resetTgt.email}.`);
+      })
+      .catch(e => {
+        setResetResult(`Password was reset, but the email could not be sent: ${e.message}`);
+      })
+      .finally(() => setEmailSending(false));
   }
 
   return (
@@ -3122,6 +3202,8 @@ function ExecutivesPage({ users, setUsers }) {
         </div>
         <Btn onClick={openAdd}><UserPlus size={14} />Add executive</Btn>
       </div>
+
+      {pageOk && <div className="mb-4"><OkBox msg={pageOk} /></div>}
 
       <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
         <Briefcase size={16} className="mt-0.5 shrink-0" />
@@ -3190,10 +3272,13 @@ function ExecutivesPage({ users, setUsers }) {
               <PwInput label="Login password" value={form.password} onChange={v => setForm({ ...form, password: v })} placeholder="Min. 8 characters" />
             </div>
           </div>
+          <div className="p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
+            Login credentials will be emailed to the address above after the account is created.
+          </div>
         </div>
         <div className="flex gap-2 mt-4">
-          <Btn onClick={saveAdd}><UserPlus size={14} />Create executive</Btn>
-          <Btn variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Btn>
+          <Btn onClick={saveAdd} disabled={emailSending}><UserPlus size={14} />{emailSending ? "Sending email…" : "Create executive"}</Btn>
+          <Btn variant="ghost" onClick={() => setAddOpen(false)} disabled={emailSending}>Cancel</Btn>
         </div>
       </Modal>
 
@@ -3228,9 +3313,13 @@ function ExecutivesPage({ users, setUsers }) {
       </Modal>
 
       <Modal open={resetOpen} onClose={() => setResetOpen(false)} title="Reset credentials">
-        <p className="text-sm text-slate-600 mb-4">Generate a new temporary password for <b>{resetTgt?.name}</b>.</p>
-        <Btn onClick={doPasswordReset}><RefreshCw size={14} />Generate new password</Btn>
-        {resetResult && <div className="mt-3 p-3 rounded-lg text-sm font-mono bg-emerald-50 border border-emerald-200 text-emerald-800">{resetResult}</div>}
+        <p className="text-sm text-slate-600 mb-4">Email a new temporary password to <b>{resetTgt?.name}</b> at <b>{resetTgt?.email}</b>.</p>
+        <Btn onClick={doPasswordReset} disabled={emailSending}><RefreshCw size={14} />{emailSending ? "Sending email…" : "Email new password"}</Btn>
+        {resetResult && (
+          <div className={`mt-3 p-3 rounded-lg text-sm ${resetResult.includes("could not be sent") ? "bg-red-50 text-red-700 border border-red-200" : "bg-emerald-50 text-emerald-800 border border-emerald-200"}`}>
+            {resetResult}
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
+import { sendCredentialsEmail } from "./mail.js";
 
 dotenv.config();
 
@@ -370,6 +371,29 @@ app.get("/api/health", async (_req, res) => {
     res.json({ ok: true, database: "connected" });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/send-credentials", async (req, res) => {
+  try {
+    const { to, name, email, password, role, isReset } = req.body || {};
+    if (!to || !email || !password) {
+      return res.status(400).json({ error: "to, email, and password are required" });
+    }
+
+    await sendCredentialsEmail({
+      to: String(to).trim(),
+      name: String(name || email).trim(),
+      email: String(email).trim(),
+      password: String(password),
+      role: role || "Employee",
+      isReset: !!isReset,
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("send-credentials error:", e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
