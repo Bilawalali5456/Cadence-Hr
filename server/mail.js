@@ -73,15 +73,24 @@ export async function sendCredentialsEmail({
   role = "Employee",
   isReset = false,
 }) {
+  const recipient = String(to || email || "").trim();
+  if (!recipient || !recipient.includes("@")) {
+    throw new Error(`Invalid recipient email: "${recipient || "(empty)"}"`);
+  }
+
   const loginUrl = process.env.APP_URL || "";
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!from || !String(from).includes("@")) {
+    throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
+  }
+
   const subject = isReset
     ? "Adforce HR — your password has been reset"
     : `Adforce HR — your ${roleLabel(role)} account is ready`;
 
   await getTransporter().sendMail({
     from,
-    to,
+    to: recipient,
     subject,
     text: [
       `Hi ${name},`,

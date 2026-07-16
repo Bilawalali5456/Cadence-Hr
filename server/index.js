@@ -165,8 +165,10 @@ app.get("/api/bootstrap", async (_req, res) => {
       roles: roles.rows.map(roleToJs),
     });
   } catch (e) {
-    console.error("bootstrap error:", e.message);
-    res.status(500).json({ error: e.message });
+    const msg = e?.message || e?.code || String(e);
+    console.error("bootstrap error:", msg);
+    if (e?.cause) console.error("bootstrap cause:", e.cause);
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -392,8 +394,9 @@ app.post("/api/send-credentials", async (req, res) => {
 
     res.json({ ok: true });
   } catch (e) {
-    console.error("send-credentials error:", e.message);
-    res.status(500).json({ error: e.message });
+    const msg = e?.message || e?.code || String(e);
+    console.error("send-credentials error:", msg);
+    res.status(500).json({ error: msg });
   }
 });
 
