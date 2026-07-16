@@ -956,6 +956,13 @@ const LOGIN_ROLES = [
   },
 ];
 
+function loginRoleMatchesSelection(selectedRole, actualRole) {
+  if (selectedRole === actualRole) return true;
+  // Managers use the employee portal; Employee card still accepts Manager accounts.
+  if (selectedRole === "Employee" && actualRole === "Manager") return true;
+  return false;
+}
+
 function LoginPage({ users, onLogin }) {
   const [selectedRole, setSelectedRole] = useState(null);
   const [email,   setEmail]   = useState("");
@@ -976,7 +983,7 @@ function LoginPage({ users, onLogin }) {
       if (u) {
         if (u.status === "inactive") {
           setErr("This account is inactive. Contact your administrator.");
-        } else if (u.role !== roleAtLogin) {
+        } else if (!loginRoleMatchesSelection(roleAtLogin, u.role)) {
           setErr(`This account is not registered as ${roleAtLogin}. Your role is ${u.role}.`);
         } else {
           onLogin(u);
