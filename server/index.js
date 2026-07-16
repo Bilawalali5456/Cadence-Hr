@@ -30,7 +30,6 @@ const userToJs = (r) => ({
   phone: r.phone,
   status: r.status,
   leaveBalance: r.leave_balance,
-  sickBalance: r.sick_balance,
   skills: r.skills || [],
   firstLogin: r.first_login,
   tempPassword: r.temp_password || undefined,
@@ -75,6 +74,9 @@ const leaveToJs = (r) => ({
   note: r.note,
   status: r.status,
   submitted: r.submitted,
+  paidDays: r.paid_days != null ? Number(r.paid_days) : undefined,
+  unpaidDays: r.unpaid_days != null ? Number(r.unpaid_days) : undefined,
+  payTag: r.pay_tag || undefined,
 });
 
 const shortLeaveToJs = (r) => ({
@@ -204,7 +206,7 @@ app.put("/api/users", async (req, res) => {
         [
           u.id, u.name, u.email, u.password, u.role, u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
-          u.leaveBalance ?? 15, u.sickBalance ?? 8, JSON.stringify(u.skills || []),
+          u.leaveBalance ?? 24, 0, JSON.stringify(u.skills || []),
           u.firstLogin || false, u.tempPassword || null, u.cnicEnc || null, u.maritalStatus || "",
           u.guardianName || "", u.emergencyContactName || "", u.emergencyContactPhone || "", u.emergencyContactRelation || "",
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
@@ -246,9 +248,12 @@ app.put("/api/leave", async (req, res) => {
   try {
     await replaceAll("leave_requests", req.body, (c, l) =>
       c.query(
-        `INSERT INTO leave_requests (id, user_id, emp_name, type, from_date, to_date, days, note, status, submitted)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [l.id, l.userId, l.empName, l.type, l.from, l.to, l.days, l.note || "", l.status, l.submitted || ""]
+        `INSERT INTO leave_requests (id, user_id, emp_name, type, from_date, to_date, days, note, status, submitted, paid_days, unpaid_days, pay_tag)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [
+          l.id, l.userId, l.empName, l.type, l.from, l.to, l.days, l.note || "", l.status, l.submitted || "",
+          l.paidDays ?? null, l.unpaidDays ?? null, l.payTag || null,
+        ]
       )
     );
     res.json({ ok: true });

@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   salary                      TEXT DEFAULT '',
   phone                       TEXT DEFAULT '',
   status                      TEXT DEFAULT 'active',
-  leave_balance               INTEGER DEFAULT 15,
-  sick_balance                INTEGER DEFAULT 8,
+  leave_balance               INTEGER DEFAULT 24,
+  sick_balance                INTEGER DEFAULT 0,
   skills                      JSONB DEFAULT '[]',
   first_login                 BOOLEAN DEFAULT false,
   temp_password               TEXT,
@@ -51,16 +51,19 @@ CREATE TABLE IF NOT EXISTS attendance (
 );
 
 CREATE TABLE IF NOT EXISTS leave_requests (
-  id        TEXT PRIMARY KEY,
-  user_id   TEXT NOT NULL,
-  emp_name  TEXT NOT NULL,
-  type      TEXT NOT NULL,
-  from_date TEXT NOT NULL,
-  to_date   TEXT NOT NULL,
-  days      INTEGER NOT NULL,
-  note      TEXT DEFAULT '',
-  status    TEXT DEFAULT 'pending',
-  submitted TEXT
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  emp_name    TEXT NOT NULL,
+  type        TEXT NOT NULL,
+  from_date   TEXT NOT NULL,
+  to_date     TEXT NOT NULL,
+  days        INTEGER NOT NULL,
+  note        TEXT DEFAULT '',
+  status      TEXT DEFAULT 'pending',
+  submitted   TEXT,
+  paid_days   INTEGER,
+  unpaid_days INTEGER,
+  pay_tag     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS short_leave_requests (
@@ -157,9 +160,16 @@ ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, permissions = EXCLUDED.perm
 
 -- Seed default admin (only if users table is empty)
 INSERT INTO users (id, name, email, password, role, title, dept, team, type, hired, status, leave_balance, sick_balance, first_login, shift)
-SELECT 'u-admin', 'Admin', 'admin@adforce.com', 'Admin@123', 'HR Admin', 'HR Administrator', 'Management', 'HQ', 'Full-time', '2024-01-01', 'active', 15, 8, false,
+SELECT 'u-admin', 'Admin', 'admin@adforce.com', 'Admin@123', 'HR Admin', 'HR Administrator', 'Management', 'HQ', 'Full-time', '2024-01-01', 'active', 24, 0, false,
   '{"shiftStart":"09:00","shiftEnd":"18:00","graceMinutes":15,"breakMinutes":60,"checkoutGraceMinutes":10}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM users);
+
+-- Migrate existing databases to new leave/weekend policy columns
+ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS paid_days INTEGER;
+ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS unpaid_days INTEGER;
+ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
+ALTER TABLE users ALTER COLUMN leave_balance SET DEFAULT 24;
+ALTER TABLE users ALTER COLUMN sick_balance SET DEFAULT 0;
 
 -- Seed company settings
 INSERT INTO company_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

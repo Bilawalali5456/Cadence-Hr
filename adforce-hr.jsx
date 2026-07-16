@@ -292,11 +292,14 @@ function calcNetWorkingMs(record) {
 
 function isLateCheckIn(checkInIso, user) {
   if (!checkInIso || !user) return false;
+  if (isWeekendDate(checkInIso)) return false; // late tracking Mon–Fri only
   const bounds = getShiftBounds(user, todayKey(new Date(checkInIso)));
   return new Date(checkInIso) > bounds.lateCutoff;
 }
 
 function computeDayStatus(user, record) {
+  const dateKey = record?.date || todayKey();
+  if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record?.checkIn) return "Absent";
   const bounds = getShiftBounds(user, record.date);
   const late = isLateCheckIn(record.checkIn, user);
@@ -308,12 +311,19 @@ function computeDayStatus(user, record) {
   return "On Time";
 }
 
+function resolveDayStatus(user, record, dateKey = record?.date || todayKey()) {
+  if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
+  if (!record) return isWeekendDate(dateKey) ? "Weekend Off" : "Absent";
+  return record.dayStatus || computeDayStatus(user, record);
+}
+
 function dayStatusPill(status) {
   const map = {
     "On Time": { tone: "green", label: "On Time" },
     Late: { tone: "amber", label: "Late" },
     "Half Day": { tone: "red", label: "Half Day" },
     Absent: { tone: "slate", label: "Absent" },
+    "Weekend Off": { tone: "blue", label: "Weekend Off" },
   };
   return map[status] || { tone: "slate", label: status || "—" };
 }
@@ -329,6 +339,7 @@ function finalizeRecord(record, user) {
 }
 
 function canCheckIn(now, user, record) {
+  if (isWeekendDate(now)) return { ok: false, msg: "Today is a weekend off" };
   if (record?.checkIn && !record?.checkOut) return { ok: false, msg: "You are already checked in." };
   if (record?.checkOut) return { ok: false, msg: "Today's attendance is already complete." };
   const bounds = getShiftBounds(user, todayKey(now));
@@ -521,6 +532,62 @@ function todayKey(d = new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+const DEFAULT_ANNUAL_LEAVE = 24;
+
+/** Saturday (6) and Sunday (0) are company weekend off. */
+function isWeekendDate(dateOrKey) {
+  const d = typeof dateOrKey === "string"
+    ? new Date(dateOrKey.includes("T") ? dateOrKey : dateOrKey + "T12:00:00")
+    : new Date(dateOrKey);
+  const dow = d.getDay();
+  return dow === 0 || dow === 6;
+}
+
+function enumerateWorkingDays(fromKey, toKey) {
+  const start = new Date(fromKey + "T12:00:00");
+  const end = new Date(toKey + "T12:00:00");
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const days = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    if (!isWeekendDate(cur)) days.push(todayKey(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+function countWorkingDaysInclusive(fromKey, toKey) {
+  return enumerateWorkingDays(fromKey, toKey).length;
+}
+
+function leavePaidDays(req) {
+  if (req == null) return 0;
+  if (req.paidDays != null) return Number(req.paidDays) || 0;
+  if (req.type === "Unpaid" || req.payTag === "Unpaid") return 0;
+  return Number(req.days) || 0;
+}
+
+function leaveUnpaidDays(req) {
+  if (req == null) return 0;
+  if (req.unpaidDays != null) return Number(req.unpaidDays) || 0;
+  if (req.type === "Unpaid") return Number(req.days) || 0;
+  if (req.payTag === "Unpaid") return Number(req.days) || 0;
+  return 0;
+}
+
+function computeLeavePaySplit(type, days, availableBalance) {
+  if (type === "Unpaid") {
+    return { paidDays: 0, unpaidDays: days, payTag: "Unpaid" };
+  }
+  const paidDays = Math.min(Math.max(0, availableBalance), days);
+  const unpaidDays = Math.max(0, days - paidDays);
+  return {
+    paidDays,
+    unpaidDays,
+    payTag: unpaidDays > 0 ? "Unpaid" : "Paid",
+  };
 }
 
 function formatTime(iso) {
@@ -1251,7 +1318,10 @@ function SettingsPage({ currentUser, users, setUsers, onLogout, company, setComp
               <TextInput label="Late grace period (minutes)" type="number" value={String(company.graceMinutes)} onChange={v => setCompany(c => ({ ...c, graceMinutes: parseInt(v) || 0 }))} />
             </div>
             <div className="mt-3 p-3 rounded-lg text-xs bg-amber-50 border border-amber-200 text-amber-800">
-              Check-ins after {company.officeStart} + {company.graceMinutes} min grace are marked <b>Late</b> in attendance and payroll.
+              Check-ins after {company.officeStart} + {company.graceMinutes} min grace are marked <b>Late</b> in attendance and payroll (Monday–Friday only).
+            </div>
+            <div className="mt-3 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
+              Working days: Monday to Friday · Weekend off: Saturday & Sunday · Annual leave: {DEFAULT_ANNUAL_LEAVE} days/year (2/month)
             </div>
             <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
               Plan: <b>Business</b> · {users.length} employee{users.length !== 1 ? "s" : ""} · Next billing Jul 1
@@ -1424,7 +1494,7 @@ function PeoplePage({
     const newUser = {
       ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
       shift: { shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes },
-      id: genId(), password: tempPw, leaveBalance: 15, sickBalance: 8, skills: [], firstLogin: true, tempPassword: tempPw,
+      id: genId(), password: tempPw, leaveBalance: DEFAULT_ANNUAL_LEAVE, skills: [], firstLogin: true, tempPassword: tempPw,
     };
     setEmailSending(true);
     setFerr("");
@@ -1511,10 +1581,10 @@ function PeoplePage({
     return sel && canManageHrAdmin(currentUser, sel, roles);
   }
 
-  function updateSelBalances(leaveBalance, sickBalance) {
+  function updateSelBalances(leaveBalance) {
     if (!managingSel()) return;
-    setUsers(us => us.map(u => u.id === sel.id ? { ...u, leaveBalance, sickBalance } : u));
-    setSel(s => ({ ...s, leaveBalance, sickBalance }));
+    setUsers(us => us.map(u => u.id === sel.id ? { ...u, leaveBalance } : u));
+    setSel(s => ({ ...s, leaveBalance }));
   }
 
   function deleteAttendanceRecord(recordId) {
@@ -1529,16 +1599,14 @@ function PeoplePage({
     if (!req) return;
     if (!window.confirm(`Delete this leave request?`)) return;
     if (req.status === "approved") {
-      const type = req.type;
+      const paid = leavePaidDays(req);
       setUsers(us => us.map(u => {
         if (u.id !== sel.id) return u;
-        if (type === "Sick") return { ...u, sickBalance: (u.sickBalance ?? 8) + req.days };
-        return { ...u, leaveBalance: (u.leaveBalance ?? 15) + req.days };
+        return { ...u, leaveBalance: (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + paid };
       }));
       setSel(s => ({
         ...s,
-        sickBalance: type === "Sick" ? (s.sickBalance ?? 8) + req.days : s.sickBalance,
-        leaveBalance: type !== "Sick" ? (s.leaveBalance ?? 15) + req.days : s.leaveBalance,
+        leaveBalance: (s.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + paid,
       }));
     }
     setLeaveRequests(p => p.filter(r => r.id !== id));
@@ -1620,7 +1688,7 @@ function PeoplePage({
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
                     const r = getUserTodayRecord(attendance, u.id);
-                    const ds = dayStatusPill(r ? (r.dayStatus || computeDayStatus(u, r)) : "Absent");
+                    const ds = dayStatusPill(resolveDayStatus(u, r));
                     return <Pill tone={ds.tone}>{ds.label}</Pill>;
                   })()}
                 </td>
@@ -1832,16 +1900,13 @@ function PeoplePage({
                 <div className="space-y-4">
                   <div className="space-y-2">
                     {managingSel() ? (
-                      <div className="grid grid-cols-2 gap-3">
-                        <TextInput label="Annual balance (days)" type="number" value={String(sel.leaveBalance ?? 15)}
-                          onChange={v => updateSelBalances(Math.max(0, parseInt(v) || 0), sel.sickBalance ?? 8)} />
-                        <TextInput label="Sick balance (days)" type="number" value={String(sel.sickBalance ?? 8)}
-                          onChange={v => updateSelBalances(sel.leaveBalance ?? 15, Math.max(0, parseInt(v) || 0))} />
+                      <div className="grid grid-cols-1 gap-3">
+                        <TextInput label="Annual balance (days)" type="number" value={String(sel.leaveBalance ?? DEFAULT_ANNUAL_LEAVE)}
+                          onChange={v => updateSelBalances(Math.max(0, parseInt(v) || 0))} />
                       </div>
                     ) : (
                       <>
-                        <div className="flex justify-between border-b border-slate-50 pb-2"><span className="text-slate-400">Annual balance</span><span className="font-medium">{sel.leaveBalance ?? 15} days</span></div>
-                        <div className="flex justify-between border-b border-slate-50 pb-2"><span className="text-slate-400">Sick days</span><span className="font-medium">{sel.sickBalance ?? 8} days</span></div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2"><span className="text-slate-400">Annual balance</span><span className="font-medium">{sel.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} days</span></div>
                       </>
                     )}
                   </div>
@@ -1858,7 +1923,10 @@ function PeoplePage({
                                 <div className="flex-1">
                                   <div className="font-medium text-slate-800">{r.type} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
                                   {r.note && <div className="text-slate-400 italic mt-0.5">"{r.note}"</div>}
-                                  <div className="mt-1">
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                                      ? <Pill tone="red">Unpaid</Pill>
+                                      : <Pill tone="green">Paid</Pill>}
                                     {r.status === "pending" && <Pill tone="amber">Pending</Pill>}
                                     {r.status === "approved" && <Pill tone="green">Approved</Pill>}
                                     {r.status === "rejected" && <Pill tone="slate">Rejected</Pill>}
@@ -1938,7 +2006,7 @@ function PeoplePage({
                     <div className="font-medium text-slate-700 mb-1">Today's shift · {formatShiftRange(sel)}</div>
                     {(() => {
                       const r = getUserTodayRecord(attendance, sel.id);
-                      const ds = dayStatusPill(r ? (r.dayStatus || computeDayStatus(sel, r)) : "Absent");
+                      const ds = dayStatusPill(resolveDayStatus(sel, r));
                       return (
                         <div className="flex flex-wrap gap-2 items-center text-slate-600">
                           <span>In {formatTime(r?.checkIn)}</span>
@@ -1963,7 +2031,7 @@ function PeoplePage({
                         {attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).length === 0 ? (
                           <tr><td colSpan={managingSel() ? 7 : 6} className="px-3 py-6 text-center text-slate-400">No attendance records yet.</td></tr>
                         ) : attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).map(r => {
-                          const ds = dayStatusPill(r.dayStatus || computeDayStatus(sel, r));
+                          const ds = dayStatusPill(resolveDayStatus(sel, r));
                           return (
                             <tr key={r.id} className="border-b border-slate-50 last:border-0">
                               <td className="px-3 py-2">{formatDate(r.date)}</td>
@@ -2059,7 +2127,7 @@ function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
           <Card className="p-5">
             <STitle>Leave balances</STitle>
             <div className="space-y-3">
-              {[["Annual leave balance", `${me.leaveBalance ?? 15} days`], ["Sick leave balance", `${me.sickBalance ?? 8} days`]].map(([k, v]) => (
+              {[["Annual leave balance", `${me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} days`]].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-slate-50 pb-2">
                   <span className="text-slate-400 text-sm">{k}</span>
                   <span className="font-medium text-sm text-slate-800">{v}</span>
@@ -2101,10 +2169,10 @@ function HrAdminOversightPanel({
   if (pendingShort.length === 0 && pendingLeave.length === 0) return null;
 
   function adjustBalance(userId, type, delta) {
+    if (type === "Unpaid") return;
     setUsers(us => us.map(u => {
       if (u.id !== userId) return u;
-      if (type === "Sick") return { ...u, sickBalance: Math.max(0, (u.sickBalance ?? 8) + delta) };
-      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? 15) + delta) };
+      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
     }));
   }
 
@@ -2129,8 +2197,9 @@ function HrAdminOversightPanel({
     if (!req || !canApproveLeaveRequest(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
-    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -req.days);
-    if (prev === "approved" && newStatus !== "approved") adjustBalance(req.userId, req.type, +req.days);
+    const paid = leavePaidDays(req);
+    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
+    if (prev === "approved" && newStatus !== "approved") adjustBalance(req.userId, req.type, +paid);
     setLeaveRequests(p => p.map(r => r.id === id ? {
       ...r, status: newStatus, reviewedBy: currentUser.name, reviewedOn: new Date().toLocaleString(),
     } : r));
@@ -2195,10 +2264,13 @@ function HrAdminOversightPanel({
                     <div className="flex-1 min-w-44">
                       <div className="text-sm font-medium text-slate-800">{r.empName}</div>
                       <div className="text-xs text-slate-500">
-                        {r.type} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}
+                        {r.type === "Unpaid" ? "Unpaid Leave" : "Annual Leave"} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}
                       </div>
                       {r.note && <div className="text-xs text-slate-400 italic">"{r.note}"</div>}
                     </div>
+                    {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                      ? <Pill tone="red">Unpaid</Pill>
+                      : <Pill tone="green">Paid</Pill>}
                     <div className="flex gap-2">
                       <button onClick={() => changeLeaveStatus(r.id, "approved")}
                         className="px-3 py-1.5 text-xs font-medium text-white rounded-lg" style={{ background: "#16a34a" }}>
@@ -2234,16 +2306,11 @@ function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, sh
           <div className="text-sm opacity-70 mt-0.5">{me.title || me.role} · Shift {formatShiftRange(me)}</div>
         </div>
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} compact />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 max-w-xs">
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
-            <div className="text-3xl font-bold mt-1" style={{ color: B.dark }}>{me.leaveBalance ?? 15}</div>
-            <div className="text-xs text-slate-500">days remaining</div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xs text-slate-400">Sick days</div>
-            <div className="text-3xl font-bold mt-1" style={{ color: B.dark }}>{me.sickBalance ?? 8}</div>
-            <div className="text-xs text-slate-500">available this year</div>
+            <div className="text-3xl font-bold mt-1" style={{ color: B.dark }}>{me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE}</div>
+            <div className="text-xs text-slate-500">of {DEFAULT_ANNUAL_LEAVE} days remaining</div>
           </Card>
         </div>
         <Card className="p-4">
@@ -2385,7 +2452,7 @@ function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, sh
           <div className="divide-y divide-slate-100">
             {todayRoster.map(u => {
               const r = getUserTodayRecord(attendance, u.id);
-              const ds = dayStatusPill(r ? (r.dayStatus || computeDayStatus(u, r)) : "Absent");
+              const ds = dayStatusPill(resolveDayStatus(u, r));
               return (
                 <div key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar name={u.name} />
@@ -2465,9 +2532,10 @@ function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }
   const today = getUserTodayRecord(attendance, user.id);
   const shift = getUserShift(user);
   const bounds = getShiftBounds(user, todayKey());
+  const weekendOff = isWeekendDate(todayKey());
   const checkedIn = today?.checkIn && !today?.checkOut;
   const onBreak = today?.breakStart && !today?.breakEnd;
-  const daySt = dayStatusPill(today ? (today.dayStatus || computeDayStatus(user, today)) : "Absent");
+  const daySt = dayStatusPill(resolveDayStatus(user, today));
   const breakMs = calcTotalBreakMs(today);
   const allowedBreakMs = shift.breakMinutes * 60000;
 
@@ -2484,10 +2552,17 @@ function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }
         <STitle right={<Pill tone={daySt.tone}>{daySt.label}</Pill>}>
           {compact ? "Today's attendance" : "Shift attendance"}
         </STitle>
-        <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-          <b>Your shift:</b> {formatShiftRange(user)} · Grace {shift.graceMinutes}m · Break {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
-        </div>
+        {weekendOff ? (
+          <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
+            Today is a weekend off. Saturday and Sunday are company holidays — check-in is not available.
+          </div>
+        ) : (
+          <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+            <b>Your shift:</b> {formatShiftRange(user)} · Grace {shift.graceMinutes}m · Break {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
+          </div>
+        )}
         <ErrBox msg={err} />
+        {!weekendOff && (
         <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"} gap-3 mb-4 text-sm`}>
           <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-center">
             <div className="text-xs text-emerald-600">Check in</div>
@@ -2510,8 +2585,9 @@ function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }
             <div className="font-semibold tabular-nums mt-1" style={{ color: B.dark }}>{displayWorkingHours(today, user)}</div>
           </div>
         </div>
+        )}
 
-        {!today?.checkOut && (
+        {!weekendOff && !today?.checkOut && (
           <div className="flex flex-wrap gap-2 justify-center mb-4">
             {!checkedIn && (
               <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user))}>
@@ -2537,7 +2613,7 @@ function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }
           </div>
         )}
 
-        {today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
+        {!weekendOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
           <div className="text-xs text-slate-500 space-y-1 mb-2">
             <b>Approved short leave today:</b>
             {today.shortLeaves.filter(sl => sl.status === "approved").map(sl => (
@@ -2549,7 +2625,7 @@ function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }
           </div>
         )}
 
-        {today?.checkOut && (
+        {!weekendOff && today?.checkOut && (
           <div className="text-sm text-center text-slate-500 mt-2">
             Shift complete · <b>{displayWorkingHours(today, user)}</b> net working time
             {today.autoCheckout && <span className="text-amber-600"> · Auto checkout applied</span>}
@@ -2628,7 +2704,7 @@ function EmployeeAttendanceFull({ user, attendance, setAttendance }) {
               {history.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
-                const ds = dayStatusPill(r.dayStatus || computeDayStatus(user, r));
+                const ds = dayStatusPill(resolveDayStatus(user, r));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -2762,7 +2838,7 @@ function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveReque
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
           { label: "Auto checkouts", value: autoToday.length, icon: Clock },
-          { label: "Absent today", value: liveRoster.filter(u => !getUserTodayRecord(attendance, u.id)?.checkIn).length, icon: Users },
+          { label: "Absent today", value: isWeekendDate(todayKey()) ? 0 : liveRoster.filter(u => !getUserTodayRecord(attendance, u.id)?.checkIn).length, icon: Users },
           { label: `${period} hours`, value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
@@ -2794,7 +2870,7 @@ function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveReque
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
-                const ds = dayStatusPill(r ? (r.dayStatus || computeDayStatus(u, r)) : "Absent");
+                const ds = dayStatusPill(resolveDayStatus(u, r));
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
@@ -2858,7 +2934,7 @@ function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveReque
               {reportRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
-                const ds = dayStatusPill(r.dayStatus || computeDayStatus(r.user, r));
+                const ds = dayStatusPill(resolveDayStatus(r.user, r));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -3034,48 +3110,65 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
   const [msg,  setMsg]  = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);
   const me      = users.find(u => u.id === currentUser.id) || currentUser;
+  const available = me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE;
+  const previewDays = (form.from && form.to)
+    ? countWorkingDaysInclusive(form.from, form.to)
+    : 0;
+  const previewSplit = previewDays > 0
+    ? computeLeavePaySplit(form.type, previewDays, available)
+    : null;
   const visibleReqs = visibleLeaveRequests(requests, currentUser, users, roles);
   const listHasApprovals = visibleReqs.some(r => canApproveLeaveRequest(currentUser, r, users, roles));
 
-  function balanceFor(user, type) {
-    return type === "Sick" ? (user.sickBalance ?? 8) : (user.leaveBalance ?? 15);
-  }
-
   function adjustBalance(userId, type, delta) {
+    if (type === "Unpaid" || delta === 0) return;
     setUsers(us => us.map(u => {
       if (u.id !== userId) return u;
-      if (type === "Sick") return { ...u, sickBalance: Math.max(0, (u.sickBalance ?? 8) + delta) };
-      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? 15) + delta) };
+      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
     }));
   }
 
   function submitLeave() {
     if (!form.from || !form.to) { setMsg("error:Please select both From and To dates."); return; }
-    const days = Math.max(1, Math.ceil((new Date(form.to) - new Date(form.from)) / 86400000) + 1);
-    const available = balanceFor(me, form.type);
-    if (days > available) {
-      setMsg(`error:Insufficient balance. You have ${available} ${form.type === "Sick" ? "sick" : "annual"} day${available !== 1 ? "s" : ""} remaining, but requested ${days}.`);
+    const days = countWorkingDaysInclusive(form.from, form.to);
+    if (days <= 0) {
+      setMsg("error:Selected dates fall on weekend only. Choose at least one working day (Mon–Fri).");
       return;
     }
-    setRequests(p => [...p, { id: "l" + Date.now(), userId: currentUser.id, empName: currentUser.name, ...form, days, status: "pending", submitted: new Date().toLocaleDateString() }]);
+    const split = computeLeavePaySplit(form.type, days, available);
+    const warn = split.unpaidDays > 0
+      ? `warn:You have insufficient leave balance. ${split.unpaidDays} day${split.unpaidDays !== 1 ? "s" : ""} will be deducted from your salary as unpaid leave.`
+      : "";
+    setRequests(p => [...p, {
+      id: "l" + Date.now(),
+      userId: currentUser.id,
+      empName: currentUser.name,
+      type: form.type,
+      from: form.from,
+      to: form.to,
+      note: form.note,
+      days,
+      paidDays: split.paidDays,
+      unpaidDays: split.unpaidDays,
+      payTag: split.payTag,
+      status: "pending",
+      submitted: new Date().toLocaleDateString(),
+    }]);
     setForm({ type: "Annual", from: "", to: "", note: "" });
-    setMsg(isHrAdminRole(currentUser.role)
+    setMsg(warn || (isHrAdminRole(currentUser.role)
       ? "ok:Leave request submitted for executive approval."
-      : "ok:Leave request submitted.");
-    setTimeout(() => setMsg(""), 4000);
+      : "ok:Leave request submitted."));
+    setTimeout(() => setMsg(""), 6000);
   }
 
-  // Status transitions with automatic balance adjustment:
-  // pending  → approved : deduct days
-  // approved → rejected : restore days
-  // rejected → approved : deduct days
   function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
     if (!req || !canApproveLeaveRequest(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
-    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -req.days);
-    if (prev === "approved" && newStatus !== "approved")  adjustBalance(req.userId, req.type, +req.days);
+    const paid = leavePaidDays(req);
+    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
+    if (prev === "approved" && newStatus !== "approved")  adjustBalance(req.userId, req.type, +paid);
     setRequests(p => p.map(r => r.id === id ? {
       ...r, status: newStatus, reviewedBy: currentUser.name, reviewedOn: new Date().toLocaleString(),
     } : r));
@@ -3085,7 +3178,7 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
     const req = requests.find(r => r.id === id);
     if (!req || !canDeleteLeaveRecord(currentUser, req, users, roles)) return;
     if (!window.confirm(`Delete this leave request from ${req.empName}?`)) return;
-    if (req.status === "approved") adjustBalance(req.userId, req.type, +req.days);
+    if (req.status === "approved") adjustBalance(req.userId, req.type, +leavePaidDays(req));
     setRequests(p => p.filter(r => r.id !== id));
   }
 
@@ -3093,14 +3186,12 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
     <div className="space-y-5 max-w-3xl">
       {canSubmit && (
       <>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 max-w-xs">
         <Card className="p-4">
           <div className="text-xs text-slate-400">Annual leave balance</div>
-          <div className="text-2xl font-bold tabular-nums" style={{ color: B.dark }}>{me.leaveBalance ?? 15} <span className="text-sm font-normal text-slate-400">days</span></div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-slate-400">Sick leave balance</div>
-          <div className="text-2xl font-bold tabular-nums" style={{ color: B.dark }}>{me.sickBalance ?? 8} <span className="text-sm font-normal text-slate-400">days</span></div>
+          <div className="text-2xl font-bold tabular-nums" style={{ color: B.dark }}>
+            {available} <span className="text-sm font-normal text-slate-400">of {DEFAULT_ANNUAL_LEAVE} days</span>
+          </div>
         </Card>
       </div>
 
@@ -3108,8 +3199,16 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
         <STitle>Submit leave request</STitle>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <SelectInput label="Leave type" value={form.type} onChange={v => setForm({ ...form, type: v })}
-            options={[{ value: "Annual", label: "Annual leave" }, { value: "Sick", label: "Sick leave" }, { value: "Casual", label: "Casual leave (uses annual balance)" }]} />
-          <div />
+            options={[
+              { value: "Annual", label: "Annual Leave" },
+              { value: "Unpaid", label: "Unpaid Leave" },
+            ]} />
+          <div className="flex items-end">
+            <div className="text-xs text-slate-500 pb-2">
+              Remaining balance: <b style={{ color: B.dark }}>{available} days</b>
+              {previewDays > 0 && <> · Requesting <b>{previewDays}</b> working day{previewDays !== 1 ? "s" : ""}</>}
+            </div>
+          </div>
           <TextInput label="From date" type="date" value={form.from} onChange={v => setForm({ ...form, from: v })} required />
           <TextInput label="To date"   type="date" value={form.to}   onChange={v => setForm({ ...form, to: v })}   required />
           <div className="sm:col-span-2">
@@ -3118,7 +3217,15 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
           </div>
         </div>
+        {previewSplit?.unpaidDays > 0 && (
+          <div className="mt-3 p-3 rounded-lg text-xs bg-amber-50 border border-amber-200 text-amber-800">
+            You have insufficient leave balance. {previewSplit.unpaidDays} day{previewSplit.unpaidDays !== 1 ? "s" : ""} will be deducted from your salary as unpaid leave.
+          </div>
+        )}
         {msg.startsWith("error:") && <div className="mt-3"><ErrBox msg={msg.replace("error:", "")} /></div>}
+        {msg.startsWith("warn:") && (
+          <div className="mt-3 p-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800">{msg.replace("warn:", "")}</div>
+        )}
         {msg.startsWith("ok:")    && <div className="mt-3"><OkBox  msg={msg.replace("ok:", "")} /></div>}
         <div className="mt-3"><Btn onClick={submitLeave}><Send size={14} />Submit request</Btn></div>
       </Card>
@@ -3138,9 +3245,12 @@ function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles 
                   <Avatar name={r.empName} />
                   <div className="flex-1 min-w-40">
                     <div className="text-sm font-medium text-slate-800">{r.empName}</div>
-                    <div className="text-xs text-slate-500">{r.type} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
+                    <div className="text-xs text-slate-500">{r.type === "Unpaid" ? "Unpaid Leave" : "Annual Leave"} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
                     {r.note && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.note}"</div>}
                   </div>
+                  {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                    ? <Pill tone="red">Unpaid</Pill>
+                    : <Pill tone="green">Paid</Pill>}
                   {r.status === "pending"  && <Pill tone="amber"><Timer size={12} />Pending</Pill>}
                   {r.status === "approved" && <Pill tone="green"><Check size={12} />Approved</Pill>}
                   {r.status === "rejected" && <Pill tone="slate"><X size={12} />Rejected</Pill>}
@@ -3233,7 +3343,6 @@ function ExecutivesPage({ users, setUsers }) {
       status: "active",
       password: form.password,
       leaveBalance: 0,
-      sickBalance: 0,
       skills: [],
       firstLogin: true,
     };
@@ -3913,22 +4022,53 @@ function workingDaysInMonth(key) {
   let count = 0;
   for (let d = 1; d <= days; d++) {
     const dow = new Date(y, m - 1, d).getDay();
-    if (dow !== 0) count++; // Sunday off
+    if (dow !== 0 && dow !== 6) count++; // Mon–Fri only
   }
   return count;
 }
 
 function presentDaysInMonth(attendance, userId, key) {
-  return attendance.filter(r => r.userId === userId && r.date.startsWith(key) && r.checkIn).length;
+  return attendance.filter(r =>
+    r.userId === userId &&
+    r.date.startsWith(key) &&
+    r.checkIn &&
+    !isWeekendDate(r.date)
+  ).length;
 }
 
 function lateDaysInMonth(attendance, userId, key, users) {
   const user = users.find(u => u.id === userId);
   if (!user) return 0;
-  return attendance.filter(r => r.userId === userId && r.date.startsWith(key) && r.checkIn && isLateCheckIn(r.checkIn, user)).length;
+  return attendance.filter(r =>
+    r.userId === userId &&
+    r.date.startsWith(key) &&
+    r.checkIn &&
+    !isWeekendDate(r.date) &&
+    isLateCheckIn(r.checkIn, user)
+  ).length;
 }
 
-function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles }) {
+/** Count approved paid/unpaid leave working days overlapping a payroll month. */
+function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid") {
+  let count = 0;
+  for (const r of (leaveRequests || []).filter(x => x.userId === userId && x.status === "approved")) {
+    const days = enumerateWorkingDays(r.from, r.to);
+    let paidLeft = leavePaidDays(r);
+    let unpaidLeft = leaveUnpaidDays(r);
+    for (const d of days) {
+      const isPaidSlot = paidLeft > 0;
+      if (isPaidSlot) paidLeft--;
+      else if (unpaidLeft > 0) unpaidLeft--;
+      else break;
+      if (!d.startsWith(monthKey)) continue;
+      if (kind === "paid" && isPaidSlot) count++;
+      if (kind === "unpaid" && !isPaidSlot) count++;
+    }
+  }
+  return count;
+}
+
+function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [] }) {
   const canManage = can(currentUser.role, "manage_payroll", roles);
   const canViewOrgPayroll = can(currentUser.role, "view_payroll", roles) && isExecutiveRole(currentUser.role);
   const [month, setMonth] = useState(monthKey());
@@ -3958,13 +4098,16 @@ function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, comp
     const workDays    = workingDaysInMonth(month);
     const presentDays = presentDaysInMonth(attendance, genFor.id, month);
     const lateDays    = lateDaysInMonth(attendance, genFor.id, month, users);
-    const absentDays  = Math.max(0, workDays - presentDays);
-    const perDay      = basic / workDays;
+    const paidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "paid");
+    const unpaidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "unpaid");
+    const absentDays  = Math.max(0, workDays - presentDays - paidLeaveDays);
+    const perDay      = workDays > 0 ? basic / workDays : 0;
     const absentDeduction = Math.round(perDay * absentDays);
+    const unpaidLeaveDeduction = Math.round(perDay * unpaidLeaveDays);
     const allowance   = parseFloat(genForm.allowance) || 0;
     const bonus       = parseFloat(genForm.bonus) || 0;
     const otherDeduction = parseFloat(genForm.deduction) || 0;
-    const net = Math.round(basic + allowance + bonus - absentDeduction - otherDeduction);
+    const net = Math.round(basic + allowance + bonus - absentDeduction - unpaidLeaveDeduction - otherDeduction);
 
     const slip = {
       id: "slip-" + Date.now(),
@@ -3973,8 +4116,8 @@ function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, comp
       empEmail: genFor.email,
       empTitle: genFor.title || genFor.role,
       month,
-      workDays, presentDays, absentDays, lateDays,
-      basic, allowance, bonus, absentDeduction, otherDeduction, net,
+      workDays, presentDays, absentDays, lateDays, paidLeaveDays, unpaidLeaveDays,
+      basic, allowance, bonus, absentDeduction, unpaidLeaveDeduction, otherDeduction, net,
       note: genForm.note,
       bank: genFor.bank || null,
       generatedBy: currentUser.name,
@@ -4023,8 +4166,8 @@ function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, comp
           </div>
         </div>
         {/* Attendance summary */}
-        <div className="px-5 py-3 grid grid-cols-4 gap-2 text-center border-b border-slate-100 bg-slate-50">
-          {[["Working days", slipView.workDays], ["Present", slipView.presentDays], ["Absent", slipView.absentDays], ["Late", slipView.lateDays]].map(([l, v]) => (
+        <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center border-b border-slate-100 bg-slate-50">
+          {[["Working days", slipView.workDays], ["Present", slipView.presentDays], ["Paid leave", slipView.paidLeaveDays ?? 0], ["Absent", slipView.absentDays], ["Late", slipView.lateDays]].map(([l, v]) => (
             <div key={l}><div className="text-xs text-slate-400">{l}</div><div className="text-sm font-bold tabular-nums" style={{ color: B.dark }}>{v}</div></div>
           ))}
         </div>
@@ -4034,8 +4177,9 @@ function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, comp
             ["Basic salary",        slipView.basic,           false],
             ["Allowance",           slipView.allowance,       false],
             ["Bonus",               slipView.bonus,           false],
-            ["Absent deduction",    -slipView.absentDeduction, true],
-            ["Other deduction",     -slipView.otherDeduction,  true],
+            ["Absent deduction",    -(slipView.absentDeduction || 0), true],
+            [`Unpaid leave deduction (${slipView.unpaidLeaveDays || 0} days)`, -(slipView.unpaidLeaveDeduction || 0), true],
+            ["Other deduction",     -(slipView.otherDeduction || 0),  true],
           ].filter(([, v]) => v !== 0).map(([l, v, isDed]) => (
             <div key={l} className="flex justify-between border-b border-slate-50 pb-2">
               <span className="text-slate-500">{l}</span>
@@ -4534,7 +4678,7 @@ export default function AdforceHR() {
           {route === "executives"    && <ExecutivesPage users={users} setUsers={setUsers} />}
           {route === "attendance"    && <AttendancePage currentUser={currentUser} users={users} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} />}
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
-          {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} />}
+          {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} />}
           {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
