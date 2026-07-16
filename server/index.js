@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
+import path from "path";
+import { fileURLToPath } from "url";
 import { sendCredentialsEmail } from "./mail.js";
 
 dotenv.config();
@@ -403,6 +405,13 @@ app.post("/api/send-credentials", async (req, res) => {
     console.error("send-credentials error:", msg);
     res.status(500).json({ error: msg });
   }
+});
+
+const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.join(__dirname2, "..", "dist");
+app.use(express.static(distPath));
+app.get(/^(?!\/api).*/, (_req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
 });
 
 const PORT = process.env.PORT || 4000;
