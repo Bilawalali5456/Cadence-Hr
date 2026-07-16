@@ -3,6 +3,7 @@ import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, 
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
+import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 
 export function HrAdminOversightPanel({
   users, attendance, shortLeaveRequests, leaveRequests,
