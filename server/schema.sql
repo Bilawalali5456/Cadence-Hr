@@ -170,6 +170,9 @@ ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS unpaid_days INTEGER;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
 ALTER TABLE users ALTER COLUMN leave_balance SET DEFAULT 24;
 ALTER TABLE users ALTER COLUMN sick_balance SET DEFAULT 0;
+-- Align existing accounts to the new annual leave policy (was 15 + separate sick days)
+UPDATE users SET leave_balance = 24 WHERE leave_balance IS NULL OR leave_balance = 15;
+UPDATE users SET sick_balance = 0 WHERE sick_balance IS DISTINCT FROM 0;
 
 -- Seed company settings
 INSERT INTO company_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

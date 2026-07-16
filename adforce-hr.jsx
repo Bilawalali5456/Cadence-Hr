@@ -1906,7 +1906,7 @@ function PeoplePage({
                       </div>
                     ) : (
                       <>
-                        <div className="flex justify-between border-b border-slate-50 pb-2"><span className="text-slate-400">Annual balance</span><span className="font-medium">{sel.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} days</span></div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2"><span className="text-slate-400">Annual balance</span><span className="font-medium">{sel.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} of {DEFAULT_ANNUAL_LEAVE} days</span></div>
                       </>
                     )}
                   </div>
@@ -2127,7 +2127,7 @@ function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
           <Card className="p-5">
             <STitle>Leave balances</STitle>
             <div className="space-y-3">
-              {[["Annual leave balance", `${me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} days`]].map(([k, v]) => (
+              {[["Annual leave balance", `${me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE} of ${DEFAULT_ANNUAL_LEAVE} days`]].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-slate-50 pb-2">
                   <span className="text-slate-400 text-sm">{k}</span>
                   <span className="font-medium text-sm text-slate-800">{v}</span>
@@ -2310,13 +2310,13 @@ function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, sh
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
             <div className="text-3xl font-bold mt-1" style={{ color: B.dark }}>{me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE}</div>
-            <div className="text-xs text-slate-500">of {DEFAULT_ANNUAL_LEAVE} days remaining</div>
+            <div className="text-xs text-slate-500">of {DEFAULT_ANNUAL_LEAVE} days</div>
           </Card>
         </div>
         <Card className="p-4">
           <STitle>Quick actions</STitle>
           <div className="space-y-2">
-            {[["Attendance history", "attendance"], ["Short leave request", "shortleave"], ["Submit leave request", "leave"], ["My profile", "myprofile"], ["Account settings", "settings"]].map(([l, r]) => (
+            {[["Attendance history", "attendance"], ["Submit leave request", "leave"], ["My profile", "myprofile"], ["Account settings", "settings"]].map(([l, r]) => (
               <button key={r} onClick={() => setRoute(r)}
                 className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-between border border-slate-200 hover:bg-slate-50"
                 style={{ color: B.dark }}>
