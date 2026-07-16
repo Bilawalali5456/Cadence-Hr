@@ -941,6 +941,13 @@ const LOGIN_ROLES = [
     description: "Check in, view payslips, request leave",
   },
   {
+    id: "Manager",
+    label: "Manager",
+    icon: Users,
+    color: B.darkMid,
+    description: "Approve leave, oversee team attendance & requests",
+  },
+  {
     id: "Executive",
     label: "Executive",
     icon: Briefcase,
@@ -948,12 +955,6 @@ const LOGIN_ROLES = [
     description: "Company overview, reports & analytics",
   },
 ];
-
-function loginRoleMatchesSelection(selectedRole, actualRole) {
-  if (selectedRole === actualRole) return true;
-  if (selectedRole === "Employee" && actualRole === "Manager") return true;
-  return false;
-}
 
 function LoginPage({ users, onLogin }) {
   const [selectedRole, setSelectedRole] = useState(null);
@@ -967,14 +968,16 @@ function LoginPage({ users, onLogin }) {
   const RoleIcon = roleConfig?.icon;
 
   function handleLogin() {
+    if (loading) return;
+    const roleAtLogin = selectedRole;
     setErr(""); setLoading(true);
     setTimeout(() => {
       const u = findUserByCredentials(users, email, pw);
       if (u) {
         if (u.status === "inactive") {
           setErr("This account is inactive. Contact your administrator.");
-        } else if (!loginRoleMatchesSelection(selectedRole, u.role)) {
-          setErr(`This account is not registered as ${selectedRole}. Your role is ${u.role}.`);
+        } else if (u.role !== roleAtLogin) {
+          setErr(`This account is not registered as ${roleAtLogin}. Your role is ${u.role}.`);
         } else {
           onLogin(u);
         }
@@ -988,6 +991,7 @@ function LoginPage({ users, onLogin }) {
   }
 
   function goBack() {
+    if (loading) return;
     setSelectedRole(null);
     setEmail("");
     setPw("");
@@ -1035,7 +1039,8 @@ function LoginPage({ users, onLogin }) {
               <button
                 type="button"
                 onClick={goBack}
-                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-5"
+                disabled={loading}
+                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-5 disabled:opacity-50 disabled:pointer-events-none"
               >
                 <ArrowLeft size={16} /> Back
               </button>
