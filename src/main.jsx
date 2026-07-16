@@ -1,9 +1,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import AdforceHR from "../adforce-hr.jsx";
+import App from "./App.jsx";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <AdforceHR />
+    <App />
   </React.StrictMode>
 );
