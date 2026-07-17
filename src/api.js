@@ -55,7 +55,12 @@ export function safeList(arr) {
 }
 
 export function sanitizeHolidays(list) {
-  return safeList(list).filter(h => h && h.date && h.title);
+  return safeList(list)
+    .filter(h => h && h.date && h.title)
+    .map(h => ({
+      ...h,
+      type: String(h.type ?? "public").trim().toLowerCase() === "optional" ? "optional" : "public",
+    }));
 }
 
 export function sanitizeAttendance(list) {

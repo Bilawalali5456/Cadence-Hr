@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Calendar, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear } from "../utils.js";
+import { isHrAdminRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear, filterValidHolidays, normalizeHolidayType } from "../utils.js";
 import { Pill, Card, STitle, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 
 const TYPE_OPTIONS = [
@@ -10,11 +10,56 @@ const TYPE_OPTIONS = [
 ];
 
 function typeLabel(type) {
-  return type === "optional" ? "Optional Holiday" : "Public Holiday";
+  return normalizeHolidayType(type) === "optional" ? "Optional Holiday" : "Public Holiday";
 }
 
 function typeTone(type) {
-  return type === "optional" ? "amber" : "blue";
+  return normalizeHolidayType(type) === "optional" ? "amber" : "blue";
+}
+
+function isPublicType(type) {
+  return normalizeHolidayType(type) === "public";
+}
+
+const TYPE_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "public", label: "Public" },
+  { id: "optional", label: "Optional" },
+];
+
+function TypeFilterTabs({ value, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {TYPE_FILTERS.map(tab => (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onChange(tab.id)}
+          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+            value === tab.id
+              ? "text-white border-transparent"
+              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+          }`}
+          style={value === tab.id ? { background: B.dark } : undefined}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function filterHolidaysByType(list, typeFilter) {
+  const safe = filterValidHolidays(list);
+  if (typeFilter === "public") return safe.filter(h => isPublicType(h.type));
+  if (typeFilter === "optional") return safe.filter(h => !isPublicType(h.type));
+  return safe;
+}
+
+function emptyMessageForFilter(typeFilter) {
+  if (typeFilter === "public") return "No public holidays scheduled.";
+  if (typeFilter === "optional") return "No optional holidays scheduled.";
+  return "No holidays scheduled.";
 }
 
 function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
@@ -60,7 +105,7 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
               key={dateKey}
               className={`aspect-square rounded-lg flex flex-col items-center justify-center text-sm border relative ${
                 hol
-                  ? hol.type === "public"
+                  ? isPublicType(hol.type)
                     ? "bg-blue-50 border-blue-200 text-blue-900"
                     : "bg-amber-50 border-amber-200 text-amber-900"
                   : isPast
@@ -70,7 +115,7 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
               title={hol ? `${hol.title} (${typeLabel(hol.type)})` : undefined}
             >
               <span className={`font-semibold tabular-nums ${isToday ? "underline" : ""}`}>{day}</span>
-              {hol && <span className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ background: hol.type === "public" ? B.dark : "#d97706" }} />}
+              {hol && <span className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ background: isPublicType(hol.type) ? B.dark : "#d97706" }} />}
             </div>
           );
         })}
@@ -84,7 +129,7 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
 }
 
 export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
-  const safeHolidays = (holidays || []).filter(h => h && h.date);
+  const safeHolidays = filterValidHolidays(holidays);
   const canManage = isHrAdminRole(currentUser.role);
   const today = todayKey();
   const year = new Date().getFullYear();
@@ -93,13 +138,20 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
   const [ferr, setFerr] = useState("");
   const [form, setForm] = useState({ title: "", date: "", type: "public" });
   const [calMonth, setCalMonth] = useState(() => new Date());
+  const [typeFilter, setTypeFilter] = useState("all");
 
   const sorted = useMemo(
-    () => [...safeHolidays].sort((a, b) => a.date.localeCompare(b.date)),
-    [safeHolidays]
+    () => filterHolidaysByType(safeHolidays, typeFilter)
+      .slice()
+      .sort((a, b) => (a?.date || "").localeCompare(b?.date || "")),
+    [safeHolidays, typeFilter]
   );
 
   const upcoming = useMemo(() => upcomingHolidays(safeHolidays, today), [safeHolidays, today]);
+  const filteredUpcoming = useMemo(
+    () => filterHolidaysByType(upcoming, typeFilter),
+    [upcoming, typeFilter]
+  );
   const remainingCount = remainingPublicHolidaysThisYear(safeHolidays, year);
 
   function openAdd() {
@@ -115,18 +167,21 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
       setFerr("A holiday with this title and date already exists.");
       return;
     }
-    setHolidays(prev => [...(prev || []).filter(h => h && h.date), {
-      id: "hol-" + Date.now(),
-      title: form.title.trim(),
-      date: form.date,
-      type: form.type,
-    }]);
+    setHolidays(prev => [
+      ...filterValidHolidays(prev),
+      {
+        id: "hol-" + Date.now(),
+        title: form.title.trim(),
+        date: form.date,
+        type: normalizeHolidayType(form.type),
+      },
+    ]);
     setOpen(false);
   }
 
   function deleteHoliday(id) {
     if (!window.confirm("Delete this holiday?")) return;
-    setHolidays(prev => (prev || []).filter(h => h && h.id !== id));
+    setHolidays(prev => filterValidHolidays(prev).filter(h => h.id !== id));
   }
 
   function shiftMonth(delta) {
@@ -142,8 +197,9 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
         </div>
 
         <Card className="overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <STitle>All holidays</STitle>
+            <TypeFilterTabs value={typeFilter} onChange={setTypeFilter} />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[560px]">
@@ -156,8 +212,11 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
               </thead>
               <tbody>
                 {sorted.length === 0 ? (
-                  <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">No holidays yet. Add your first company holiday.</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">
+                    {typeFilter === "all" ? "No holidays yet. Add your first company holiday." : emptyMessageForFilter(typeFilter)}
+                  </td></tr>
                 ) : sorted.map(h => {
+                  if (!h || !h.date) return null;
                   const past = h.date < today;
                   return (
                     <tr key={h.id} className={`border-b border-slate-100 last:border-0 ${past ? "opacity-50 bg-slate-50/50" : ""}`}>
@@ -180,9 +239,9 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
 
         <Modal open={open} onClose={() => setOpen(false)} title="Add Holiday">
           <div className="space-y-4">
-            <TextInput label="Title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Independence Day" />
-            <TextInput label="Date" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
-            <SelectInput label="Type" value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} options={TYPE_OPTIONS} />
+            <TextInput label="Title" value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g. Independence Day" />
+            <TextInput label="Date" type="date" value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} />
+            <SelectInput label="Type" value={form.type} onChange={v => setForm(f => ({ ...f, type: normalizeHolidayType(v) }))} options={TYPE_OPTIONS} />
             <ErrBox msg={ferr} />
             <div className="flex gap-2 justify-end pt-2">
               <Btn variant="ghost" onClick={() => setOpen(false)}>Cancel</Btn>
@@ -225,20 +284,21 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
       />
 
       <Card className="overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <STitle>Upcoming holidays</STitle>
+          <TypeFilterTabs value={typeFilter} onChange={setTypeFilter} />
         </div>
-        {upcoming.length === 0 ? (
-          <div className="px-5 py-10 text-center text-slate-400 text-sm">No upcoming holidays scheduled.</div>
+        {filteredUpcoming.length === 0 ? (
+          <div className="px-5 py-10 text-center text-slate-400 text-sm">{emptyMessageForFilter(typeFilter)}</div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {upcoming.map(h => (
+            {filteredUpcoming.map(h => h ? (
               <div key={h.id} className="px-5 py-3 flex items-center gap-4 flex-wrap">
                 <div className="text-sm tabular-nums text-slate-500 min-w-[120px]">{formatDate(h.date)}</div>
                 <div className="flex-1 font-medium text-slate-800">{h.title}</div>
                 <Pill tone={typeTone(h.type)}>{typeLabel(h.type)}</Pill>
               </div>
-            ))}
+            ) : null)}
           </div>
         )}
       </Card>

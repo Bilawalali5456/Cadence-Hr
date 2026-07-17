@@ -499,14 +499,23 @@ export function isWeekendDate(dateOrKey) {
   return dow === 0 || dow === 6;
 }
 
+export function normalizeHolidayType(type) {
+  const t = String(type ?? "public").trim().toLowerCase();
+  return t === "optional" ? "optional" : "public";
+}
+
+export function filterValidHolidays(holidays) {
+  return (holidays || []).filter(h => h && h.date && h.title);
+}
+
 export function getHolidayOnDate(dateKey, holidays = []) {
   const key = typeof dateKey === "string" ? dateKey.slice(0, 10) : todayKey(dateKey);
-  return (holidays || []).find(h => h && h.date === key) || null;
+  return filterValidHolidays(holidays).find(h => h.date === key) || null;
 }
 
 export function getPublicHoliday(dateKey, holidays = []) {
   const h = getHolidayOnDate(dateKey, holidays);
-  return h?.type === "public" ? h : null;
+  return h && normalizeHolidayType(h.type) === "public" ? h : null;
 }
 
 export function isPublicHolidayDate(dateKey, holidays = []) {
@@ -518,16 +527,15 @@ export function isNonWorkingDay(dateKey, holidays = []) {
 }
 
 export function upcomingHolidays(holidays = [], fromDate = todayKey()) {
-  return (holidays || [])
-    .filter(h => h && h.date && h.date >= fromDate)
+  return filterValidHolidays(holidays)
+    .filter(h => h.date >= fromDate)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function remainingPublicHolidaysThisYear(holidays = [], year = new Date().getFullYear()) {
   const today = todayKey();
-  return (holidays || []).filter(h =>
-    h && h.date &&
-    h.type === "public" &&
+  return filterValidHolidays(holidays).filter(h =>
+    normalizeHolidayType(h.type) === "public" &&
     h.date.startsWith(String(year)) &&
     h.date >= today
   ).length;
