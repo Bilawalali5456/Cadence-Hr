@@ -3,8 +3,9 @@ import { Check, X, Send, Timer, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
+import { buildLeaveStatusNotification } from "../notifications.js";
 
-export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles }) {
+export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications }) {
   const [form, setForm] = useState({ type: "Annual", from: "", to: "", note: "" });
   const [msg,  setMsg]  = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);
@@ -68,6 +69,8 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     const paid = leavePaidDays(req);
     if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
     if (prev === "approved" && newStatus !== "approved")  adjustBalance(req.userId, req.type, +paid);
+    const note = buildLeaveStatusNotification(req, newStatus);
+    if (note && setNotifications) setNotifications(prev => [...prev, note]);
     setRequests(p => p.map(r => r.id === id ? {
       ...r, status: newStatus, reviewedBy: currentUser.name, reviewedOn: new Date().toLocaleString(),
     } : r));

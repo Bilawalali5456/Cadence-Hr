@@ -110,3 +110,60 @@ export async function sendCredentialsEmail({
     html: buildCredentialsHtml({ name, email, password, role, isReset, loginUrl }),
   });
 }
+
+function buildNotificationHtml({ name, subject, body, link }) {
+  const portalUrl = link || process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const safeBody = String(body || "").replace(/\n/g, "<br/>");
+
+  return `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+  <div style="max-width:560px;margin:32px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+    <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-size:18px;font-weight:700;">
+      Adforce HR
+    </div>
+    <div style="padding:24px;">
+      <h1 style="margin:0 0 12px;font-size:20px;color:#0f172a;">${subject}</h1>
+      <p style="margin:0 0 16px;color:#334155;">Hi ${name},</p>
+      <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin:0 0 16px;color:#334155;font-size:14px;line-height:1.5;">
+        ${safeBody}
+      </div>
+      <p style="margin:0 0 16px;">
+        <a href="${portalUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">View in HR Portal</a>
+      </p>
+      <p style="margin:0;color:#64748b;font-size:12px;">This is an automated message from Adforce HR.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export async function sendNotificationEmail({ to, name, subject, body, link }) {
+  const recipient = String(to || "").trim();
+  if (!recipient || !recipient.includes("@")) {
+    throw new Error(`Invalid recipient email: "${recipient || "(empty)"}"`);
+  }
+
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!from || !String(from).includes("@")) {
+    throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
+  }
+
+  const portalUrl = link || process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const safeSubject = String(subject || "Adforce HR notification").trim();
+
+  await getTransporter().sendMail({
+    from,
+    to: recipient,
+    subject: safeSubject,
+    text: [
+      `Hi ${name || "there"},`,
+      "",
+      body || "",
+      "",
+      `View in HR Portal: ${portalUrl}`,
+    ].join("\n"),
+    html: buildNotificationHtml({ name: name || "there", subject: safeSubject, body, link: portalUrl }),
+  });
+}

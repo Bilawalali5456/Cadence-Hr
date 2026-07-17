@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
+import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
 import { ForcePasswordChange } from "./pages/ForcePasswordChange.jsx";
 import { Dashboard } from "./pages/Dashboard.jsx";
@@ -62,6 +63,7 @@ export default function App() {
   const [policies,      setPolicies]      = useState([]);
   const [assets,        setAssets]        = useState([]);
   const [holidays,      setHolidays]      = useState(() => sanitizeHolidays(loadHolidays()));
+  const [notifications, setNotifications] = useState([]);
   const [roles,         setRoles]         = useState([]);
   const [company,       setCompany]       = useState(DEFAULT_COMPANY);
   const [session,       setSession]       = useState(loadSession);
@@ -83,6 +85,7 @@ export default function App() {
         setPolicies(d.policies || []);
         setAssets(d.assets || []);
         setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
+        setNotifications(sanitizeNotifications(d.notifications));
         setRoles(d.roles || []);
         setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
         loadedRef.current = true;
@@ -104,6 +107,7 @@ export default function App() {
   useEffect(() => { if (loadedRef.current) apiSave("policies", policies); }, [policies]);
   useEffect(() => { if (loadedRef.current) apiSave("assets", assets); }, [assets]);
   useEffect(() => { if (loadedRef.current) apiSave("holidays", holidays); }, [holidays]);
+  useEffect(() => { if (loadedRef.current) apiSave("notifications", notifications); }, [notifications]);
   useEffect(() => { if (loadedRef.current) apiSave("company", company); }, [company]);
 
   useEffect(() => {
@@ -118,6 +122,18 @@ export default function App() {
     const id = setInterval(tick, 30000);
     return () => clearInterval(id);
   }, [users]);
+
+  useEffect(() => {
+    if (!loadedRef.current || !session?.userId) return;
+    const id = setInterval(() => {
+      apiFetchNotifications()
+        .then(list => {
+          if (Array.isArray(list)) setNotifications(sanitizeNotifications(list));
+        })
+        .catch(e => console.error("Notification refresh failed:", e));
+    }, 60000);
+    return () => clearInterval(id);
+  }, [session]);
 
   /* ── Session stays in browser localStorage ── */
   useEffect(() => {
@@ -224,6 +240,12 @@ export default function App() {
       <div className="flex-1 min-w-0 flex flex-col">
         <header className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 sticky top-0 z-30">
           <div className="flex-1" />
+          <NotificationBell
+            currentUser={currentUser}
+            notifications={notifications}
+            setNotifications={setNotifications}
+            setRoute={setRoute}
+          />
           <div className="relative">
             <button onClick={() => setRoleMenu(!roleMenu)}
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
@@ -255,17 +277,17 @@ export default function App() {
             <h1 className="text-xl font-bold" style={{ color: B.dark }}>{title}</h1>
             <p className="text-sm text-slate-400">{sub}</p>
           </div>
-          {route === "home"          && <Dashboard      currentUser={currentUser} users={users} setRoute={setRoute} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} />}
-          {route === "people"        && <PeoplePage     users={users} setUsers={setUsers} currentUser={currentUser} attendance={attendance} setAttendance={setAttendance} payroll={payroll} setPayroll={setPayroll} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} roles={roles} holidays={holidays} />}
+          {route === "home"          && <Dashboard      currentUser={currentUser} users={users} setRoute={setRoute} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} />}
+          {route === "people"        && <PeoplePage     users={users} setUsers={setUsers} currentUser={currentUser} attendance={attendance} setAttendance={setAttendance} payroll={payroll} setPayroll={setPayroll} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} />}
           {route === "executives"    && <ExecutivesPage users={users} setUsers={setUsers} />}
-          {route === "attendance"    && <AttendancePage currentUser={currentUser} users={users} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} />}
+          {route === "attendance"    && <AttendancePage currentUser={currentUser} users={users} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} />}
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
-          {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} />}
+          {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
-          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} />}
+          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
-          {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} />}
+          {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
           {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} />}
           {route === "settings"      && <SettingsPage   currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} company={company} setCompany={setCompany} roles={roles} />}
         </main>

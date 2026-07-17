@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import pg from "pg";
 import path from "path";
 import { fileURLToPath } from "url";
-import { sendCredentialsEmail } from "./mail.js";
+import { sendCredentialsEmail, sendNotificationEmail } from "./mail.js";
 
 dotenv.config();
 
@@ -148,10 +148,21 @@ const roleToJs = (r) => ({
   permissions: Array.isArray(r.permissions) ? r.permissions : [],
 });
 
+const notificationToJs = (r) => ({
+  id: r.id,
+  userId: r.user_id,
+  title: r.title,
+  body: r.body || "",
+  type: r.type || "announcement",
+  read: !!r.read,
+  createdAt: r.created_at || "",
+  link: r.link || "",
+});
+
 /* ─── GET /api/bootstrap — everything in one call ─── */
 app.get("/api/bootstrap", async (_req, res) => {
   try {
-    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays] = await Promise.all([
+    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, notifications] = await Promise.all([
       pool.query("SELECT * FROM users ORDER BY name"),
       pool.query("SELECT * FROM attendance ORDER BY date DESC"),
       pool.query("SELECT * FROM leave_requests ORDER BY id"),
@@ -163,6 +174,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       pool.query("SELECT * FROM assets ORDER BY name"),
       pool.query("SELECT * FROM roles ORDER BY name"),
       pool.query("SELECT * FROM holidays ORDER BY date"),
+      pool.query("SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"),
     ]);
     res.json({
       users: users.rows.map(userToJs),
@@ -176,6 +188,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       assets: assets.rows.map(assetToJs),
       roles: roles.rows.map(roleToJs),
       holidays: holidays.rows.map(holidayToJs),
+      notifications: notifications.rows.map(notificationToJs),
     });
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
@@ -383,6 +396,61 @@ app.put("/api/assets", async (req, res) => {
   }
 });
 
+app.get("/api/notifications", async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"
+    );
+    res.json(rows.map(notificationToJs));
+  } catch (e) {
+    console.error("notifications fetch error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/notifications", async (req, res) => {
+  try {
+    await replaceAll("notifications", req.body, (c, n) =>
+      c.query(
+        `INSERT INTO notifications (id, user_id, title, body, type, read, created_at, link)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          n.id, n.userId, n.title, n.body || "", n.type || "announcement",
+          !!n.read, n.createdAt || new Date().toISOString(), n.link || "",
+        ]
+      )
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("notifications sync error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/notifications/read", async (req, res) => {
+  try {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: "id is required" });
+    await pool.query("UPDATE notifications SET read = true WHERE id = $1", [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("notification read error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/notifications/read-all", async (req, res) => {
+  try {
+    const { userId } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    await pool.query("UPDATE notifications SET read = true WHERE user_id = $1", [userId]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("notifications read-all error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.put("/api/holidays", async (req, res) => {
   try {
     await replaceAll("holidays", req.body, (c, h) =>
@@ -427,6 +495,27 @@ app.post("/api/send-credentials", async (req, res) => {
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
     console.error("send-credentials error:", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+app.post("/api/send-notification-email", async (req, res) => {
+  try {
+    const { to, name, subject, body, link } = req.body || {};
+    if (!to || !subject) {
+      return res.status(400).json({ error: "to and subject are required" });
+    }
+    await sendNotificationEmail({
+      to: String(to).trim(),
+      name: String(name || to).trim(),
+      subject: String(subject).trim(),
+      body: String(body || ""),
+      link: link || process.env.APP_URL || "https://hr.adforcesolutions.com",
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    const msg = e?.message || e?.code || String(e);
+    console.error("send-notification-email error:", msg);
     res.status(500).json({ error: msg });
   }
 });

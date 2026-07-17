@@ -6,7 +6,7 @@ import { Pill, Avatar, Card, STitle, Btn, ErrBox } from "../components/ui.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
-export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [] }) {
+export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
   const showReports = can(currentUser.role, "view_attendance_reports", roles);
 
@@ -169,6 +169,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           setLeaveRequests={setLeaveRequests}
           setUsers={setUsers}
           roles={roles}
+          setNotifications={setNotifications}
         />
       )}
 

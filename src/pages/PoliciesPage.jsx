@@ -3,12 +3,13 @@ import { Search, Trash2, Edit2, Save, Plus, FileText } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
+import { buildPolicyNotifications, sendPolicyEmails } from "../notifications.js";
 
 export const POLICY_CATEGORIES = [
   "Attendance", "Leave", "Code of Conduct", "IT", "Security", "HR", "Finance", "General",
 ];
 
-export function PoliciesPage({ currentUser, policies, setPolicies, roles }) {
+export function PoliciesPage({ currentUser, policies, setPolicies, roles, users = [], notifications, setNotifications }) {
   const canManage = can(currentUser.role, "manage_policies", roles);
   const [catFilter, setCatFilter] = useState("All");
   const [q, setQ] = useState("");
@@ -52,7 +53,7 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles }) {
           : p
       ));
     } else {
-      setPolicies(prev => [{
+      const policy = {
         id: "pol-" + Date.now(),
         title: form.title.trim(),
         category: form.category,
@@ -61,7 +62,11 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles }) {
         updatedAt: now,
         updatedBy: currentUser.name,
         createdAt: now,
-      }, ...prev]);
+      };
+      setPolicies(prev => [policy, ...prev]);
+      const newNotes = buildPolicyNotifications(users, policy.title);
+      if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
+      sendPolicyEmails(users, { title: policy.title, body: policy.body }).catch(e => console.error("Policy emails failed:", e));
     }
     setOpen(false);
   }

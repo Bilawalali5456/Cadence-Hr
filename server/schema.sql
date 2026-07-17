@@ -135,6 +135,17 @@ CREATE TABLE IF NOT EXISTS holidays (
   type  TEXT NOT NULL DEFAULT 'public'
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  body       TEXT DEFAULT '',
+  type       TEXT NOT NULL DEFAULT 'announcement',
+  read       BOOLEAN DEFAULT false,
+  created_at TEXT,
+  link       TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS roles (
   id          TEXT PRIMARY KEY,
   name        TEXT UNIQUE NOT NULL,

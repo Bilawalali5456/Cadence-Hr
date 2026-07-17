@@ -20,6 +20,43 @@ export async function apiSave(collection, data) {
   }
 }
 
+export async function apiFetchNotifications() {
+  const res = await fetch(`${API_URL}/notifications`);
+  if (!res.ok) throw new Error("API error " + res.status);
+  return res.json();
+}
+
+export async function apiMarkNotificationRead(id) {
+  const res = await fetch(`${API_URL}/notifications/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Failed to mark notification read");
+  return res.json();
+}
+
+export async function apiMarkAllNotificationsRead(userId) {
+  const res = await fetch(`${API_URL}/notifications/read-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("Failed to mark all notifications read");
+  return res.json();
+}
+
+export async function apiSendNotificationEmail({ to, name, subject, body, link }) {
+  const res = await fetch(`${API_URL}/send-notification-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, name, subject, body, link }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to send notification email");
+  return data;
+}
+
 export async function apiSendCredentials({ to, name, email, password, role, isReset = false }) {
   const res = await fetch(`${API_URL}/send-credentials`, {
     method: "POST",
@@ -77,4 +114,8 @@ export function sanitizeShortLeaveRequests(list) {
 
 export function sanitizeAnnouncements(list) {
   return safeList(list).filter(a => a && a.id);
+}
+
+export function sanitizeNotifications(list) {
+  return safeList(list).filter(n => n && n.id && n.userId && n.title);
 }

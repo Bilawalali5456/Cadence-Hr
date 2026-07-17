@@ -2,12 +2,14 @@ import React from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey } from "../utils.js";
+import { buildLeaveStatusNotification } from "../notifications.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 
 export function HrAdminOversightPanel({
   users, attendance, shortLeaveRequests, leaveRequests,
   currentUser, setAttendance, setShortLeaveRequests, setLeaveRequests, setUsers, roles,
+  setNotifications,
 }) {
   const pendingShort = (shortLeaveRequests || []).filter(r => r && r.status === "pending" && isHrAdminRequest(r, users));
   const pendingLeave = (leaveRequests || []).filter(r => r && r.status === "pending" && isHrAdminRequest(r, users));
@@ -45,6 +47,8 @@ export function HrAdminOversightPanel({
     const paid = leavePaidDays(req);
     if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
     if (prev === "approved" && newStatus !== "approved") adjustBalance(req.userId, req.type, +paid);
+    const note = buildLeaveStatusNotification(req, newStatus);
+    if (note && setNotifications) setNotifications(prev => [...prev, note]);
     setLeaveRequests(p => p.map(r => r.id === id ? {
       ...r, status: newStatus, reviewedBy: currentUser.name, reviewedOn: new Date().toLocaleString(),
     } : r));
@@ -138,7 +142,7 @@ export function HrAdminOversightPanel({
 }
 
 /* ─── DASHBOARD ─── */
-export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [] }) {
+export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const role = currentUser.role;
   const me   = users.find(u => u.id === currentUser.id) || currentUser;
   const opsDashboard = can(role, "view_attendance_reports", roles) && can(role, "view_people", roles);
@@ -249,6 +253,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           setLeaveRequests={setLeaveRequests}
           setUsers={setUsers}
           roles={roles}
+          setNotifications={setNotifications}
         />
       )}
 

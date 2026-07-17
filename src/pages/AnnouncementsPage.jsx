@@ -2,18 +2,27 @@ import React, { useState } from "react";
 import { Send, Trash2, Plus } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can } from "../utils.js";
+import { buildAnnouncementNotifications, sendAnnouncementEmails } from "../notifications.js";
 import { Card, Modal, TextInput, Btn } from "../components/ui.jsx";
 
-export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles }) {
+export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, users = [], notifications, setNotifications }) {
   const list = (anns || []).filter(a => a && a.id);
   const canManage = can(currentUser.role, "manage_announcements", roles);
   const [addOpen, setAddOpen] = useState(false);
-  const [nt, setNt] = useState(""); const [nb, setNb] = useState("");
+  const [nt, setNt] = useState("");
+  const [nb, setNb] = useState("");
 
-  function addAnn() {
+  async function addAnn() {
     if (!nt.trim()) return;
-    setAnns(p => [{ id: "a" + Date.now(), title: nt, body: nb, date: new Date().toLocaleDateString(), author: currentUser.name }, ...p]);
-    setNt(""); setNb(""); setAddOpen(false);
+    const title = nt.trim();
+    const body = nb.trim();
+    setAnns(p => [{ id: "a" + Date.now(), title, body, date: new Date().toLocaleDateString(), author: currentUser.name }, ...p]);
+    const newNotes = buildAnnouncementNotifications(users, title);
+    if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
+    sendAnnouncementEmails(users, { title, body }).catch(e => console.error("Announcement emails failed:", e));
+    setNt("");
+    setNb("");
+    setAddOpen(false);
   }
 
   function deleteAnn(id) {
@@ -53,6 +62,7 @@ export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles }) {
             <textarea value={nb} onChange={e => setNb(e.target.value)} rows={4} placeholder="Message body…"
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
           </div>
+          <p className="text-xs text-slate-400">All active employees and managers will be notified by email and in-app alert.</p>
         </div>
         <div className="flex gap-2 mt-4">
           <Btn onClick={addAnn}><Send size={14} />Publish</Btn>

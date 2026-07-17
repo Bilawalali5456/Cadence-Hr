@@ -3,13 +3,15 @@ import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Ph
 import { B } from "../brand.jsx";
 import { apiSendCredentials } from "../api.js";
 import { DEFAULT_ANNUAL_LEAVE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
-import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox } from "../components/ui.jsx";
+import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
+import { buildWarningNotification } from "../notifications.js";
 import { EmployeeForm } from "../components/EmployeeForm.jsx";
 
 export function PeoplePage({
   users, setUsers, currentUser, attendance, setAttendance,
   payroll = [], setPayroll, leaveRequests = [], setLeaveRequests,
   shortLeaveRequests = [], setShortLeaveRequests, roles, holidays = [],
+  notifications, setNotifications,
 }) {
   const canManage = can(currentUser.role, "manage_employees", roles);
   const readOnly = !canManage;
@@ -23,6 +25,9 @@ export function PeoplePage({
   const [editTgt,   setEditTgt]   = useState(null);
   const [delTgt,    setDelTgt]    = useState(null);
   const [resetTgt,  setResetTgt]  = useState(null);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeReason, setNoticeReason] = useState("");
+  const [noticeErr, setNoticeErr] = useState("");
   const [resetResult, setResetResult] = useState("");
   const [newEmail,  setNewEmail]  = useState("");
   const [ferr,      setFerr]      = useState("");
@@ -162,6 +167,16 @@ export function PeoplePage({
     if (!managingSel() || !setAttendance) return;
     if (!window.confirm("Delete this attendance record?")) return;
     setAttendance(a => a.filter(r => r.id !== recordId));
+  }
+
+  function issueNotice() {
+    if (!sel || !canManage || !isStaffRole(sel.role)) return;
+    if (!noticeReason.trim()) { setNoticeErr("Please enter a reason for the notice."); return; }
+    const note = buildWarningNotification(sel.id, noticeReason.trim());
+    if (setNotifications) setNotifications(prev => [...prev, note]);
+    setNoticeOpen(false);
+    setNoticeReason("");
+    setNoticeErr("");
   }
 
   function deleteLeaveRecord(id) {
@@ -405,6 +420,11 @@ export function PeoplePage({
                       <span className="font-medium text-slate-800">{v}</span>
                     </div>
                   ))}
+                  {canManage && isStaffRole(sel.role) && sel.id !== currentUser.id && (
+                    <Btn size="sm" variant="ghost" onClick={() => { setNoticeReason(""); setNoticeErr(""); setNoticeOpen(true); }}>
+                      <AlertTriangle size={13} />Issue notice
+                    </Btn>
+                  )}
                 </div>
               )}
               {selTab === "Personal" && (
@@ -628,6 +648,27 @@ export function PeoplePage({
           </div>
         </div>
       )}
+
+      <Modal open={noticeOpen} onClose={() => setNoticeOpen(false)} title={`Issue notice — ${sel?.name || ""}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">The employee will receive an in-app notification. This notice is recorded in the HR system.</p>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Reason</label>
+            <textarea
+              value={noticeReason}
+              onChange={e => setNoticeReason(e.target.value)}
+              rows={4}
+              placeholder="Describe the notice or warning…"
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none"
+            />
+          </div>
+          <ErrBox msg={noticeErr} />
+          <div className="flex gap-2 justify-end">
+            <Btn variant="ghost" onClick={() => setNoticeOpen(false)}>Cancel</Btn>
+            <Btn onClick={issueNotice}>Send notice</Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
