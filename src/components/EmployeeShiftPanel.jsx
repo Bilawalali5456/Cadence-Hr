@@ -16,20 +16,24 @@ import {
   displayWorkingHours,
   todayKey,
   isWeekendDate,
+  getPublicHoliday,
   formatTime,
   getUserTodayRecord,
 } from "../utils.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
 
-export function EmployeeShiftPanel({ user, attendance, setAttendance, compact = false }) {
+export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays = [], compact = false }) {
   const [err, setErr] = useState("");
   const today = getUserTodayRecord(attendance, user.id);
   const shift = getUserShift(user);
   const bounds = getShiftBounds(user, todayKey());
-  const weekendOff = isWeekendDate(todayKey());
+  const key = todayKey();
+  const weekendOff = isWeekendDate(key);
+  const publicHoliday = getPublicHoliday(key, holidays);
+  const dayOff = weekendOff || publicHoliday;
   const checkedIn = today?.checkIn && !today?.checkOut;
   const onBreak = today?.breakStart && !today?.breakEnd;
-  const daySt = dayStatusPill(resolveDayStatus(user, today));
+  const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
   const breakMs = calcTotalBreakMs(today);
 
   function run(action) {
@@ -49,13 +53,17 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, compact = 
           <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
             Today is a weekend off. Saturday and Sunday are company holidays — check-in is not available.
           </div>
+        ) : publicHoliday ? (
+          <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
+            Public Holiday — {publicHoliday.title}. Check-in is not available today.
+          </div>
         ) : (
           <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
             <b>Your shift:</b> {formatShiftRange(user)} · Grace {shift.graceMinutes}m · Break {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
           </div>
         )}
         <ErrBox msg={err} />
-        {!weekendOff && (
+        {!dayOff && (
         <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"} gap-3 mb-4 text-sm`}>
           <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-center">
             <div className="text-xs text-emerald-600">Check in</div>
@@ -80,10 +88,10 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, compact = 
         </div>
         )}
 
-        {!weekendOff && !today?.checkOut && (
+        {!dayOff && !today?.checkOut && (
           <div className="flex flex-wrap gap-2 justify-center mb-4">
             {!checkedIn && (
-              <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user))}>
+              <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays))}>
                 <LogIn size={14} />Check in
               </Btn>
             )}
@@ -106,7 +114,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, compact = 
           </div>
         )}
 
-        {!weekendOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
+        {!dayOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
           <div className="text-xs text-slate-500 space-y-1 mb-2">
             <b>Approved short leave today:</b>
             {today.shortLeaves.filter(sl => sl.status === "approved").map(sl => (
@@ -118,7 +126,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, compact = 
           </div>
         )}
 
-        {!weekendOff && today?.checkOut && (
+        {!dayOff && today?.checkOut && (
           <div className="text-sm text-center text-slate-500 mt-2">
             Shift complete · <b>{displayWorkingHours(today, user)}</b> net working time
             {today.autoCheckout && <span className="text-amber-600"> · Auto checkout applied</span>}

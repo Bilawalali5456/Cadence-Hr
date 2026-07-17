@@ -4,7 +4,7 @@ import { B, AdforceLogo } from "../brand.jsx";
 import { can, isStaffRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
 import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox } from "../components/ui.jsx";
 
-export function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [] }) {
+export function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
   const canManage = can(currentUser.role, "manage_payroll", roles);
   const canViewOrgPayroll = can(currentUser.role, "view_payroll", roles) && isExecutiveRole(currentUser.role);
   const [month, setMonth] = useState(monthKey());
@@ -31,11 +31,11 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
   function generateSlip() {
     const basic = parseFloat(genForm.basic) || 0;
     if (basic <= 0) { setGenErr("Enter a valid basic salary."); return; }
-    const workDays    = workingDaysInMonth(month);
-    const presentDays = presentDaysInMonth(attendance, genFor.id, month);
-    const lateDays    = lateDaysInMonth(attendance, genFor.id, month, users);
-    const paidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "paid");
-    const unpaidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "unpaid");
+    const workDays    = workingDaysInMonth(month, holidays);
+    const presentDays = presentDaysInMonth(attendance, genFor.id, month, holidays);
+    const lateDays    = lateDaysInMonth(attendance, genFor.id, month, users, holidays);
+    const paidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "paid", holidays);
+    const unpaidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "unpaid", holidays);
     const absentDays  = Math.max(0, workDays - presentDays - paidLeaveDays);
     const perDay      = workDays > 0 ? basic / workDays : 0;
     const absentDeduction = Math.round(perDay * absentDays);
@@ -235,9 +235,9 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No active people on file.</td></tr>
               ) : staff.map(u => {
                 const slip = monthSlips.find(s => s.userId === u.id);
-                const present = presentDaysInMonth(attendance, u.id, month);
-                const late = lateDaysInMonth(attendance, u.id, month, users);
-                const workDays = workingDaysInMonth(month);
+                const present = presentDaysInMonth(attendance, u.id, month, holidays);
+                const late = lateDaysInMonth(attendance, u.id, month, users, holidays);
+                const workDays = workingDaysInMonth(month, holidays);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
@@ -313,9 +313,9 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
               <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No active employees.</td></tr>
             ) : staff.map(u => {
               const slip = monthSlips.find(s => s.userId === u.id);
-              const present = presentDaysInMonth(attendance, u.id, month);
-              const late = lateDaysInMonth(attendance, u.id, month, users);
-              const workDays = workingDaysInMonth(month);
+              const present = presentDaysInMonth(attendance, u.id, month, holidays);
+              const late = lateDaysInMonth(attendance, u.id, month, users, holidays);
+              const workDays = workingDaysInMonth(month, holidays);
               return (
                 <tr key={u.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3">
@@ -353,9 +353,9 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
         <Modal open={true} onClose={() => setGenFor(null)} title={`Generate slip — ${genFor.name} (${monthLabel(month)})`}>
           <div className="space-y-4">
             <div className="p-3 rounded-lg text-xs grid grid-cols-3 gap-2 text-center" style={{ background: B.darkLight, color: B.dark }}>
-              <div><b>{workingDaysInMonth(month)}</b><br />working days</div>
-              <div><b>{presentDaysInMonth(attendance, genFor.id, month)}</b><br />present</div>
-              <div><b>{lateDaysInMonth(attendance, genFor.id, month, users)}</b><br />late</div>
+              <div><b>{workingDaysInMonth(month, holidays)}</b><br />working days</div>
+              <div><b>{presentDaysInMonth(attendance, genFor.id, month, holidays)}</b><br />present</div>
+              <div><b>{lateDaysInMonth(attendance, genFor.id, month, users, holidays)}</b><br />late</div>
             </div>
             <TextInput label={`Basic salary (${cur})`} type="number" value={genForm.basic} onChange={v => setGenForm({ ...genForm, basic: v })} required placeholder="e.g. 80000" />
             <div className="grid grid-cols-3 gap-3">

@@ -138,7 +138,7 @@ export function HrAdminOversightPanel({
 }
 
 /* ─── DASHBOARD ─── */
-export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles }) {
+export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [] }) {
   const role = currentUser.role;
   const me   = users.find(u => u.id === currentUser.id) || currentUser;
   const opsDashboard = can(role, "view_attendance_reports", roles) && can(role, "view_people", roles);
@@ -150,7 +150,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
           <div className="text-sm opacity-70 mt-0.5">{me.title || me.role} · Shift {formatShiftRange(me)}</div>
         </div>
-        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} compact />
+        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} compact />
         <div className="grid grid-cols-1 gap-4 max-w-xs">
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
@@ -212,7 +212,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   return (
     <div className="space-y-5">
       {isHrAdminRole(role) && (
-        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} compact />
+        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} compact />
       )}
       <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
         <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
@@ -297,7 +297,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="divide-y divide-slate-100">
             {todayRoster.map(u => {
               const r = getUserTodayRecord(attendance, u.id);
-              const ds = dayStatusPill(resolveDayStatus(u, r));
+              const ds = dayStatusPill(resolveDayStatus(u, r, r.date, holidays));
               return (
                 <div key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar name={u.name} />

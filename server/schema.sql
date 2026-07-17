@@ -128,6 +128,13 @@ CREATE TABLE IF NOT EXISTS assets (
   updated_at      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS holidays (
+  id    TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  date  TEXT NOT NULL,
+  type  TEXT NOT NULL DEFAULT 'public'
+);
+
 CREATE TABLE IF NOT EXISTS roles (
   id          TEXT PRIMARY KEY,
   name        TEXT UNIQUE NOT NULL,
@@ -176,3 +183,12 @@ UPDATE users SET sick_balance = 0 WHERE sick_balance IS DISTINCT FROM 0;
 
 -- Seed company settings
 INSERT INTO company_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Default Pakistani public holidays for 2026 (Eid dates are approximate)
+INSERT INTO holidays (id, title, date, type) VALUES
+('hol-pk-day-2026',        'Pakistan Day',    '2026-03-23', 'public'),
+('hol-labour-2026',        'Labour Day',      '2026-05-01', 'public'),
+('hol-independence-2026',  'Independence Day','2026-08-14', 'public'),
+('hol-eid-fitr-2026',      'Eid ul Fitr',     '2026-03-21', 'public'),
+('hol-eid-adha-2026',      'Eid ul Adha',     '2026-05-27', 'public')
+ON CONFLICT (id) DO NOTHING;

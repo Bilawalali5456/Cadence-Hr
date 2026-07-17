@@ -228,19 +228,21 @@ export function calcNetWorkingMs(record) {
   return Math.max(0, ms);
 }
 
-export function isLateCheckIn(checkInIso, user) {
+export function isLateCheckIn(checkInIso, user, holidays = []) {
   if (!checkInIso || !user) return false;
-  if (isWeekendDate(checkInIso)) return false; // late tracking Mon–Fri only
+  if (isWeekendDate(checkInIso) || isPublicHolidayDate(checkInIso, holidays)) return false;
   const bounds = getShiftBounds(user, todayKey(new Date(checkInIso)));
   return new Date(checkInIso) > bounds.lateCutoff;
 }
 
-export function computeDayStatus(user, record) {
+export function computeDayStatus(user, record, holidays = []) {
   const dateKey = record?.date || todayKey();
+  const pub = getPublicHoliday(dateKey, holidays);
+  if (pub && !record?.checkIn) return "Public Holiday";
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record?.checkIn) return "Absent";
   const bounds = getShiftBounds(user, record.date);
-  const late = isLateCheckIn(record.checkIn, user);
+  const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return late ? "Late" : "On Time";
   const net = calcNetWorkingMs(record);
   const expectedNet = Math.max(0, bounds.end - bounds.start - getUserShift(user).breakMinutes * 60000);
@@ -249,10 +251,12 @@ export function computeDayStatus(user, record) {
   return "On Time";
 }
 
-export function resolveDayStatus(user, record, dateKey = record?.date || todayKey()) {
+export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = []) {
+  const pub = getPublicHoliday(dateKey, holidays);
+  if (pub && !record?.checkIn) return "Public Holiday";
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
-  if (!record) return isWeekendDate(dateKey) ? "Weekend Off" : "Absent";
-  return record.dayStatus || computeDayStatus(user, record);
+  if (!record) return isWeekendDate(dateKey) || pub ? (pub ? "Public Holiday" : "Weekend Off") : "Absent";
+  return record.dayStatus || computeDayStatus(user, record, holidays);
 }
 
 export function dayStatusPill(status) {
@@ -262,12 +266,13 @@ export function dayStatusPill(status) {
     "Half Day": { tone: "red", label: "Half Day" },
     Absent: { tone: "slate", label: "Absent" },
     "Weekend Off": { tone: "blue", label: "Weekend Off" },
+    "Public Holiday": { tone: "blue", label: "Public Holiday" },
   };
   return map[status] || { tone: "slate", label: status || "—" };
 }
 
-export function finalizeRecord(record, user) {
-  const dayStatus = computeDayStatus(user, record);
+export function finalizeRecord(record, user, holidays = []) {
+  const dayStatus = computeDayStatus(user, record, holidays);
   return {
     ...record,
     dayStatus,
@@ -276,8 +281,10 @@ export function finalizeRecord(record, user) {
   };
 }
 
-export function canCheckIn(now, user, record) {
+export function canCheckIn(now, user, record, holidays = []) {
   if (isWeekendDate(now)) return { ok: false, msg: "Today is a weekend off" };
+  const pub = getPublicHoliday(todayKey(now), holidays);
+  if (pub) return { ok: false, msg: `Public Holiday — ${pub.title}` };
   if (record?.checkIn && !record?.checkOut) return { ok: false, msg: "You are already checked in." };
   if (record?.checkOut) return { ok: false, msg: "Today's attendance is already complete." };
   const bounds = getShiftBounds(user, todayKey(now));
@@ -301,10 +308,10 @@ export function canCheckOut(now, user, record) {
   return { ok: true };
 }
 
-export function performCheckIn(attendance, userId, user, now = new Date()) {
+export function performCheckIn(attendance, userId, user, now = new Date(), holidays = []) {
   const key = todayKey(now);
   const existing = attendance.find(r => r.userId === userId && r.date === key);
-  const gate = canCheckIn(now, user, existing);
+  const gate = canCheckIn(now, user, existing, holidays);
   if (!gate.ok) return { attendance, error: gate.msg };
   const record = {
     id: "att-" + Date.now(),
@@ -318,7 +325,7 @@ export function performCheckIn(attendance, userId, user, now = new Date()) {
     breakEnd: null,
     autoCheckout: false,
   };
-  const next = [...attendance.filter(r => !(r.userId === userId && r.date === key)), finalizeRecord(record, user)];
+  const next = [...attendance.filter(r => !(r.userId === userId && r.date === key)), finalizeRecord(record, user, holidays)];
   return { attendance: next, error: null };
 }
 
@@ -483,21 +490,54 @@ export function isWeekendDate(dateOrKey) {
   return dow === 0 || dow === 6;
 }
 
-export function enumerateWorkingDays(fromKey, toKey) {
+export function getHolidayOnDate(dateKey, holidays = []) {
+  const key = typeof dateKey === "string" ? dateKey.slice(0, 10) : todayKey(dateKey);
+  return (holidays || []).find(h => h.date === key) || null;
+}
+
+export function getPublicHoliday(dateKey, holidays = []) {
+  const h = getHolidayOnDate(dateKey, holidays);
+  return h?.type === "public" ? h : null;
+}
+
+export function isPublicHolidayDate(dateKey, holidays = []) {
+  return !!getPublicHoliday(dateKey, holidays);
+}
+
+export function isNonWorkingDay(dateKey, holidays = []) {
+  return isWeekendDate(dateKey) || isPublicHolidayDate(dateKey, holidays);
+}
+
+export function upcomingHolidays(holidays = [], fromDate = todayKey()) {
+  return (holidays || [])
+    .filter(h => h.date >= fromDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function remainingPublicHolidaysThisYear(holidays = [], year = new Date().getFullYear()) {
+  const today = todayKey();
+  return (holidays || []).filter(h =>
+    h.type === "public" &&
+    h.date.startsWith(String(year)) &&
+    h.date >= today
+  ).length;
+}
+
+export function enumerateWorkingDays(fromKey, toKey, holidays = []) {
   const start = new Date(fromKey + "T12:00:00");
   const end = new Date(toKey + "T12:00:00");
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
   const days = [];
   const cur = new Date(start);
   while (cur <= end) {
-    if (!isWeekendDate(cur)) days.push(todayKey(cur));
+    if (!isNonWorkingDay(cur, holidays)) days.push(todayKey(cur));
     cur.setDate(cur.getDate() + 1);
   }
   return days;
 }
 
-export function countWorkingDaysInclusive(fromKey, toKey) {
-  return enumerateWorkingDays(fromKey, toKey).length;
+export function countWorkingDaysInclusive(fromKey, toKey, holidays = []) {
+  return enumerateWorkingDays(fromKey, toKey, holidays).length;
 }
 
 export function leavePaidDays(req) {
@@ -704,43 +744,43 @@ export function monthLabel(key) {
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-export function workingDaysInMonth(key) {
+export function workingDaysInMonth(key, holidays = []) {
   const [y, m] = key.split("-").map(Number);
   const days = new Date(y, m, 0).getDate();
   let count = 0;
   for (let d = 1; d <= days; d++) {
-    const dow = new Date(y, m - 1, d).getDay();
-    if (dow !== 0 && dow !== 6) count++; // Mon–Fri only
+    const dateKey = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (!isNonWorkingDay(dateKey, holidays)) count++;
   }
   return count;
 }
 
-export function presentDaysInMonth(attendance, userId, key) {
+export function presentDaysInMonth(attendance, userId, key, holidays = []) {
   return attendance.filter(r =>
     r.userId === userId &&
     r.date.startsWith(key) &&
     r.checkIn &&
-    !isWeekendDate(r.date)
+    !isNonWorkingDay(r.date, holidays)
   ).length;
 }
 
-export function lateDaysInMonth(attendance, userId, key, users) {
+export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
   const user = users.find(u => u.id === userId);
   if (!user) return 0;
   return attendance.filter(r =>
     r.userId === userId &&
     r.date.startsWith(key) &&
     r.checkIn &&
-    !isWeekendDate(r.date) &&
-    isLateCheckIn(r.checkIn, user)
+    !isNonWorkingDay(r.date, holidays) &&
+    isLateCheckIn(r.checkIn, user, holidays)
   ).length;
 }
 
 /** Count approved paid/unpaid leave working days overlapping a payroll month. */
-export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid") {
+export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;
   for (const r of (leaveRequests || []).filter(x => x.userId === userId && x.status === "approved")) {
-    const days = enumerateWorkingDays(r.from, r.to);
+    const days = enumerateWorkingDays(r.from, r.to, holidays);
     let paidLeft = leavePaidDays(r);
     let unpaidLeft = leaveUnpaidDays(r);
     for (const d of days) {

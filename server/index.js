@@ -135,6 +135,13 @@ const assetToJs = (r) => ({
   updatedAt: r.updated_at || "",
 });
 
+const holidayToJs = (r) => ({
+  id: r.id,
+  title: r.title,
+  date: r.date,
+  type: r.type || "public",
+});
+
 const roleToJs = (r) => ({
   id: r.id,
   name: r.name,
@@ -144,7 +151,7 @@ const roleToJs = (r) => ({
 /* ─── GET /api/bootstrap — everything in one call ─── */
 app.get("/api/bootstrap", async (_req, res) => {
   try {
-    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles] = await Promise.all([
+    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays] = await Promise.all([
       pool.query("SELECT * FROM users ORDER BY name"),
       pool.query("SELECT * FROM attendance ORDER BY date DESC"),
       pool.query("SELECT * FROM leave_requests ORDER BY id"),
@@ -155,6 +162,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       pool.query("SELECT * FROM policies ORDER BY updated_at DESC NULLS LAST, title"),
       pool.query("SELECT * FROM assets ORDER BY name"),
       pool.query("SELECT * FROM roles ORDER BY name"),
+      pool.query("SELECT * FROM holidays ORDER BY date"),
     ]);
     res.json({
       users: users.rows.map(userToJs),
@@ -167,6 +175,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       policies: policies.rows.map(policyToJs),
       assets: assets.rows.map(assetToJs),
       roles: roles.rows.map(roleToJs),
+      holidays: holidays.rows.map(holidayToJs),
     });
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
@@ -370,6 +379,21 @@ app.put("/api/assets", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("assets sync error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/holidays", async (req, res) => {
+  try {
+    await replaceAll("holidays", req.body, (c, h) =>
+      c.query(
+        `INSERT INTO holidays (id, title, date, type) VALUES ($1,$2,$3,$4)`,
+        [h.id, h.title, h.date, h.type || "public"]
+      )
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("holidays sync error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });

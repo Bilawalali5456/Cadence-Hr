@@ -1,5 +1,6 @@
 export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
+export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
 export async function apiBootstrap() {
   const res = await fetch(`${API_URL}/bootstrap`);
@@ -36,5 +37,14 @@ export function loadSession() {
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
+  }
+}
+
+export function loadHolidays() {
+  try {
+    const raw = localStorage.getItem(HOLIDAYS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
   }
 }

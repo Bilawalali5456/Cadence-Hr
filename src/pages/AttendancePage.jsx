@@ -1,19 +1,19 @@
 import React, { useState } from "react";
 import { Users, Clock, Check, AlertTriangle, BadgeCheck, Trash2, LogOut, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcTotalBreakMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcTotalBreakMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, isPublicHolidayDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod } from "../utils.js";
 import { Pill, Avatar, Card, STitle, Btn, ErrBox } from "../components/ui.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
-export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles }) {
+export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [] }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
   const showReports = can(currentUser.role, "view_attendance_reports", roles);
 
   if (isHrAdminRole(currentUser.role) && showReports) {
     return (
       <div className="space-y-5">
-        <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} />
+        <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />
         <AdminAttendanceView
           users={users}
           attendance={attendance}
@@ -25,6 +25,7 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
           setUsers={setUsers}
           currentUser={currentUser}
           roles={roles}
+          holidays={holidays}
         />
       </div>
     );
@@ -43,14 +44,15 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
         setUsers={setUsers}
         currentUser={currentUser}
         roles={roles}
+        holidays={holidays}
       />
     );
   }
 
-  return <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} />;
+  return <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />;
 }
 
-export function EmployeeAttendanceFull({ user, attendance, setAttendance }) {
+export function EmployeeAttendanceFull({ user, attendance, setAttendance, holidays = [] }) {
   const history = attendance
     .filter(r => r.userId === user.id)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -58,7 +60,7 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance }) {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <EmployeeShiftPanel user={user} attendance={attendance} setAttendance={setAttendance} />
+      <EmployeeShiftPanel user={user} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200"><STitle>My attendance history</STitle></div>
         <div className="overflow-x-auto">
@@ -74,7 +76,7 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance }) {
               {history.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(user, r));
+                const ds = dayStatusPill(resolveDayStatus(user, r, r.date, holidays));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -96,7 +98,7 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance }) {
   );
 }
 
-export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles }) {
+export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [] }) {
   const [period, setPeriod] = useState("daily");
   const staffRoster = employeeRoster(users);
   const allStaff = staffRoster.filter(u => u.status === "active");
@@ -104,6 +106,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     ? activeAttendanceRoster(users, currentUser.role)
     : allStaff;
   const visibleIds = attendanceVisibleUserIds(users, currentUser.role);
+  const today = todayKey();
+  const nonWorkingToday = isWeekendDate(today) || isPublicHolidayDate(today, holidays);
   const pendingShort = shortLeaveRequests.filter(r =>
     r.status === "pending" && canApproveShortLeaveRequest(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
@@ -137,7 +141,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   }
 
   const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && !r?.checkOut; });
-  const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u); });
+  const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
   const autoToday = attendance.filter(r => r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
 
   const reportRows = filterAttendanceByPeriod(attendance, period)
@@ -208,7 +212,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
           { label: "Auto checkouts", value: autoToday.length, icon: Clock },
-          { label: "Absent today", value: isWeekendDate(todayKey()) ? 0 : liveRoster.filter(u => !getUserTodayRecord(attendance, u.id)?.checkIn).length, icon: Users },
+          { label: "Absent today", value: nonWorkingToday ? 0 : liveRoster.filter(u => !getUserTodayRecord(attendance, u.id)?.checkIn).length, icon: Users },
           { label: `${period} hours`, value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
@@ -240,7 +244,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
-                const ds = dayStatusPill(resolveDayStatus(u, r));
+                const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays));
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
@@ -255,7 +259,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 text-xs tabular-nums text-slate-600">{formatShiftRange(u)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
-                      {r?.checkIn && isLateCheckIn(r.checkIn, u) && <Pill tone="amber">Late</Pill>}
+                      {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="amber">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkOut)}
@@ -304,7 +308,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               {reportRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(r.user, r));
+                const ds = dayStatusPill(resolveDayStatus(r.user, r, r.date, holidays));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -312,7 +316,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 text-xs tabular-nums text-slate-600">{r.shift}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r.checkIn)}
-                      {r.checkIn && isLateCheckIn(r.checkIn, r.user) && <Pill tone="amber">Late</Pill>}
+                      {r.checkIn && isLateCheckIn(r.checkIn, r.user, holidays) && <Pill tone="amber">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{formatTime(r.checkOut)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{formatDurationMs(calcTotalBreakMs(r))}</td>

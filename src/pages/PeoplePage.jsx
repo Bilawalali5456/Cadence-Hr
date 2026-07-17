@@ -9,7 +9,7 @@ import { EmployeeForm } from "../components/EmployeeForm.jsx";
 export function PeoplePage({
   users, setUsers, currentUser, attendance, setAttendance,
   payroll = [], setPayroll, leaveRequests = [], setLeaveRequests,
-  shortLeaveRequests = [], setShortLeaveRequests, roles,
+  shortLeaveRequests = [], setShortLeaveRequests, roles, holidays = [],
 }) {
   const canManage = can(currentUser.role, "manage_employees", roles);
   const readOnly = !canManage;
@@ -259,7 +259,7 @@ export function PeoplePage({
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
                     const r = getUserTodayRecord(attendance, u.id);
-                    const ds = dayStatusPill(resolveDayStatus(u, r));
+                    const ds = dayStatusPill(resolveDayStatus(u, r, r.date, holidays));
                     return <Pill tone={ds.tone}>{ds.label}</Pill>;
                   })()}
                 </td>
@@ -577,7 +577,7 @@ export function PeoplePage({
                     <div className="font-medium text-slate-700 mb-1">Today's shift · {formatShiftRange(sel)}</div>
                     {(() => {
                       const r = getUserTodayRecord(attendance, sel.id);
-                      const ds = dayStatusPill(resolveDayStatus(sel, r));
+                      const ds = dayStatusPill(resolveDayStatus(sel, r, r.date, holidays));
                       return (
                         <div className="flex flex-wrap gap-2 items-center text-slate-600">
                           <span>In {formatTime(r?.checkIn)}</span>
@@ -602,11 +602,11 @@ export function PeoplePage({
                         {attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).length === 0 ? (
                           <tr><td colSpan={managingSel() ? 7 : 6} className="px-3 py-6 text-center text-slate-400">No attendance records yet.</td></tr>
                         ) : attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).map(r => {
-                          const ds = dayStatusPill(resolveDayStatus(sel, r));
+                          const ds = dayStatusPill(resolveDayStatus(sel, r, r.date, holidays));
                           return (
                             <tr key={r.id} className="border-b border-slate-50 last:border-0">
                               <td className="px-3 py-2">{formatDate(r.date)}</td>
-                              <td className="px-3 py-2 tabular-nums">{formatTime(r.checkIn)}{r.checkIn && isLateCheckIn(r.checkIn, sel) && <Pill tone="amber">Late</Pill>}</td>
+                              <td className="px-3 py-2 tabular-nums">{formatTime(r.checkIn)}{r.checkIn && isLateCheckIn(r.checkIn, sel, holidays) && <Pill tone="amber">Late</Pill>}</td>
                               <td className="px-3 py-2 tabular-nums">{formatTime(r.checkOut)}{r.autoCheckout && <Pill tone="amber">Auto</Pill>}</td>
                               <td className="px-3 py-2 tabular-nums">{formatDurationMs(calcTotalBreakMs(r))}</td>
                               <td className="px-3 py-2 tabular-nums">{displayWorkingHours(r, sel)}</td>
