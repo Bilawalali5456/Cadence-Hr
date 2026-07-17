@@ -1,7 +1,7 @@
 import React from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 
@@ -9,8 +9,8 @@ export function HrAdminOversightPanel({
   users, attendance, shortLeaveRequests, leaveRequests,
   currentUser, setAttendance, setShortLeaveRequests, setLeaveRequests, setUsers, roles,
 }) {
-  const pendingShort = shortLeaveRequests.filter(r => r.status === "pending" && isHrAdminRequest(r, users));
-  const pendingLeave = leaveRequests.filter(r => r.status === "pending" && isHrAdminRequest(r, users));
+  const pendingShort = (shortLeaveRequests || []).filter(r => r && r.status === "pending" && isHrAdminRequest(r, users));
+  const pendingLeave = (leaveRequests || []).filter(r => r && r.status === "pending" && isHrAdminRequest(r, users));
   if (pendingShort.length === 0 && pendingLeave.length === 0) return null;
 
   function adjustBalance(userId, type, delta) {
@@ -187,8 +187,8 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     return r?.checkIn && !r?.checkOut;
   });
 
-  const pendingShort = shortLeaveRequests.filter(r =>
-    r.status === "pending" && canApproveShortLeaveRequest(me, r, users, roles)
+  const pendingShort = (shortLeaveRequests || []).filter(r =>
+    r && r.status === "pending" && canApproveShortLeaveRequest(me, r, users, roles)
     && !(isExecutiveRole(role) && isHrAdminRequest(r, users))
   );
 
@@ -297,7 +297,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="divide-y divide-slate-100">
             {todayRoster.map(u => {
               const r = getUserTodayRecord(attendance, u.id);
-              const ds = dayStatusPill(resolveDayStatus(u, r, r.date, holidays));
+              const ds = dayStatusPill(resolveDayStatus(u, r, r?.date ?? todayKey(), holidays));
               return (
                 <div key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar name={u.name} />

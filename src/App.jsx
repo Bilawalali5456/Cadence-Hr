@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, loadSession, loadHolidays } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -61,7 +61,7 @@ export default function App() {
   const [payroll,       setPayroll]       = useState([]);
   const [policies,      setPolicies]      = useState([]);
   const [assets,        setAssets]        = useState([]);
-  const [holidays,      setHolidays]      = useState(loadHolidays);
+  const [holidays,      setHolidays]      = useState(() => sanitizeHolidays(loadHolidays()));
   const [roles,         setRoles]         = useState([]);
   const [company,       setCompany]       = useState(DEFAULT_COMPANY);
   const [session,       setSession]       = useState(loadSession);
@@ -75,14 +75,14 @@ export default function App() {
     apiBootstrap()
       .then(d => {
         setUsers(d.users || []);
-        setAttendance(d.attendance || []);
-        setLeaveRequests(d.leave || []);
-        setShortLeaveRequests(d.shortLeave || []);
-        setAnnouncements(d.announcements || []);
+        setAttendance(sanitizeAttendance(d.attendance));
+        setLeaveRequests(sanitizeLeaveRequests(d.leave));
+        setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
+        setAnnouncements(sanitizeAnnouncements(d.announcements));
         setPayroll(d.payroll || []);
         setPolicies(d.policies || []);
         setAssets(d.assets || []);
-        setHolidays(d.holidays?.length ? d.holidays : loadHolidays());
+        setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
         setRoles(d.roles || []);
         setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
         loadedRef.current = true;
@@ -126,7 +126,7 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
-    if (loadedRef.current) localStorage.setItem(HOLIDAYS_STORAGE_KEY, JSON.stringify(holidays));
+    if (loadedRef.current) localStorage.setItem(HOLIDAYS_STORAGE_KEY, JSON.stringify(sanitizeHolidays(holidays)));
   }, [holidays]);
 
   const currentUser = session ? users.find(u => u.id === session.userId) : null;

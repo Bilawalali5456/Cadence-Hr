@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox } from "../components/ui.jsx";
 import { EmployeeForm } from "../components/EmployeeForm.jsx";
 
@@ -259,7 +259,7 @@ export function PeoplePage({
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
                     const r = getUserTodayRecord(attendance, u.id);
-                    const ds = dayStatusPill(resolveDayStatus(u, r, r.date, holidays));
+                    const ds = dayStatusPill(resolveDayStatus(u, r, r?.date ?? todayKey(), holidays));
                     return <Pill tone={ds.tone}>{ds.label}</Pill>;
                   })()}
                 </td>
@@ -485,11 +485,11 @@ export function PeoplePage({
                     <>
                       <div>
                         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Leave requests</div>
-                        {leaveRequests.filter(r => r.userId === sel.id).length === 0 ? (
+                        {(leaveRequests || []).filter(r => r && r.userId === sel.id).length === 0 ? (
                           <p className="text-xs text-slate-400 p-3 rounded-lg bg-slate-50">No leave requests on file.</p>
                         ) : (
                           <div className="space-y-2">
-                            {leaveRequests.filter(r => r.userId === sel.id).map(r => (
+                            {(leaveRequests || []).filter(r => r && r.userId === sel.id).map(r => (
                               <div key={r.id} className="p-3 rounded-lg border border-slate-100 text-xs flex items-start gap-2">
                                 <div className="flex-1">
                                   <div className="font-medium text-slate-800">{r.type} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
@@ -513,11 +513,11 @@ export function PeoplePage({
                       </div>
                       <div>
                         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Short leave requests</div>
-                        {shortLeaveRequests.filter(r => r.userId === sel.id).length === 0 ? (
+                        {(shortLeaveRequests || []).filter(r => r && r.userId === sel.id).length === 0 ? (
                           <p className="text-xs text-slate-400 p-3 rounded-lg bg-slate-50">No short leave requests on file.</p>
                         ) : (
                           <div className="space-y-2">
-                            {shortLeaveRequests.filter(r => r.userId === sel.id).map(r => (
+                            {(shortLeaveRequests || []).filter(r => r && r.userId === sel.id).map(r => (
                               <div key={r.id} className="p-3 rounded-lg border border-slate-100 text-xs flex items-start gap-2">
                                 <div className="flex-1">
                                   <div className="font-medium text-slate-800">{formatDate(r.date)} · {r.fromTime} – {r.toTime} · {r.minutes} min</div>
@@ -577,7 +577,7 @@ export function PeoplePage({
                     <div className="font-medium text-slate-700 mb-1">Today's shift · {formatShiftRange(sel)}</div>
                     {(() => {
                       const r = getUserTodayRecord(attendance, sel.id);
-                      const ds = dayStatusPill(resolveDayStatus(sel, r, r.date, holidays));
+                      const ds = dayStatusPill(resolveDayStatus(sel, r, r?.date ?? todayKey(), holidays));
                       return (
                         <div className="flex flex-wrap gap-2 items-center text-slate-600">
                           <span>In {formatTime(r?.checkIn)}</span>
@@ -599,10 +599,10 @@ export function PeoplePage({
                         </tr>
                       </thead>
                       <tbody>
-                        {attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).length === 0 ? (
+                        {(attendance || []).filter(r => r && r.userId === sel.id && r.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).length === 0 ? (
                           <tr><td colSpan={managingSel() ? 7 : 6} className="px-3 py-6 text-center text-slate-400">No attendance records yet.</td></tr>
-                        ) : attendance.filter(r => r.userId === sel.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).map(r => {
-                          const ds = dayStatusPill(resolveDayStatus(sel, r, r.date, holidays));
+                        ) : (attendance || []).filter(r => r && r.userId === sel.id && r.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).map(r => {
+                          const ds = dayStatusPill(resolveDayStatus(sel, r, r?.date ?? todayKey(), holidays));
                           return (
                             <tr key={r.id} className="border-b border-slate-50 last:border-0">
                               <td className="px-3 py-2">{formatDate(r.date)}</td>

@@ -4,7 +4,8 @@ import { B } from "../brand.jsx";
 import { can } from "../utils.js";
 import { Card, Modal, TextInput, Btn } from "../components/ui.jsx";
 
-export function AnnouncementsPage({ currentUser, anns, setAnns, roles }) {
+export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles }) {
+  const list = (anns || []).filter(a => a && a.id);
   const canManage = can(currentUser.role, "manage_announcements", roles);
   const [addOpen, setAddOpen] = useState(false);
   const [nt, setNt] = useState(""); const [nb, setNb] = useState("");
@@ -23,10 +24,10 @@ export function AnnouncementsPage({ currentUser, anns, setAnns, roles }) {
   return (
     <div className="max-w-2xl space-y-4">
       {canManage && <Btn onClick={() => setAddOpen(true)}><Plus size={14} />New announcement</Btn>}
-      {anns.length === 0 && (
+      {list.length === 0 && (
         <Card className="p-8 text-center text-slate-400 text-sm">No announcements yet.</Card>
       )}
-      {anns.map(a => (
+      {list.map(a => (
         <Card key={a.id} className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">

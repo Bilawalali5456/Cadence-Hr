@@ -4,7 +4,7 @@ import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
-export function LeavePage({ currentUser, requests, setRequests, users, setUsers, roles }) {
+export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles }) {
   const [form, setForm] = useState({ type: "Annual", from: "", to: "", note: "" });
   const [msg,  setMsg]  = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);

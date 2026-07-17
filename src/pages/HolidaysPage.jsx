@@ -83,7 +83,8 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
   );
 }
 
-export function HolidaysPage({ currentUser, holidays, setHolidays }) {
+export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
+  const safeHolidays = (holidays || []).filter(h => h && h.date);
   const canManage = isHrAdminRole(currentUser.role);
   const today = todayKey();
   const year = new Date().getFullYear();
@@ -94,12 +95,12 @@ export function HolidaysPage({ currentUser, holidays, setHolidays }) {
   const [calMonth, setCalMonth] = useState(() => new Date());
 
   const sorted = useMemo(
-    () => [...holidays].sort((a, b) => a.date.localeCompare(b.date)),
-    [holidays]
+    () => [...safeHolidays].sort((a, b) => a.date.localeCompare(b.date)),
+    [safeHolidays]
   );
 
-  const upcoming = useMemo(() => upcomingHolidays(holidays, today), [holidays, today]);
-  const remainingCount = remainingPublicHolidaysThisYear(holidays, year);
+  const upcoming = useMemo(() => upcomingHolidays(safeHolidays, today), [safeHolidays, today]);
+  const remainingCount = remainingPublicHolidaysThisYear(safeHolidays, year);
 
   function openAdd() {
     setForm({ title: "", date: "", type: "public" });
@@ -110,11 +111,11 @@ export function HolidaysPage({ currentUser, holidays, setHolidays }) {
   function saveHoliday() {
     if (!form.title.trim()) { setFerr("Holiday title is required."); return; }
     if (!form.date) { setFerr("Date is required."); return; }
-    if (holidays.some(h => h.date === form.date && h.title.toLowerCase() === form.title.trim().toLowerCase())) {
+    if (safeHolidays.some(h => h.date === form.date && h.title.toLowerCase() === form.title.trim().toLowerCase())) {
       setFerr("A holiday with this title and date already exists.");
       return;
     }
-    setHolidays(prev => [...prev, {
+    setHolidays(prev => [...(prev || []).filter(h => h && h.date), {
       id: "hol-" + Date.now(),
       title: form.title.trim(),
       date: form.date,
@@ -125,7 +126,7 @@ export function HolidaysPage({ currentUser, holidays, setHolidays }) {
 
   function deleteHoliday(id) {
     if (!window.confirm("Delete this holiday?")) return;
-    setHolidays(prev => prev.filter(h => h.id !== id));
+    setHolidays(prev => (prev || []).filter(h => h && h.id !== id));
   }
 
   function shiftMonth(delta) {
@@ -217,7 +218,7 @@ export function HolidaysPage({ currentUser, holidays, setHolidays }) {
       </div>
 
       <MonthCalendar
-        holidays={holidays}
+        holidays={safeHolidays}
         monthDate={calMonth}
         onPrev={() => shiftMonth(-1)}
         onNext={() => shiftMonth(1)}

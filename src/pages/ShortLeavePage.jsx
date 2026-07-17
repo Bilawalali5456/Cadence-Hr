@@ -4,7 +4,7 @@ import { B } from "../brand.jsx";
 import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
-export function ShortLeavePage({ currentUser, requests, setRequests, users, attendance, setAttendance, roles }) {
+export function ShortLeavePage({ currentUser, requests = [], setRequests, users, attendance, setAttendance, roles }) {
   const [form, setForm] = useState({ date: todayKey(), from: "", to: "", reason: "" });
   const [msg, setMsg] = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);

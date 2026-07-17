@@ -53,8 +53,8 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
 }
 
 export function EmployeeAttendanceFull({ user, attendance, setAttendance, holidays = [] }) {
-  const history = attendance
-    .filter(r => r.userId === user.id)
+  const history = (attendance || [])
+    .filter(r => r && r.userId === user.id && r.date)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 14);
 
@@ -76,7 +76,7 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance, holida
               {history.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(user, r, r.date, holidays));
+                const ds = dayStatusPill(resolveDayStatus(user, r, r?.date ?? todayKey(), holidays));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -108,8 +108,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const visibleIds = attendanceVisibleUserIds(users, currentUser.role);
   const today = todayKey();
   const nonWorkingToday = isWeekendDate(today) || isPublicHolidayDate(today, holidays);
-  const pendingShort = shortLeaveRequests.filter(r =>
-    r.status === "pending" && canApproveShortLeaveRequest(currentUser, r, users, roles)
+  const pendingShort = (shortLeaveRequests || []).filter(r =>
+    r && r.status === "pending" && canApproveShortLeaveRequest(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
   );
 
@@ -142,7 +142,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
 
   const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && !r?.checkOut; });
   const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
-  const autoToday = attendance.filter(r => r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
+  const autoToday = (attendance || []).filter(r => r && r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
 
   const reportRows = filterAttendanceByPeriod(attendance, period)
     .filter(r => visibleIds.has(r.userId))
@@ -308,7 +308,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               {reportRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(r.user, r, r.date, holidays));
+                const ds = dayStatusPill(resolveDayStatus(r.user, r, r?.date ?? todayKey(), holidays));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>

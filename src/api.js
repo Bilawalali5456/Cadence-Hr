@@ -43,8 +43,33 @@ export function loadSession() {
 export function loadHolidays() {
   try {
     const raw = localStorage.getItem(HOLIDAYS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return sanitizeHolidays(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
+}
+
+/** Drop null/undefined entries from API or localStorage arrays. */
+export function safeList(arr) {
+  return Array.isArray(arr) ? arr.filter(Boolean) : [];
+}
+
+export function sanitizeHolidays(list) {
+  return safeList(list).filter(h => h && h.date && h.title);
+}
+
+export function sanitizeAttendance(list) {
+  return safeList(list).filter(r => r && r.userId && r.date);
+}
+
+export function sanitizeLeaveRequests(list) {
+  return safeList(list).filter(r => r && r.userId);
+}
+
+export function sanitizeShortLeaveRequests(list) {
+  return safeList(list).filter(r => r && r.userId && r.date);
+}
+
+export function sanitizeAnnouncements(list) {
+  return safeList(list).filter(a => a && a.id);
 }

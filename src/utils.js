@@ -43,30 +43,33 @@ export function canSelfSubmitLeave(role) {
 }
 
 export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
+  const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
-  if (isExecutiveRole(role)) return requests;
+  if (isExecutiveRole(role)) return list;
   if (isHrAdminRole(role)) {
-    return requests.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
+    return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
   if (can(role, "approve_short_leave", roles)) {
-    return requests.filter(r => !isHrAdminRequest(r, users));
+    return list.filter(r => !isHrAdminRequest(r, users));
   }
-  return requests.filter(r => r.userId === currentUser.id);
+  return list.filter(r => r.userId === currentUser.id);
 }
 
 export function visibleLeaveRequests(requests, currentUser, users, roles) {
+  const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
-  if (isExecutiveRole(role)) return requests;
+  if (isExecutiveRole(role)) return list;
   if (isHrAdminRole(role)) {
-    return requests.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
+    return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
   if (can(role, "approve_leave", roles)) {
-    return requests.filter(r => !isHrAdminRequest(r, users));
+    return list.filter(r => !isHrAdminRequest(r, users));
   }
-  return requests.filter(r => r.userId === currentUser.id);
+  return list.filter(r => r.userId === currentUser.id);
 }
 
 export function canApproveShortLeaveRequest(approver, req, users, roles) {
+  if (!req) return false;
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_short_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
@@ -74,6 +77,7 @@ export function canApproveShortLeaveRequest(approver, req, users, roles) {
 }
 
 export function canApproveLeaveRequest(approver, req, users, roles) {
+  if (!req) return false;
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
@@ -309,10 +313,11 @@ export function canCheckOut(now, user, record) {
 }
 
 export function performCheckIn(attendance, userId, user, now = new Date(), holidays = []) {
+  const list = attendance || [];
   const key = todayKey(now);
-  const existing = attendance.find(r => r.userId === userId && r.date === key);
+  const existing = list.find(r => r && r.userId === userId && r.date === key);
   const gate = canCheckIn(now, user, existing, holidays);
-  if (!gate.ok) return { attendance, error: gate.msg };
+  if (!gate.ok) return { attendance: list, error: gate.msg };
   const record = {
     id: "att-" + Date.now(),
     userId,
@@ -325,45 +330,48 @@ export function performCheckIn(attendance, userId, user, now = new Date(), holid
     breakEnd: null,
     autoCheckout: false,
   };
-  const next = [...attendance.filter(r => !(r.userId === userId && r.date === key)), finalizeRecord(record, user, holidays)];
+  const next = [...list.filter(r => !(r && r.userId === userId && r.date === key)), finalizeRecord(record, user, holidays)];
   return { attendance: next, error: null };
 }
 
 export function performCheckOut(attendance, userId, user, now = new Date()) {
+  const list = attendance || [];
   const key = todayKey(now);
-  const existing = attendance.find(r => r.userId === userId && r.date === key);
+  const existing = list.find(r => r && r.userId === userId && r.date === key);
   const gate = canCheckOut(now, user, existing);
-  if (!gate.ok) return { attendance, error: gate.msg };
-  const next = attendance.map(r => {
-    if (r.userId !== userId || r.date !== key) return r;
+  if (!gate.ok) return { attendance: list, error: gate.msg };
+  const next = list.map(r => {
+    if (!r || r.userId !== userId || r.date !== key) return r;
     return finalizeRecord({ ...r, checkOut: now.toISOString() }, user);
   });
   return { attendance: next, error: null };
 }
 
 export function performBreakStart(attendance, userId, user, now = new Date()) {
+  const list = attendance || [];
   const key = todayKey(now);
-  const existing = attendance.find(r => r.userId === userId && r.date === key);
-  if (!existing?.checkIn || existing.checkOut) return { attendance, error: "Check in before starting a break." };
-  if (existing.breakStart && !existing.breakEnd) return { attendance, error: "Break already in progress." };
+  const existing = list.find(r => r && r.userId === userId && r.date === key);
+  if (!existing?.checkIn || existing.checkOut) return { attendance: list, error: "Check in before starting a break." };
+  if (existing.breakStart && !existing.breakEnd) return { attendance: list, error: "Break already in progress." };
   const bounds = getShiftBounds(user, key);
-  if (now < bounds.start || now > bounds.end) return { attendance, error: "Breaks are only allowed during your shift." };
-  const next = attendance.map(r =>
-    r.userId === userId && r.date === key ? { ...r, breakStart: now.toISOString(), breakEnd: null } : r
-  );
+  if (now < bounds.start || now > bounds.end) return { attendance: list, error: "Breaks are only allowed during your shift." };
+  const next = list.map(r =>
+    r && r.userId === userId && r.date === key ? { ...r, breakStart: now.toISOString(), breakEnd: null } : r
+  ).filter(Boolean);
   return { attendance: next, error: null };
 }
 
 export function performBreakEnd(attendance, userId, user, now = new Date()) {
+  const list = attendance || [];
   const key = todayKey(now);
-  const existing = attendance.find(r => r.userId === userId && r.date === key);
-  if (!existing?.breakStart || existing.breakEnd) return { attendance, error: "No active break to end." };
+  const existing = list.find(r => r && r.userId === userId && r.date === key);
+  if (!existing?.breakStart || existing.breakEnd) return { attendance: list, error: "No active break to end." };
   const breaks = [...(existing.breaks || []), { start: existing.breakStart, end: now.toISOString() }];
-  const next = attendance.map(r =>
-    r.userId === userId && r.date === key
+  const next = list.map(r =>
+    r && r.userId === userId && r.date === key
       ? { ...r, breaks, breakStart: null, breakEnd: null, totalBreakMs: calcTotalBreakMs({ ...r, breaks, breakStart: null, breakEnd: null }) }
       : r
-  );
+  ).filter(Boolean);
   return { attendance: next, error: null };
 }
 
@@ -394,7 +402,8 @@ export function buildShortLeaveRequest(user, dateKey, fromTime, toTime, reason) 
 
 export function applyApprovedShortLeave(attendance, users, request) {
   const user = users.find(u => u.id === request.userId);
-  if (!user) return attendance;
+  if (!user) return attendance || [];
+  const list = attendance || [];
   const entry = {
     id: request.id,
     start: request.startIso,
@@ -403,16 +412,16 @@ export function applyApprovedShortLeave(attendance, users, request) {
     status: "approved",
   };
   const key = request.date;
-  const existing = attendance.find(r => r.userId === request.userId && r.date === key);
+  const existing = list.find(r => r && r.userId === request.userId && r.date === key);
   if (existing) {
-    return attendance.map(r =>
-      r.userId === request.userId && r.date === key
+    return list.map(r =>
+      r && r.userId === request.userId && r.date === key
         ? finalizeRecord({
             ...r,
             shortLeaves: [...(r.shortLeaves || []).filter(sl => sl.id !== entry.id), entry],
           }, user)
         : r
-    );
+    ).filter(Boolean);
   }
   const record = finalizeRecord({
     id: "att-" + Date.now(),
@@ -424,27 +433,27 @@ export function applyApprovedShortLeave(attendance, users, request) {
     shortLeaves: [entry],
     autoCheckout: false,
   }, user);
-  return [...attendance, record];
+  return [...list, record];
 }
 
 export function removeShortLeaveFromAttendance(attendance, users, request) {
   const user = users.find(u => u.id === request.userId);
-  if (!user) return attendance;
-  return attendance
+  if (!user) return attendance || [];
+  return (attendance || [])
     .map(r => {
-      if (r.userId !== request.userId || r.date !== request.date) return r;
+      if (!r || r.userId !== request.userId || r.date !== request.date) return r;
       const shortLeaves = (r.shortLeaves || []).filter(sl => sl.id !== request.id);
       return finalizeRecord({ ...r, shortLeaves }, user);
     })
-    .filter(r => !(r.userId === request.userId && r.date === request.date && !r.checkIn && !r.checkOut && !(r.shortLeaves || []).length));
+    .filter(r => r && !(r.userId === request.userId && r.date === request.date && !r.checkIn && !r.checkOut && !(r.shortLeaves || []).length));
 }
 
 export function applyAutoCheckouts(attendance, users) {
   const now = new Date();
   const key = todayKey(now);
   let changed = false;
-  const next = attendance.map(r => {
-    if (r.date !== key || !r.checkIn || r.checkOut) return r;
+  const next = (attendance || []).map(r => {
+    if (!r || r.date !== key || !r.checkIn || r.checkOut) return r;
     const user = users.find(u => u.id === r.userId);
     if (!user) return r;
     const bounds = getShiftBounds(user, key);
@@ -492,7 +501,7 @@ export function isWeekendDate(dateOrKey) {
 
 export function getHolidayOnDate(dateKey, holidays = []) {
   const key = typeof dateKey === "string" ? dateKey.slice(0, 10) : todayKey(dateKey);
-  return (holidays || []).find(h => h.date === key) || null;
+  return (holidays || []).find(h => h && h.date === key) || null;
 }
 
 export function getPublicHoliday(dateKey, holidays = []) {
@@ -510,13 +519,14 @@ export function isNonWorkingDay(dateKey, holidays = []) {
 
 export function upcomingHolidays(holidays = [], fromDate = todayKey()) {
   return (holidays || [])
-    .filter(h => h.date >= fromDate)
+    .filter(h => h && h.date && h.date >= fromDate)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function remainingPublicHolidaysThisYear(holidays = [], year = new Date().getFullYear()) {
   const today = todayKey();
   return (holidays || []).filter(h =>
+    h && h.date &&
     h.type === "public" &&
     h.date.startsWith(String(year)) &&
     h.date >= today
@@ -589,7 +599,7 @@ export function hoursWorked(checkIn, checkOut) {
 
 export function getUserTodayRecord(attendance, userId) {
   const key = todayKey();
-  return attendance.find(r => r.userId === userId && r.date === key) || null;
+  return (attendance || []).find(r => r && r.userId === userId && r.date === key) || null;
 }
 
 export function attendanceStatus(record) {
@@ -608,21 +618,22 @@ export function weekStart(d = new Date()) {
 }
 
 export function filterAttendanceByPeriod(attendance, period, anchor = new Date()) {
+  const list = (attendance || []).filter(r => r && r.date);
   const key = todayKey(anchor);
-  if (period === "daily") return attendance.filter(r => r.date === key);
+  if (period === "daily") return list.filter(r => r.date === key);
   if (period === "weekly") {
     const start = weekStart(anchor);
     const end = new Date(start);
     end.setDate(end.getDate() + 6);
     end.setHours(23, 59, 59, 999);
-    return attendance.filter(r => {
+    return list.filter(r => {
       const d = new Date(r.date + "T12:00:00");
       return d >= start && d <= end;
     });
   }
   const y = anchor.getFullYear();
   const m = anchor.getMonth();
-  return attendance.filter(r => {
+  return list.filter(r => {
     const d = new Date(r.date + "T12:00:00");
     return d.getFullYear() === y && d.getMonth() === m;
   });
@@ -756,8 +767,9 @@ export function workingDaysInMonth(key, holidays = []) {
 }
 
 export function presentDaysInMonth(attendance, userId, key, holidays = []) {
-  return attendance.filter(r =>
-    r.userId === userId &&
+  return (attendance || []).filter(r =>
+    r && r.userId === userId &&
+    r.date &&
     r.date.startsWith(key) &&
     r.checkIn &&
     !isNonWorkingDay(r.date, holidays)
@@ -767,8 +779,9 @@ export function presentDaysInMonth(attendance, userId, key, holidays = []) {
 export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
   const user = users.find(u => u.id === userId);
   if (!user) return 0;
-  return attendance.filter(r =>
-    r.userId === userId &&
+  return (attendance || []).filter(r =>
+    r && r.userId === userId &&
+    r.date &&
     r.date.startsWith(key) &&
     r.checkIn &&
     !isNonWorkingDay(r.date, holidays) &&
@@ -779,7 +792,7 @@ export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
 /** Count approved paid/unpaid leave working days overlapping a payroll month. */
 export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;
-  for (const r of (leaveRequests || []).filter(x => x.userId === userId && x.status === "approved")) {
+  for (const r of (leaveRequests || []).filter(x => x && x.userId === userId && x.status === "approved" && x.from && x.to)) {
     const days = enumerateWorkingDays(r.from, r.to, holidays);
     let paidLeft = leavePaidDays(r);
     let unpaidLeft = leaveUnpaidDays(r);
