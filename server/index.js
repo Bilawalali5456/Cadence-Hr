@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
 import path from "path";
+import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { sendCredentialsEmail, sendNotificationEmail } from "./mail.js";
 
@@ -10,6 +11,9 @@ dotenv.config();
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.join(__dirname, "..", "dist");
 
 const app = express();
 app.use(cors());
@@ -520,15 +524,29 @@ app.post("/api/send-notification-email", async (req, res) => {
   }
 });
 
-const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
-const distPath = path.join(__dirname2, "..", "dist");
+/* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));
 app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
 });
 
+/** Apply schema.sql on every startup — creates missing tables/columns/seeds safely. */
+async function ensureSchema() {
+  const schema = readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  await pool.query(schema);
+  console.log("✓ All tables verified");
+}
+
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);
-  console.log(`  Health check: http://localhost:${PORT}/api/health`);
-});
+
+ensureSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);
+      console.log(`  Health check: http://localhost:${PORT}/api/health`);
+    });
+  })
+  .catch((e) => {
+    console.error("Schema error:", e.message);
+    process.exit(1);
+  });

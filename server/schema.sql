@@ -1,5 +1,9 @@
 -- Adforce HR Database Schema
--- Run automatically by: npm run setup
+-- Applied automatically on server startup (server/index.js → ensureSchema)
+-- Also run manually via: cd server && npm run setup
+--
+-- When adding a new table: use CREATE TABLE IF NOT EXISTS below.
+-- When adding columns: use ALTER TABLE ... ADD COLUMN IF NOT EXISTS in migrations section.
 
 CREATE TABLE IF NOT EXISTS users (
   id                          TEXT PRIMARY KEY,
