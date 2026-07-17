@@ -1,20 +1,43 @@
 import React, { useState } from "react";
 import { Save, KeyRound } from "lucide-react";
 import { B } from "../brand.jsx";
+import { apiChangePassword } from "../api.js";
 import { PwInput, PwStrength, Btn, ErrBox } from "../components/ui.jsx";
 
-export function ForcePasswordChange({ onDone }) {
+export function ForcePasswordChange({ userId, currentPassword, onDone }) {
   const [pw, setPw]     = useState("");
   const [conf, setConf] = useState("");
   const [err, setErr]   = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function save() {
+  async function save() {
     setErr("");
+    if (!currentPassword) {
+      setErr("Session expired. Please sign out and sign in again with your temporary password.");
+      return;
+    }
     if (pw.length < 8)         { setErr("Password must be at least 8 characters."); return; }
     if (!/[A-Z]/.test(pw))     { setErr("Password must contain at least one uppercase letter."); return; }
     if (!/\d/.test(pw))        { setErr("Password must contain at least one number."); return; }
     if (pw !== conf)            { setErr("Passwords do not match."); return; }
-    onDone(pw);
+
+    setLoading(true);
+    try {
+      const data = await apiChangePassword({
+        userId,
+        currentPassword,
+        newPassword: pw,
+      });
+      if (!data.ok) {
+        setErr(data.error || "Failed to change password.");
+        return;
+      }
+      onDone();
+    } catch (e) {
+      setErr(e.message || "Failed to change password.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -39,7 +62,9 @@ export function ForcePasswordChange({ onDone }) {
           </div>
           <PwInput label="Confirm password" value={conf} onChange={setConf} />
           <ErrBox msg={err} />
-          <Btn onClick={save} className="w-full justify-center"><Save size={14} />Save password</Btn>
+          <Btn onClick={save} disabled={loading} className="w-full justify-center">
+            <Save size={14} />{loading ? "Saving…" : "Save password"}
+          </Btn>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Bell, Check, LogOut, User, Save, Key, Shield, Building, Phone, Mail, ToggleLeft, ToggleRight } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can } from "../utils.js";
+import { apiChangePassword } from "../api.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, PwInput, PwStrength, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
 export function SettingsPage({ currentUser, users, setUsers, onLogout, company, setCompany, roles }) {
@@ -17,6 +18,7 @@ export function SettingsPage({ currentUser, users, setUsers, onLogout, company, 
   const [pw,    setPw]    = useState({ curr: "", newp: "", conf: "" });
   const [pwErr, setPwErr] = useState("");
   const [pwOk,  setPwOk]  = useState(false);
+  const [pwLoading, setPwLoading] = useState(false);
   const [notifs, setNotifs] = useState({ leave: true, payroll: true, ann: true, att: false, weekly: true });
 
   const canManageCompany = can(currentUser.role, "manage_company_settings", roles);
@@ -26,15 +28,35 @@ export function SettingsPage({ currentUser, users, setUsers, onLogout, company, 
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
 
-  function changePw() {
+  async function changePw() {
     setPwErr(""); setPwOk(false);
-    if (currentUser.password !== pw.curr)  { setPwErr("Current password is incorrect."); return; }
+    if (!pw.curr)                          { setPwErr("Current password is required."); return; }
     if (pw.newp.length < 8)                { setPwErr("Password must be at least 8 characters."); return; }
     if (!/[A-Z]/.test(pw.newp))            { setPwErr("Password must include an uppercase letter."); return; }
     if (!/\d/.test(pw.newp))               { setPwErr("Password must include a number."); return; }
     if (pw.newp !== pw.conf)               { setPwErr("Passwords do not match."); return; }
-    setUsers(us => us.map(u => u.id === currentUser.id ? { ...u, password: pw.newp } : u));
-    setPwOk(true); setPw({ curr: "", newp: "", conf: "" });
+
+    setPwLoading(true);
+    try {
+      const data = await apiChangePassword({
+        userId: currentUser.id,
+        currentPassword: pw.curr,
+        newPassword: pw.newp,
+      });
+      if (!data.ok) {
+        setPwErr(data.error || "Failed to change password.");
+        return;
+      }
+      setUsers(us => us.map(u => u.id === currentUser.id
+        ? { ...u, password: undefined, tempPassword: undefined, firstLogin: false }
+        : u));
+      setPwOk(true);
+      setPw({ curr: "", newp: "", conf: "" });
+    } catch (e) {
+      setPwErr(e.message || "Failed to change password.");
+    } finally {
+      setPwLoading(false);
+    }
   }
 
   const tabs = [
@@ -99,7 +121,7 @@ export function SettingsPage({ currentUser, users, setUsers, onLogout, company, 
               <PwInput label="Confirm new password" value={pw.conf} onChange={v => setPw({ ...pw, conf: v })} />
               <ErrBox msg={pwErr} />
               <OkBox  msg={pwOk ? "Password changed successfully." : ""} />
-              <Btn onClick={changePw}><Key size={14} />Change password</Btn>
+              <Btn onClick={changePw} disabled={pwLoading}><Key size={14} />{pwLoading ? "Saving…" : "Change password"}</Btn>
             </div>
           </Card>
         )}

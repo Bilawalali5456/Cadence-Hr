@@ -5,6 +5,7 @@ import pg from "pg";
 import path from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
+import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail } from "./mail.js";
 
 dotenv.config();
@@ -18,6 +19,26 @@ const distPath = path.join(__dirname, "..", "dist");
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
+
+function isBcryptHash(pw) {
+  return typeof pw === "string" && (pw.startsWith("$2a$") || pw.startsWith("$2b$"));
+}
+
+function hashPasswordIfNeeded(pw) {
+  if (!pw) return pw;
+  if (isBcryptHash(pw)) return pw;
+  return bcryptjs.hashSync(String(pw), 10);
+}
+
+/** Resolve password for user save: preserve DB hash, avoid re-hashing same plain text on every sync. */
+function resolvePasswordForSave(incomingPassword, existingHash) {
+  if (!incomingPassword) return existingHash || hashPasswordIfNeeded("changeme");
+  if (isBcryptHash(incomingPassword)) return incomingPassword;
+  if (existingHash && isBcryptHash(existingHash) && bcryptjs.compareSync(String(incomingPassword), existingHash)) {
+    return existingHash;
+  }
+  return bcryptjs.hashSync(String(incomingPassword), 10);
+}
 
 /* ─── Row mappers: snake_case (DB) ↔ camelCase (frontend) ─── */
 
@@ -51,6 +72,13 @@ const userToJs = (r) => ({
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
 });
+
+/** Public user payload — never include password or tempPassword. */
+const userToSafeJs = (r) => {
+  const u = userToJs(r);
+  const { password, tempPassword, ...safe } = u;
+  return safe;
+};
 
 const attToJs = (r) => ({
   id: r.id,
@@ -181,7 +209,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       pool.query("SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"),
     ]);
     res.json({
-      users: users.rows.map(userToJs),
+      users: users.rows.map(userToSafeJs),
       attendance: attendance.rows.map(attToJs),
       leave: leave.rows.map(leaveToJs),
       shortLeave: shortLeave.rows.map(shortLeaveToJs),
@@ -220,8 +248,12 @@ async function replaceAll(table, rows, insertFn) {
 
 app.put("/api/users", async (req, res) => {
   try {
-    await replaceAll("users", req.body, (c, u) =>
-      c.query(
+    const { rows: existingRows } = await pool.query("SELECT id, password FROM users");
+    const existingPasswords = Object.fromEntries(existingRows.map((r) => [r.id, r.password]));
+
+    await replaceAll("users", req.body, (c, u) => {
+      const password = resolvePasswordForSave(u.password, existingPasswords[u.id]);
+      return c.query(
         `INSERT INTO users (
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
@@ -232,20 +264,96 @@ app.put("/api/users", async (req, res) => {
            $21,$22,$23,$24,$25,$26,$27,$28,$29
          )`,
         [
-          u.id, u.name, u.email, u.password, u.role, u.title || "", u.dept || "", u.team || "",
+          u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
           u.leaveBalance ?? 24, 0, JSON.stringify(u.skills || []),
-          u.firstLogin || false, u.tempPassword || null, u.cnicEnc || null, u.maritalStatus || "",
+          u.firstLogin || false, null, u.cnicEnc || null, u.maritalStatus || "",
           u.guardianName || "", u.emergencyContactName || "", u.emergencyContactPhone || "", u.emergencyContactRelation || "",
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
           u.shift ? JSON.stringify(u.shift) : null,
         ]
-      )
-    );
+      );
+    });
     res.json({ ok: true });
   } catch (e) {
     console.error("users sync error:", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    if (!email || !password) {
+      return res.json({ ok: false, error: "Invalid credentials" });
+    }
+
+    const { rows } = await pool.query(
+      "SELECT * FROM users WHERE LOWER(email) = $1 LIMIT 1",
+      [email]
+    );
+    const row = rows[0];
+    if (!row) {
+      return res.json({ ok: false, error: "Invalid credentials" });
+    }
+
+    const stored = row.password || "";
+    let match = false;
+    if (isBcryptHash(stored)) {
+      match = bcryptjs.compareSync(password, stored);
+    } else {
+      // Legacy plain-text row (pre-migration) — allow once, then migrate on next startup/save
+      match = stored === password || row.temp_password === password;
+    }
+
+    if (!match) {
+      return res.json({ ok: false, error: "Invalid credentials" });
+    }
+
+    res.json({ ok: true, user: userToSafeJs(row) });
+  } catch (e) {
+    console.error("login error:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/change-password", async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body || {};
+    if (!userId || !currentPassword || !newPassword) {
+      return res.status(400).json({ ok: false, error: "userId, currentPassword, and newPassword are required" });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ ok: false, error: "Password must be at least 8 characters." });
+    }
+
+    const { rows } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ ok: false, error: "User not found" });
+    }
+
+    const stored = row.password || "";
+    let match = false;
+    if (isBcryptHash(stored)) {
+      match = bcryptjs.compareSync(String(currentPassword), stored);
+    } else {
+      match = stored === String(currentPassword) || row.temp_password === String(currentPassword);
+    }
+    if (!match) {
+      return res.json({ ok: false, error: "Current password is incorrect." });
+    }
+
+    const hashed = bcryptjs.hashSync(String(newPassword), 10);
+    await pool.query(
+      "UPDATE users SET password = $1, first_login = false, temp_password = NULL WHERE id = $2",
+      [hashed, userId]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("change-password error:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -537,9 +645,29 @@ async function ensureSchema() {
   console.log("✓ All tables verified");
 }
 
+/** One-time migration: hash any remaining plain-text passwords. */
+async function migratePlaintextPasswords() {
+  const { rows } = await pool.query("SELECT id, password FROM users");
+  let migrated = 0;
+  for (const row of rows) {
+    const pw = row.password || "";
+    if (!pw || isBcryptHash(pw)) continue;
+    const hashed = bcryptjs.hashSync(pw, 10);
+    await pool.query(
+      "UPDATE users SET password = $1, temp_password = NULL WHERE id = $2",
+      [hashed, row.id]
+    );
+    migrated += 1;
+  }
+  if (migrated > 0) {
+    console.log(`✓ Migrated ${migrated} plain-text password${migrated === 1 ? "" : "s"} to bcrypt`);
+  }
+}
+
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
+  .then(() => migratePlaintextPasswords())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);

@@ -477,10 +477,10 @@ export function PeoplePage({
                     <span className="text-slate-400">First login pending</span>
                     <span className="font-medium">{sel.firstLogin ? "Yes" : "No"}</span>
                   </div>
-                  {sel.firstLogin && sel.tempPassword && (
-                    <div className="p-3 rounded-lg text-xs font-mono bg-amber-50 border border-amber-200 text-amber-800">
-                      Temp password: {sel.tempPassword}
-                    </div>
+                  {sel.firstLogin && (
+                    <p className="text-xs text-slate-400 p-3 rounded-lg bg-amber-50 border border-amber-100">
+                      Waiting for employee to change their temporary password on first login. The temporary password was emailed to them.
+                    </p>
                   )}
                   {canResetPersonCredentials(currentUser, sel, roles) && (
                     <Btn size="sm" onClick={() => openReset(sel)}><RefreshCw size={13} />Reset credentials</Btn>

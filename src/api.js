@@ -10,11 +10,12 @@ export async function apiBootstrap() {
 
 export async function apiSave(collection, data) {
   try {
-    await fetch(`${API_URL}/${collection}`, {
+    const res = await fetch(`${API_URL}/${collection}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
+    if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
   } catch (e) {
     console.error(`Failed to sync ${collection}:`, e);
   }
@@ -65,6 +66,28 @@ export async function apiSendCredentials({ to, name, email, password, role, isRe
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Failed to send email");
+  return data;
+}
+
+export async function apiLogin(email, password) {
+  const res = await fetch(`${API_URL}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Login failed");
+  return data;
+}
+
+export async function apiChangePassword({ userId, currentPassword, newPassword }) {
+  const res = await fetch(`${API_URL}/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, currentPassword, newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to change password");
   return data;
 }
 

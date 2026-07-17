@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { ChevronRight, Eye, EyeOff, Lock, Mail, ArrowLeft } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
-import { LOGIN_ROLES, findUserByCredentials, loginRoleMatchesSelection } from "../utils.js";
+import { LOGIN_ROLES, loginRoleMatchesSelection } from "../utils.js";
+import { apiLogin } from "../api.js";
 import { TextInput, ErrBox } from "../components/ui.jsx";
 
-export function LoginPage({ users, onLogin }) {
+export function LoginPage({ onLogin }) {
   const [selectedRole, setSelectedRole] = useState(null);
   const [email,   setEmail]   = useState("");
   const [pw,      setPw]      = useState("");
@@ -15,27 +16,36 @@ export function LoginPage({ users, onLogin }) {
   const roleConfig = LOGIN_ROLES.find(r => r.id === selectedRole);
   const RoleIcon = roleConfig?.icon;
 
-  function handleLogin() {
+  async function handleLogin() {
     if (loading) return;
     const roleAtLogin = selectedRole;
-    setErr(""); setLoading(true);
-    setTimeout(() => {
-      const u = findUserByCredentials(users, email, pw);
-      if (u) {
-        if (u.status === "inactive") {
-          setErr("This account is inactive. Contact your administrator.");
-        } else if (!loginRoleMatchesSelection(roleAtLogin, u.role)) {
-          setErr(`This account is not registered as ${roleAtLogin}. Your role is ${u.role}.`);
-        } else {
-          onLogin(u);
-        }
-      } else if (!email.trim() || !pw.trim()) {
-        setErr("Email and password are required.");
-      } else {
-        setErr("Incorrect email or password.");
+    setErr("");
+    if (!email.trim() || !pw.trim()) {
+      setErr("Email and password are required.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await apiLogin(email.trim(), pw);
+      if (!data.ok || !data.user) {
+        setErr(data.error || "Incorrect email or password.");
+        return;
       }
+      const u = data.user;
+      if (u.status === "inactive") {
+        setErr("This account is inactive. Contact your administrator.");
+        return;
+      }
+      if (!loginRoleMatchesSelection(roleAtLogin, u.role)) {
+        setErr(`This account is not registered as ${roleAtLogin}. Your role is ${u.role}.`);
+        return;
+      }
+      onLogin(u, pw);
+    } catch (e) {
+      setErr(e.message || "Incorrect email or password.");
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   }
 
   function goBack() {
@@ -129,25 +139,26 @@ export function LoginPage({ users, onLogin }) {
                       onKeyDown={e => e.key === "Enter" && handleLogin()}
                       placeholder="••••••••"
                       autoComplete="current-password"
-                      className="w-full pl-8 pr-10 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                      className="w-full pl-8 pr-10 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 bg-white text-slate-900"
                     />
-                    <button type="button" onClick={() => setShow(s => !s)} className="absolute right-3 top-2.5 text-slate-400">
+                    <button type="button" onClick={() => setShow(s => !s)} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
                       {show ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                   </div>
                 </div>
                 <button
-                  onClick={handleLogin} disabled={loading}
-                  className="w-full py-2.5 text-sm font-bold rounded-lg text-white flex items-center justify-center gap-2 disabled:opacity-60"
-                  style={{ background: roleConfig?.color || B.dark }}>
-                  {loading
-                    ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Signing in...</>
-                    : "Sign in"}
+                  type="button"
+                  onClick={handleLogin}
+                  disabled={loading}
+                  className="w-full py-2.5 text-sm font-semibold text-white rounded-lg disabled:opacity-60"
+                  style={{ background: B.dark }}
+                >
+                  {loading ? "Signing in…" : "Sign in"}
                 </button>
+                <p className="text-xs text-center text-slate-400">
+                  Forgot your password? Contact your HR administrator.
+                </p>
               </div>
-              <p className="text-xs text-slate-400 text-center mt-5">
-                Forgot your password? Contact your HR administrator.
-              </p>
             </>
           )}
         </div>

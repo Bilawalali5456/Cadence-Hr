@@ -98,7 +98,27 @@ export default function App() {
   }, []);
 
   /* ── Sync each collection to PostgreSQL when it changes ── */
-  useEffect(() => { if (loadedRef.current) apiSave("users", users); }, [users]);
+  /* ── Sync users; strip plain passwords from memory after save so they are not re-sent ── */
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      await apiSave("users", users);
+      if (cancelled) return;
+      const hasPlain = users.some(u => {
+        const p = u?.password;
+        return p && !String(p).startsWith("$2a$") && !String(p).startsWith("$2b$");
+      });
+      if (!hasPlain) return;
+      setUsers(us => us.map(u => {
+        const p = u?.password;
+        if (!p || String(p).startsWith("$2a$") || String(p).startsWith("$2b$")) return u;
+        const { password, tempPassword, ...rest } = u;
+        return rest;
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, [users]);
   useEffect(() => { if (loadedRef.current) apiSave("attendance", attendance); }, [attendance]);
   useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
   useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
@@ -135,10 +155,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [session]);
 
-  /* ── Session stays in browser localStorage ── */
+  /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
-    if (session) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    else localStorage.removeItem(SESSION_STORAGE_KEY);
+    if (session) {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: session.userId }));
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
   }, [session]);
 
   useEffect(() => {
@@ -147,10 +170,28 @@ export default function App() {
 
   const currentUser = session ? users.find(u => u.id === session.userId) : null;
 
-  function handleLogin(u)  { setSession({ userId: u.id }); setRoute("home"); }
+  function handleLogin(u, loginPassword) {
+    setSession({
+      userId: u.id,
+      pendingTempPassword: u.firstLogin ? loginPassword : undefined,
+    });
+    // Merge login user into local users list (password fields never included)
+    setUsers(us => {
+      const { password, tempPassword, ...safe } = u;
+      const idx = us.findIndex(x => x.id === u.id);
+      if (idx >= 0) {
+        const next = [...us];
+        next[idx] = { ...next[idx], ...safe };
+        return next;
+      }
+      return [...us, safe];
+    });
+    setRoute("home");
+  }
   function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
-  function handleFirstLoginDone(newPw) {
-    setUsers(us => us.map(u => u.id === session.userId ? { ...u, password: newPw, firstLogin: false, tempPassword: undefined } : u));
+  function handleFirstLoginDone() {
+    setSession(s => (s ? { userId: s.userId } : null));
+    setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
   }
 
   /* ── Database status screens ── */
@@ -191,8 +232,16 @@ export default function App() {
     );
   }
 
-  if (!session || !currentUser) return <LoginPage users={users} onLogin={handleLogin} />;
-  if (currentUser.firstLogin)   return <ForcePasswordChange onDone={handleFirstLoginDone} />;
+  if (!session || !currentUser) return <LoginPage onLogin={handleLogin} />;
+  if (currentUser.firstLogin) {
+    return (
+      <ForcePasswordChange
+        userId={currentUser.id}
+        currentPassword={session.pendingTempPassword || ""}
+        onDone={handleFirstLoginDone}
+      />
+    );
+  }
 
   const role = currentUser.role;
   const nav  = NAV.filter(n => {
