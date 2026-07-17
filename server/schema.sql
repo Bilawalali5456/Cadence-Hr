@@ -167,7 +167,8 @@ INSERT INTO roles (id, name, permissions) VALUES
 ('Executive', 'Executive', '[
   "view_dashboard","view_people","manage_hr_admin","view_attendance","view_attendance_reports",
   "approve_short_leave","approve_leave","view_leave","view_payroll",
-  "view_policies","view_assets","view_all_assets","view_announcements"
+  "view_policies","manage_policies","view_assets","view_all_assets",
+  "view_announcements","manage_announcements"
 ]'::jsonb),
 ('Manager', 'Manager', '[
   "view_dashboard","view_attendance","view_attendance_reports",

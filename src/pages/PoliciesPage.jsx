@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Search, Trash2, Edit2, Save, Plus, FileText } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { buildPolicyNotifications, sendPolicyEmails } from "../notifications.js";
 
@@ -10,7 +10,10 @@ export const POLICY_CATEGORIES = [
 ];
 
 export function PoliciesPage({ currentUser, policies, setPolicies, roles, users = [], notifications, setNotifications }) {
-  const canManage = can(currentUser.role, "manage_policies", roles);
+  const canManage =
+    can(currentUser.role, "manage_policies", roles) ||
+    isHrAdminRole(currentUser.role) ||
+    isExecutiveRole(currentUser.role);
   const [catFilter, setCatFilter] = useState("All");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -20,10 +23,11 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles, users 
   const blank = { title: "", category: "General", body: "" };
   const [form, setForm] = useState(blank);
 
-  const categories = ["All", ...POLICY_CATEGORIES.filter(c => policies.some(p => p.category === c))];
-  const list = policies
+  const categories = ["All", ...POLICY_CATEGORIES.filter(c => (policies || []).some(p => p && p.category === c))];
+  const list = (policies || [])
+    .filter(p => p && p.title)
     .filter(p => catFilter === "All" || p.category === catFilter)
-    .filter(p => (p.title + p.body + p.category).toLowerCase().includes(q.toLowerCase()))
+    .filter(p => (p.title + (p.body || "") + (p.category || "")).toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
 
   const viewing = policies.find(p => p.id === viewId);

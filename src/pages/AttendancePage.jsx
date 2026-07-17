@@ -9,8 +9,14 @@ import { HrAdminOversightPanel } from "./Dashboard.jsx";
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
   const showReports = can(currentUser.role, "view_attendance_reports", roles);
+  const isAdminView =
+    isHrAdminRole(currentUser.role) ||
+    isExecutiveRole(currentUser.role) ||
+    currentUser.role === "Manager" ||
+    showReports;
 
-  if (isHrAdminRole(currentUser.role) && showReports) {
+  // HR Admin: personal check-in + org reports
+  if (isHrAdminRole(currentUser.role) && isAdminView) {
     return (
       <div className="space-y-5">
         <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />
@@ -26,12 +32,14 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
           currentUser={currentUser}
           roles={roles}
           holidays={holidays}
+          setNotifications={setNotifications}
         />
       </div>
     );
   }
 
-  if (showReports) {
+  // Executive / Manager: org reports only (no personal check-in)
+  if (isAdminView) {
     return (
       <AdminAttendanceView
         users={users}
@@ -45,6 +53,7 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
         currentUser={currentUser}
         roles={roles}
         holidays={holidays}
+        setNotifications={setNotifications}
       />
     );
   }
@@ -98,14 +107,15 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance, holida
   );
 }
 
-export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [] }) {
+export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
   const [period, setPeriod] = useState("daily");
-  const staffRoster = employeeRoster(users);
-  const allStaff = staffRoster.filter(u => u.status === "active");
-  const liveRoster = isExecutiveRole(currentUser.role)
-    ? activeAttendanceRoster(users, currentUser.role)
-    : allStaff;
-  const visibleIds = attendanceVisibleUserIds(users, currentUser.role);
+  const staffRoster = employeeRoster(users || []);
+  const allStaff = staffRoster.filter(u => u && u.status === "active");
+  const liveRoster = (isExecutiveRole(currentUser.role)
+    ? activeAttendanceRoster(users || [], currentUser.role)
+    : allStaff
+  ).filter(u => u && u.id);
+  const visibleIds = attendanceVisibleUserIds(users || [], currentUser.role);
   const today = todayKey();
   const nonWorkingToday = isWeekendDate(today) || isPublicHolidayDate(today, holidays);
   const pendingShort = (shortLeaveRequests || []).filter(r =>
@@ -144,14 +154,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
   const autoToday = (attendance || []).filter(r => r && r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
 
-  const reportRows = filterAttendanceByPeriod(attendance, period)
-    .filter(r => visibleIds.has(r.userId))
+  const reportRows = filterAttendanceByPeriod(attendance || [], period)
+    .filter(r => r && r.userId && visibleIds.has(r.userId))
     .map(r => {
-      const user = users.find(u => u.id === r.userId);
+      const user = (users || []).find(u => u && u.id === r.userId);
       return user ? { ...r, name: user.name, dept: user.dept || user.role || "—", shift: formatShiftRange(user), user } : null;
     })
     .filter(Boolean)
-    .sort((a, b) => b.date.localeCompare(a.date) || (a.name || "").localeCompare(b.name || ""));
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.name || "").localeCompare(b.name || ""));
 
   const periodTotalMs = reportRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r)), 0);
 
