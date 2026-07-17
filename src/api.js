@@ -69,6 +69,17 @@ export async function apiSendCredentials({ to, name, email, password, role, isRe
   return data;
 }
 
+export async function apiSendWarningEmail({ to, name, warningType, reason, date }) {
+  const res = await fetch(`${API_URL}/send-warning-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, name, warningType, reason, date }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to send warning email");
+  return data;
+}
+
 export async function apiLogin(email, password) {
   const res = await fetch(`${API_URL}/login`, {
     method: "POST",
@@ -141,4 +152,18 @@ export function sanitizeAnnouncements(list) {
 
 export function sanitizeNotifications(list) {
   return safeList(list).filter(n => n && n.id && n.userId && n.title);
+}
+
+export function sanitizeWarnings(list) {
+  return safeList(list)
+    .filter(w => w && (w.userId || w.user_id) && w.reason)
+    .map(w => ({
+      id: w.id,
+      userId: w.userId || w.user_id,
+      type: String(w.type || "verbal").toLowerCase(),
+      reason: w.reason || "",
+      date: w.date || "",
+      issuedBy: w.issuedBy || w.issued_by || "",
+      acknowledged: !!(w.acknowledged),
+    }));
 }

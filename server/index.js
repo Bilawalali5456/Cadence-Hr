@@ -6,7 +6,7 @@ import path from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import bcryptjs from "bcryptjs";
-import { sendCredentialsEmail, sendNotificationEmail } from "./mail.js";
+import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
 
 dotenv.config();
 
@@ -191,10 +191,20 @@ const notificationToJs = (r) => ({
   link: r.link || "",
 });
 
+const warningToJs = (r) => ({
+  id: r.id,
+  userId: r.user_id,
+  type: r.type || "verbal",
+  reason: r.reason || "",
+  date: r.date || "",
+  issuedBy: r.issued_by || "",
+  acknowledged: !!r.acknowledged,
+});
+
 /* ─── GET /api/bootstrap — everything in one call ─── */
 app.get("/api/bootstrap", async (_req, res) => {
   try {
-    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, notifications] = await Promise.all([
+    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, notifications, warnings] = await Promise.all([
       pool.query("SELECT * FROM users ORDER BY name"),
       pool.query("SELECT * FROM attendance ORDER BY date DESC"),
       pool.query("SELECT * FROM leave_requests ORDER BY id"),
@@ -207,6 +217,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       pool.query("SELECT * FROM roles ORDER BY name"),
       pool.query("SELECT * FROM holidays ORDER BY date"),
       pool.query("SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"),
+      pool.query("SELECT * FROM warnings ORDER BY date DESC"),
     ]);
     res.json({
       users: users.rows.map(userToSafeJs),
@@ -221,6 +232,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       roles: roles.rows.map(roleToJs),
       holidays: holidays.rows.map(holidayToJs),
       notifications: notifications.rows.map(notificationToJs),
+      warnings: warnings.rows.map(warningToJs),
     });
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
@@ -578,6 +590,30 @@ app.put("/api/holidays", async (req, res) => {
   }
 });
 
+app.put("/api/warnings", async (req, res) => {
+  try {
+    await replaceAll("warnings", req.body, (c, w) =>
+      c.query(
+        `INSERT INTO warnings (id, user_id, type, reason, date, issued_by, acknowledged)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          w.id,
+          w.userId,
+          (w.type || "verbal").toLowerCase(),
+          w.reason || "",
+          w.date || "",
+          w.issuedBy || "",
+          !!w.acknowledged,
+        ]
+      )
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("warnings sync error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -628,6 +664,27 @@ app.post("/api/send-notification-email", async (req, res) => {
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
     console.error("send-notification-email error:", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+app.post("/api/send-warning-email", async (req, res) => {
+  try {
+    const { to, name, warningType, reason, date } = req.body || {};
+    if (!to || !warningType || !reason) {
+      return res.status(400).json({ error: "to, warningType, and reason are required" });
+    }
+    await sendWarningEmail({
+      to: String(to).trim(),
+      name: String(name || to).trim(),
+      warningType: String(warningType).trim(),
+      reason: String(reason).trim(),
+      date: String(date || "").trim(),
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    const msg = e?.message || e?.code || String(e);
+    console.error("send-warning-email error:", msg);
     res.status(500).json({ error: msg });
   }
 });

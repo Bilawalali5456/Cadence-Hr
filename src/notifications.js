@@ -85,11 +85,15 @@ export function buildLeaveStatusNotification(req, newStatus) {
   });
 }
 
-export function buildWarningNotification(userId, reason) {
+export function buildWarningNotification(userId, type, reason) {
+  const short =
+    String(type || "verbal").toLowerCase() === "written" ? "Written"
+    : String(type || "verbal").toLowerCase() === "final" ? "Final"
+    : "Verbal";
   return createNotification({
     userId,
-    title: "New Notice",
-    body: reason.trim(),
+    title: `${short} Warning Issued`,
+    body: String(reason || "").trim().slice(0, 100),
     type: "warning",
     link: "myprofile",
   });

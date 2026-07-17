@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey } from "../utils.js";
-import { buildLeaveStatusNotification } from "../notifications.js";
-import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole } from "../utils.js";
+import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
+import { apiSendWarningEmail } from "../api.js";
+import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
+import { IssueWarningModal, warningTypeLabel } from "../components/IssueWarningModal.jsx";
 
 export function HrAdminOversightPanel({
   users, attendance, shortLeaveRequests, leaveRequests,
@@ -142,10 +144,14 @@ export function HrAdminOversightPanel({
 }
 
 /* ─── DASHBOARD ─── */
-export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
+export function Dashboard({ currentUser, users, setRoute, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications, warnings = [], setWarnings }) {
   const role = currentUser.role;
   const me   = users.find(u => u.id === currentUser.id) || currentUser;
   const opsDashboard = can(role, "view_attendance_reports", roles) && can(role, "view_people", roles);
+  const canIssueWarnings = can(role, "manage_employees", roles);
+  const [warnOpen, setWarnOpen] = useState(false);
+  const [warnTgt, setWarnTgt] = useState(null);
+  const [warnDefaultReason, setWarnDefaultReason] = useState("");
 
   if ((role === "Employee" || role === "Manager") && !opsDashboard) {
     return (
@@ -213,6 +219,45 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
   }
 
+  const thisMonth = monthKey();
+  const lateAlerts = allStaff
+    .map(u => ({ user: u, lateCount: lateDaysInMonth(attendance, u.id, thisMonth, users, holidays) }))
+    .filter(a => a.lateCount >= 3)
+    .sort((a, b) => b.lateCount - a.lateCount);
+
+  function openLateWarning(user, lateCount) {
+    if (!canIssueWarnings || !isStaffRole(user.role)) return;
+    setWarnTgt(user);
+    setWarnDefaultReason(`Repeated late arrivals: ${lateCount} late check-ins this month.`);
+    setWarnOpen(true);
+  }
+
+  function issueWarning({ type, reason, date }) {
+    const emp = warnTgt;
+    if (!emp || !canIssueWarnings || !setWarnings) return;
+    const warning = {
+      id: genId(),
+      userId: emp.id,
+      type: String(type || "verbal").toLowerCase(),
+      reason,
+      date: date || todayKey(),
+      issuedBy: currentUser.name,
+      acknowledged: false,
+    };
+    setWarnings(prev => [warning, ...(prev || []).filter(w => w && w.userId)]);
+    const note = buildWarningNotification(emp.id, warning.type, reason);
+    if (setNotifications) setNotifications(prev => [...(prev || []), note]);
+    if (emp.email) {
+      return apiSendWarningEmail({
+        to: emp.email,
+        name: emp.name,
+        warningType: warningTypeLabel(warning.type),
+        reason,
+        date: warning.date,
+      }).catch(() => {});
+    }
+  }
+
   return (
     <div className="space-y-5">
       {isHrAdminRole(role) && (
@@ -240,6 +285,28 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           </Card>
         ))}
       </div>
+
+      {canIssueWarnings && lateAlerts.length > 0 && (
+        <Card className="p-5 border-amber-200">
+          <STitle>Late Alerts</STitle>
+          <p className="text-xs text-slate-500 mb-3">Employees with 3 or more late arrivals this month</p>
+          <div className="divide-y divide-slate-100">
+            {lateAlerts.map(({ user, lateCount }) => (
+              <div key={user.id} className="py-3 flex items-center gap-3 flex-wrap">
+                <Avatar name={user.name} />
+                <div className="flex-1 min-w-44">
+                  <div className="text-sm font-medium text-slate-800">{user.name}</div>
+                  <div className="text-xs text-slate-500">{lateCount} late arrivals this month</div>
+                </div>
+                <Pill tone="amber">{lateCount} late</Pill>
+                <Btn size="sm" onClick={() => openLateWarning(user, lateCount)}>
+                  <AlertTriangle size={13} />Issue Warning
+                </Btn>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {isExecutiveRole(role) && (
         <HrAdminOversightPanel
@@ -372,6 +439,15 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           </div>
         </Card>
       )}
+
+      <IssueWarningModal
+        open={warnOpen}
+        onClose={() => { setWarnOpen(false); setWarnTgt(null); setWarnDefaultReason(""); }}
+        employee={warnTgt}
+        issuedBy={currentUser.name}
+        defaultReason={warnDefaultReason}
+        onSubmit={issueWarning}
+      />
     </div>
   );
 }

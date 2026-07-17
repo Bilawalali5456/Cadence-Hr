@@ -1,16 +1,21 @@
 import React, { useState } from "react";
-import { Key, Phone } from "lucide-react";
+import { Key, Check, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, getUserCnic } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, getUserCnic, formatDate } from "../utils.js";
 import { apiChangePassword } from "../api.js";
-import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox } from "../components/ui.jsx";
+import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox, Pill } from "../components/ui.jsx";
+import { warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
 
-export function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
+export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings = [], setWarnings }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
   const [tab, setTab] = useState("info");
   const [pw, setPw]   = useState({ curr: "", newp: "", conf: "" });
   const [pwErr, setPwErr] = useState(""); const [pwOk, setPwOk] = useState(false);
   const [pwLoading, setPwLoading] = useState(false);
+
+  const myWarnings = (warnings || [])
+    .filter(w => w && w.userId === me.id)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
   async function changePw() {
     setPwErr(""); setPwOk(false);
@@ -43,6 +48,13 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
     }
   }
 
+  function acknowledgeWarning(id) {
+    if (!setWarnings) return;
+    setWarnings(prev => (prev || []).map(w =>
+      w && w.id === id ? { ...w, acknowledged: true } : w
+    ));
+  }
+
   return (
     <div className="max-w-xl">
       <div className="flex items-center gap-4 mb-6 p-5 rounded-xl text-white" style={{ background: B.dark }}>
@@ -55,7 +67,11 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
       </div>
 
       <div className="flex gap-1 border-b border-slate-200 mb-5">
-        {[{ id: "info", label: "My info" }, { id: "password", label: "Change password" }].map(t => (
+        {[
+          { id: "info", label: "My info" },
+          { id: "warnings", label: `Warnings (${myWarnings.length})` },
+          { id: "password", label: "Change password" },
+        ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className="px-4 py-2 text-sm border-b-2 -mb-px"
             style={tab === t.id ? { borderColor: B.dark, color: B.dark, fontWeight: 600 } : { borderColor: "transparent", color: "#64748b" }}>
@@ -101,6 +117,39 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout }) {
             <p className="text-xs text-slate-400 mt-4">To update your information, contact your HR administrator.</p>
           </Card>
         </div>
+      )}
+
+      {tab === "warnings" && (
+        <Card className="p-5">
+          <STitle>My warnings</STitle>
+          {myWarnings.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-6">No warnings</p>
+          ) : (
+            <div className="space-y-3">
+              {myWarnings.map(w => (
+                <div key={w.id} className="p-3 rounded-lg border border-slate-100 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <Pill tone={warningTypeTone(w.type)}>{warningTypeLabel(w.type)}</Pill>
+                    <span className="text-xs text-slate-400">{formatDate(w.date)}</span>
+                  </div>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{w.reason}</p>
+                  <div className="flex items-center justify-between gap-2 flex-wrap text-xs text-slate-400">
+                    <span>Issued by {w.issuedBy || "—"}</span>
+                    {w.acknowledged ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
+                        <Check size={14} />Acknowledged
+                      </span>
+                    ) : (
+                      <Btn size="sm" onClick={() => acknowledgeWarning(w.id)}>
+                        <AlertTriangle size={13} />Acknowledge
+                      </Btn>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       )}
 
       {tab === "password" && (

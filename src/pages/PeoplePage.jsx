@@ -1,17 +1,18 @@
 import React, { useState } from "react";
-import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw } from "lucide-react";
+import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
-import { apiSendCredentials } from "../api.js";
+import { apiSendCredentials, apiSendWarningEmail } from "../api.js";
 import { DEFAULT_ANNUAL_LEAVE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { buildWarningNotification } from "../notifications.js";
+import { IssueWarningModal, warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
 import { EmployeeForm } from "../components/EmployeeForm.jsx";
 
 export function PeoplePage({
   users, setUsers, currentUser, attendance, setAttendance,
   payroll = [], setPayroll, leaveRequests = [], setLeaveRequests,
   shortLeaveRequests = [], setShortLeaveRequests, roles, holidays = [],
-  notifications, setNotifications,
+  notifications, setNotifications, warnings = [], setWarnings,
 }) {
   const canManage = can(currentUser.role, "manage_employees", roles);
   const readOnly = !canManage;
@@ -25,14 +26,15 @@ export function PeoplePage({
   const [editTgt,   setEditTgt]   = useState(null);
   const [delTgt,    setDelTgt]    = useState(null);
   const [resetTgt,  setResetTgt]  = useState(null);
-  const [noticeOpen, setNoticeOpen] = useState(false);
-  const [noticeReason, setNoticeReason] = useState("");
-  const [noticeErr, setNoticeErr] = useState("");
+  const [warnOpen,  setWarnOpen]  = useState(false);
+  const [warnTgt,   setWarnTgt]   = useState(null);
+  const [warnDefaultReason, setWarnDefaultReason] = useState("");
   const [resetResult, setResetResult] = useState("");
   const [newEmail,  setNewEmail]  = useState("");
   const [ferr,      setFerr]      = useState("");
   const [emailSending, setEmailSending] = useState(false);
   const [pageOk, setPageOk] = useState("");
+  const [pageErr, setPageErr] = useState("");
 
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
@@ -57,6 +59,12 @@ export function PeoplePage({
   }
   function openDel(u)   { setDelTgt(u);  setDelOpen(true); }
   function openReset(u) { setResetTgt(u); setResetResult(""); setNewEmail(""); setResetOpen(true); }
+  function openWarning(u, defaultReason = "") {
+    if (!u || !canManage || !isStaffRole(u.role)) return;
+    setWarnTgt(u);
+    setWarnDefaultReason(defaultReason || "");
+    setWarnOpen(true);
+  }
 
   function saveAdd() {
     const email = form.email.trim();
@@ -169,14 +177,35 @@ export function PeoplePage({
     setAttendance(a => a.filter(r => r.id !== recordId));
   }
 
-  function issueNotice() {
-    if (!sel || !canManage || !isStaffRole(sel.role)) return;
-    if (!noticeReason.trim()) { setNoticeErr("Please enter a reason for the notice."); return; }
-    const note = buildWarningNotification(sel.id, noticeReason.trim());
-    if (setNotifications) setNotifications(prev => [...prev, note]);
-    setNoticeOpen(false);
-    setNoticeReason("");
-    setNoticeErr("");
+  function issueWarning({ type, reason, date }) {
+    const emp = warnTgt;
+    if (!emp || !canManage || !isStaffRole(emp.role) || !setWarnings) return;
+    const warning = {
+      id: genId(),
+      userId: emp.id,
+      type: String(type || "verbal").toLowerCase(),
+      reason,
+      date: date || todayKey(),
+      issuedBy: currentUser.name,
+      acknowledged: false,
+    };
+    setWarnings(prev => [warning, ...(prev || []).filter(w => w && w.userId)]);
+    const note = buildWarningNotification(emp.id, warning.type, reason);
+    if (setNotifications) setNotifications(prev => [...(prev || []), note]);
+    setPageOk(`${warningTypeLabel(warning.type)} issued to ${emp.name}.`);
+    setTimeout(() => setPageOk(""), 5000);
+    if (emp.email) {
+      return apiSendWarningEmail({
+        to: emp.email,
+        name: emp.name,
+        warningType: warningTypeLabel(warning.type),
+        reason,
+        date: warning.date,
+      }).catch(e => {
+        setPageErr(`Warning saved, but email failed: ${e.message}`);
+        setTimeout(() => setPageErr(""), 6000);
+      });
+    }
   }
 
   function deleteLeaveRecord(id) {
@@ -227,6 +256,7 @@ export function PeoplePage({
       </div>
 
       {pageOk && <div className="mb-4"><OkBox msg={pageOk} /></div>}
+      {pageErr && <div className="mb-4"><ErrBox msg={pageErr} /></div>}
 
       {readOnly && (
         <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
@@ -286,6 +316,9 @@ export function PeoplePage({
                         <button onClick={() => openEdit(u)}  className="p-1.5 rounded-lg hover:bg-blue-50  text-slate-400 hover:text-blue-600"  title="Edit"><Edit2 size={14} /></button>
                         {u.id !== currentUser.id && (
                           <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
+                        )}
+                        {u.id !== currentUser.id && (
+                          <button onClick={() => openWarning(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-amber-500 hover:text-orange-600" title="Issue warning"><AlertTriangle size={14} /></button>
                         )}
                       </>
                     )}
@@ -402,13 +435,17 @@ export function PeoplePage({
                 </div>
               </div>
               <div className="flex gap-1 mt-4 border-b border-slate-100 -mb-5 flex-wrap">
-                {["Overview", "Personal", "Shift", "Bank", "Access", "Leave", ...(readOnly ? ["Salary", "Attendance"] : [])].map(t => (
+                {["Overview", "Personal", "Shift", "Bank", "Access", "Leave", "Warnings", ...(readOnly ? ["Salary", "Attendance"] : [])].map(t => {
+                  const empWarnings = (warnings || []).filter(w => w && w.userId === sel.id);
+                  const label = t === "Warnings" ? `Warnings (${empWarnings.length})` : t;
+                  return (
                   <button key={t} onClick={() => setSelTab(t)}
                     className="px-3 py-2 text-sm border-b-2 -mb-px"
                     style={selTab === t ? { borderColor: B.dark, color: B.dark, fontWeight: 600 } : { borderColor: "transparent", color: "#64748b" }}>
-                    {t}
+                    {label}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-5 text-sm">
@@ -421,9 +458,42 @@ export function PeoplePage({
                     </div>
                   ))}
                   {canManage && isStaffRole(sel.role) && sel.id !== currentUser.id && (
-                    <Btn size="sm" variant="ghost" onClick={() => { setNoticeReason(""); setNoticeErr(""); setNoticeOpen(true); }}>
-                      <AlertTriangle size={13} />Issue notice
+                    <Btn size="sm" variant="ghost" onClick={() => openWarning(sel)}>
+                      <AlertTriangle size={13} />Issue warning
                     </Btn>
+                  )}
+                </div>
+              )}
+              {selTab === "Warnings" && (
+                <div className="space-y-3">
+                  {canManage && isStaffRole(sel.role) && sel.id !== currentUser.id && (
+                    <Btn size="sm" onClick={() => openWarning(sel)}>
+                      <AlertTriangle size={13} />Issue warning
+                    </Btn>
+                  )}
+                  {(warnings || []).filter(w => w && w.userId === sel.id).length === 0 ? (
+                    <p className="text-sm text-slate-400 p-4 rounded-lg bg-slate-50 text-center">No warnings</p>
+                  ) : (
+                    (warnings || [])
+                      .filter(w => w && w.userId === sel.id)
+                      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+                      .map(w => (
+                        <div key={w.id} className="p-3 rounded-lg border border-slate-100 space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <Pill tone={warningTypeTone(w.type)}>{warningTypeLabel(w.type)}</Pill>
+                            <span className="text-xs text-slate-400">{formatDate(w.date)}</span>
+                          </div>
+                          <p className="text-sm text-slate-700 whitespace-pre-wrap">{w.reason}</p>
+                          <div className="flex items-center justify-between text-xs text-slate-400">
+                            <span>Issued by {w.issuedBy || "—"}</span>
+                            {w.acknowledged ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={12} />Acknowledged</span>
+                            ) : (
+                              <span className="text-amber-600">Pending acknowledgement</span>
+                            )}
+                          </div>
+                        </div>
+                      ))
                   )}
                 </div>
               )}
@@ -649,26 +719,14 @@ export function PeoplePage({
         </div>
       )}
 
-      <Modal open={noticeOpen} onClose={() => setNoticeOpen(false)} title={`Issue notice — ${sel?.name || ""}`}>
-        <div className="space-y-4">
-          <p className="text-sm text-slate-500">The employee will receive an in-app notification. This notice is recorded in the HR system.</p>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Reason</label>
-            <textarea
-              value={noticeReason}
-              onChange={e => setNoticeReason(e.target.value)}
-              rows={4}
-              placeholder="Describe the notice or warning…"
-              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none"
-            />
-          </div>
-          <ErrBox msg={noticeErr} />
-          <div className="flex gap-2 justify-end">
-            <Btn variant="ghost" onClick={() => setNoticeOpen(false)}>Cancel</Btn>
-            <Btn onClick={issueNotice}>Send notice</Btn>
-          </div>
-        </div>
-      </Modal>
+      <IssueWarningModal
+        open={warnOpen}
+        onClose={() => { setWarnOpen(false); setWarnTgt(null); setWarnDefaultReason(""); }}
+        employee={warnTgt}
+        issuedBy={currentUser.name}
+        defaultReason={warnDefaultReason}
+        onSubmit={issueWarning}
+      />
     </div>
   );
 }

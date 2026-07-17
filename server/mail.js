@@ -167,3 +167,41 @@ export async function sendNotificationEmail({ to, name, subject, body, link }) {
     html: buildNotificationHtml({ name: name || "there", subject: safeSubject, body, link: portalUrl }),
   });
 }
+
+export async function sendWarningEmail({ to, name, warningType, reason, date }) {
+  const recipient = String(to || "").trim();
+  if (!recipient || !recipient.includes("@")) {
+    throw new Error(`Invalid recipient email: "${recipient || "(empty)"}"`);
+  }
+
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  if (!from || !String(from).includes("@")) {
+    throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
+  }
+
+  const portalUrl = process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const typeLabel = String(warningType || "Warning").trim();
+  const subject = `Adforce Solutions — ${typeLabel} Issued`;
+  const body = [
+    `A ${typeLabel.toLowerCase()} has been issued to you.`,
+    "",
+    `Type: ${typeLabel}`,
+    `Date: ${date || "—"}`,
+    `Reason: ${reason || "—"}`,
+    "",
+    "Please acknowledge this warning in the HR portal under My Profile → Warnings.",
+  ].join("\n");
+
+  await getTransporter().sendMail({
+    from,
+    to: recipient,
+    subject,
+    text: [`Hi ${name || "there"},`, "", body, "", `View in HR Portal: ${portalUrl}`].join("\n"),
+    html: buildNotificationHtml({
+      name: name || "there",
+      subject,
+      body,
+      link: portalUrl,
+    }),
+  });
+}

@@ -150,6 +150,16 @@ CREATE TABLE IF NOT EXISTS notifications (
   link       TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS warnings (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  type         TEXT NOT NULL DEFAULT 'verbal',
+  reason       TEXT NOT NULL,
+  date         TEXT NOT NULL,
+  issued_by    TEXT NOT NULL,
+  acknowledged BOOLEAN DEFAULT false
+);
+
 CREATE TABLE IF NOT EXISTS roles (
   id          TEXT PRIMARY KEY,
   name        TEXT UNIQUE NOT NULL,
