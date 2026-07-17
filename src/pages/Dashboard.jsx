@@ -165,7 +165,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
         <Card className="p-4">
           <STitle>Quick actions</STitle>
           <div className="space-y-2">
-            {[["Attendance history", "attendance"], ["Submit leave request", "leave"], ["My profile", "myprofile"], ["Account settings", "settings"]].map(([l, r]) => (
+            {[["Submit leave request", "leave"], ["My profile", "myprofile"], ["Account settings", "settings"], ["Attendance history", "attendance"]].map(([l, r]) => (
               <button key={r} onClick={() => setRoute(r)}
                 className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-between border border-slate-200 hover:bg-slate-50"
                 style={{ color: B.dark }}>

@@ -1,9 +1,8 @@
 import React, { useState } from "react";
-import { Users, Clock, Check, AlertTriangle, BadgeCheck, Trash2, LogOut, LogIn } from "lucide-react";
+import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcTotalBreakMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, isPublicHolidayDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod } from "../utils.js";
-import { Pill, Avatar, Card, STitle, Btn, ErrBox } from "../components/ui.jsx";
-import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
+import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
@@ -15,30 +14,7 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
     currentUser.role === "Manager" ||
     showReports;
 
-  // HR Admin: personal check-in + org reports
-  if (isHrAdminRole(currentUser.role) && isAdminView) {
-    return (
-      <div className="space-y-5">
-        <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />
-        <AdminAttendanceView
-          users={users}
-          attendance={attendance}
-          setAttendance={setAttendance}
-          shortLeaveRequests={shortLeaveRequests}
-          setShortLeaveRequests={setShortLeaveRequests}
-          leaveRequests={leaveRequests}
-          setLeaveRequests={setLeaveRequests}
-          setUsers={setUsers}
-          currentUser={currentUser}
-          roles={roles}
-          holidays={holidays}
-          setNotifications={setNotifications}
-        />
-      </div>
-    );
-  }
-
-  // Executive / Manager: org reports only (no personal check-in)
+  // HR Admin / Executive / Manager: org reports only (check-in lives on Home)
   if (isAdminView) {
     return (
       <AdminAttendanceView
@@ -58,10 +34,10 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
     );
   }
 
-  return <EmployeeAttendanceFull user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />;
+  return <EmployeeAttendanceHistory user={me} attendance={attendance} holidays={holidays} />;
 }
 
-export function EmployeeAttendanceFull({ user, attendance, setAttendance, holidays = [] }) {
+export function EmployeeAttendanceHistory({ user, attendance, holidays = [] }) {
   const history = (attendance || [])
     .filter(r => r && r.userId === user.id && r.date)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -69,7 +45,6 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance, holida
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <EmployeeShiftPanel user={user} attendance={attendance} setAttendance={setAttendance} holidays={holidays} />
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200"><STitle>My attendance history</STitle></div>
         <div className="overflow-x-auto">
@@ -105,6 +80,11 @@ export function EmployeeAttendanceFull({ user, attendance, setAttendance, holida
       </Card>
     </div>
   );
+}
+
+/** @deprecated Use EmployeeAttendanceHistory — kept as alias for any external imports */
+export function EmployeeAttendanceFull(props) {
+  return <EmployeeAttendanceHistory {...props} />;
 }
 
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
