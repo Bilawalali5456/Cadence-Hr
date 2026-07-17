@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Calendar, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear, filterValidHolidays, normalizeHolidayType } from "../utils.js";
+import { isHrAdminRole, isExecutiveRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear, filterValidHolidays, normalizeHolidayType } from "../utils.js";
 import { Pill, Card, STitle, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 
 const TYPE_OPTIONS = [
@@ -130,7 +130,7 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
 
 export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
   const safeHolidays = filterValidHolidays(holidays);
-  const canManage = isHrAdminRole(currentUser.role);
+  const canManage = isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role);
   const today = todayKey();
   const year = new Date().getFullYear();
 

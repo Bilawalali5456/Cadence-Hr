@@ -84,6 +84,11 @@ export function canApproveLeaveRequest(approver, req, users, roles) {
   return isHrAdminRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
 }
 
+/** Executive super-authority: reverse or change any leave decision after HR/others have acted. */
+export function canOverrideLeaveDecision(actor) {
+  return !!actor && isExecutiveRole(actor.role);
+}
+
 export function canManageHrAdmin(actor, target, roles) {
   if (!actor || !target || !isHrAdminRole(target.role)) return false;
   if (actor.id === target.id) return false;
@@ -113,19 +118,21 @@ export function canResetPersonCredentials(actor, target, roles) {
 export function canDeleteLeaveRecord(actor, req, users, roles) {
   if (!req || !actor) return false;
   if (req.userId === actor.id && req.status === "pending") return true;
+  if (isExecutiveRole(actor.role)) return true;
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRole(requester?.role)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_leave", roles)) return false;
-  return isHrAdminRole(actor.role) || isExecutiveRole(actor.role) || actor.role === "Manager";
+  return isHrAdminRole(actor.role) || actor.role === "Manager";
 }
 
 export function canDeleteShortLeaveRecord(actor, req, users, roles) {
   if (!req || !actor) return false;
   if (req.userId === actor.id && req.status === "pending") return true;
+  if (isExecutiveRole(actor.role)) return true;
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRequest(req, users)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_short_leave", roles)) return false;
-  return isHrAdminRole(actor.role) || isExecutiveRole(actor.role) || actor.role === "Manager";
+  return isHrAdminRole(actor.role) || actor.role === "Manager";
 }
 
 export function sortHrAdminFirst(users) {

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Send, Timer, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate } from "../utils.js";
+import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canApproveShortLeaveRequest, canOverrideLeaveDecision, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
 export function ShortLeavePage({ currentUser, requests = [], setRequests, users, attendance, setAttendance, roles }) {
@@ -13,7 +13,11 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
 
   function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
-    if (!req || !canApproveShortLeaveRequest(currentUser, req, users, roles)) return;
+    if (!req) return;
+    const allowed = req.status === "pending"
+      ? canApproveShortLeaveRequest(currentUser, req, users, roles)
+      : canOverrideLeaveDecision(currentUser);
+    if (!allowed) return;
     const prev = req.status;
     if (prev === newStatus) return;
     if (newStatus === "approved" && prev !== "approved") {
@@ -128,6 +132,14 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
                       Reject
                     </button>
                   </div>
+                )}
+                {canOverrideLeaveDecision(currentUser) && r.status !== "pending" && (
+                  <button
+                    onClick={() => changeStatus(r.id, r.status === "approved" ? "rejected" : "approved")}
+                    className="px-3 py-1.5 text-xs font-medium border border-amber-300 text-amber-800 bg-amber-50 rounded-lg hover:bg-amber-100"
+                    title="Executive override — change HR decision">
+                    Override → {r.status === "approved" ? "Rejected" : "Approved"}
+                  </button>
                 )}
                 {canDeleteShortLeaveRecord(currentUser, r, users, roles) && (
                   <button onClick={() => deleteRequest(r.id)}

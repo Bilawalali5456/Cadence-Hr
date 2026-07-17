@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Send, Timer, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canOverrideLeaveDecision, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
 
@@ -63,7 +63,11 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
 
   function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
-    if (!req || !canApproveLeaveRequest(currentUser, req, users, roles)) return;
+    if (!req) return;
+    const allowed = req.status === "pending"
+      ? canApproveLeaveRequest(currentUser, req, users, roles)
+      : canOverrideLeaveDecision(currentUser);
+    if (!allowed) return;
     const prev = req.status;
     if (prev === newStatus) return;
     const paid = leavePaidDays(req);
@@ -168,12 +172,12 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
                       </button>
                     </div>
                   )}
-                  {canApproveLeaveRequest(currentUser, r, users, roles) && r.status !== "pending" && (
+                  {canOverrideLeaveDecision(currentUser) && r.status !== "pending" && (
                     <button
                       onClick={() => changeStatus(r.id, r.status === "approved" ? "rejected" : "approved")}
-                      className="px-3 py-1.5 text-xs font-medium border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50"
-                      title="Change decision">
-                      Change to {r.status === "approved" ? "Rejected" : "Approved"}
+                      className="px-3 py-1.5 text-xs font-medium border border-amber-300 text-amber-800 bg-amber-50 rounded-lg hover:bg-amber-100"
+                      title="Executive override — change HR decision">
+                      Override → {r.status === "approved" ? "Rejected" : "Approved"}
                     </button>
                   )}
                   {canDeleteLeaveRecord(currentUser, r, users, roles) && (

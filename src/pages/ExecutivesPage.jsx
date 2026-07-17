@@ -141,7 +141,7 @@ export function ExecutivesPage({ users, setUsers }) {
       <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
         <Briefcase size={16} className="mt-0.5 shrink-0" />
         <div>
-          <b>Executives</b> have broad read and approval access across attendance, leave, policies, and assets — but cannot create or delete employee accounts or change system settings. Permissions are enforced via the RBAC roles stored in PostgreSQL.
+          <b>Executives</b> are the highest authority in the portal — they have all HR Admin capabilities (people, payroll, assets, settings, etc.) plus the ability to override leave decisions and manage HR Admin accounts. Permissions are enforced via the RBAC roles stored in PostgreSQL.
         </div>
       </div>
 

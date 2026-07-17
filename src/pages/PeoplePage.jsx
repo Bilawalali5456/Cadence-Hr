@@ -162,7 +162,11 @@ export function PeoplePage({
   }
 
   function managingSel() {
-    return sel && canManageHrAdmin(currentUser, sel, roles);
+    if (!sel) return false;
+    if (canManageHrAdmin(currentUser, sel, roles)) return true;
+    // HR Admin / Executive with manage_employees: full control over staff profiles
+    if (canManage && isStaffRole(sel.role) && sel.id !== currentUser.id) return true;
+    return false;
   }
 
   function updateSelBalances(leaveBalance) {
@@ -261,7 +265,7 @@ export function PeoplePage({
       {readOnly && (
         <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
           <Eye size={16} className="mt-0.5 shrink-0" />
-          <div><b>View only</b> for employees. Executives have full management access over HR Admin accounts — profile, shift, credentials, attendance, leave, and payroll records.</div>
+          <div><b>View only</b> for employees. Executives with elevated access manage people from the same tools as HR Admin, and can also manage HR Admin accounts.</div>
         </div>
       )}
 

@@ -175,10 +175,10 @@ INSERT INTO roles (id, name, permissions) VALUES
   "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
 ]'::jsonb),
 ('Executive', 'Executive', '[
-  "view_dashboard","view_people","manage_hr_admin","view_attendance","view_attendance_reports",
-  "approve_short_leave","approve_leave","view_leave","view_payroll",
-  "view_policies","manage_policies","view_assets","view_all_assets",
-  "view_announcements","manage_announcements"
+  "view_dashboard","view_people","manage_employees","manage_executives","manage_hr_admin",
+  "view_attendance","view_attendance_reports","approve_short_leave","approve_leave","view_leave",
+  "view_policies","manage_policies","view_assets","view_all_assets","manage_assets",
+  "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
 ]'::jsonb),
 ('Manager', 'Manager', '[
   "view_dashboard","view_attendance","view_attendance_reports",
