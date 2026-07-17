@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar } from "lucide-react";
+import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3 } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
@@ -20,6 +20,7 @@ import { ExecutivesPage } from "./pages/ExecutivesPage.jsx";
 import { PoliciesPage } from "./pages/PoliciesPage.jsx";
 import { AssetsPage } from "./pages/AssetsPage.jsx";
 import { HolidaysPage } from "./pages/HolidaysPage.jsx";
+import { ReportsPage } from "./pages/ReportsPage.jsx";
 
 const NAV = [
   { id: "home",          label: "Home",          icon: LayoutDashboard, permission: "view_dashboard" },
@@ -29,6 +30,7 @@ const NAV = [
   { id: "shortleave",    label: "Short Leave",    icon: Timer,           permission: "view_leave" },
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
+  { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Admin", "Executive"] },
   { id: "holidays",      label: "Holidays",       icon: Calendar,        permission: null },
   { id: "policies",      label: "Policies",       icon: FileText,        permission: "view_policies" },
   { id: "assets",        label: "Assets",         icon: Package,         permission: "view_assets" },
@@ -45,6 +47,7 @@ const TITLES = {
   attendance:    ["Attendance",      "Shift check-in, breaks & reports"],
   shortleave:    ["Short Leave",     "Partial-day leave requests"],
   leave:         ["Leave",           "Requests and approvals"],
+  reports:       ["Reports",         "Analytics and workforce insights"],
   holidays:      ["Holidays",        "Company holidays calendar"],
   policies:      ["Company Policies","Latest HR policies by category"],
   assets:        ["Company Assets",  "Equipment assignment and tracking"],
@@ -248,6 +251,7 @@ export default function App() {
 
   const role = currentUser.role;
   const nav  = NAV.filter(n => {
+    if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return isStaffRole(role);
     if (!n.permission) return true;
     return can(role, n.permission, roles);
@@ -336,6 +340,7 @@ export default function App() {
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
           {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} />}
+          {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
