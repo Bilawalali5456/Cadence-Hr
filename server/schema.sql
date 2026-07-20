@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS attendance (
   working_ms      BIGINT,
   total_break_ms  BIGINT,
   status          TEXT,
-  late            BOOLEAN DEFAULT false
+  late            BOOLEAN DEFAULT false,
+  source          TEXT DEFAULT 'manual'
 );
 
 CREATE TABLE IF NOT EXISTS leave_requests (
@@ -201,6 +202,7 @@ WHERE NOT EXISTS (SELECT 1 FROM users);
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS paid_days INTEGER;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS unpaid_days INTEGER;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 ALTER TABLE users ALTER COLUMN leave_balance SET DEFAULT 24;
 ALTER TABLE users ALTER COLUMN sick_balance SET DEFAULT 0;
 -- Align existing accounts to the new annual leave policy (was 15 + separate sick days)
@@ -218,3 +220,64 @@ INSERT INTO holidays (id, title, date, type) VALUES
 ('hol-eid-fitr-2026',      'Eid ul Fitr',     '2026-03-21', 'public'),
 ('hol-eid-adha-2026',      'Eid ul Adha',     '2026-05-27', 'public')
 ON CONFLICT (id) DO NOTHING;
+
+-- Biometric / ZKTeco ADMS integration
+CREATE TABLE IF NOT EXISTS biometric_devices (
+  id SERIAL PRIMARY KEY,
+  serial_number VARCHAR(50) UNIQUE NOT NULL,
+  device_name VARCHAR(100),
+  model VARCHAR(50),
+  firmware_version VARCHAR(50),
+  ip_address VARCHAR(45),
+  last_seen TIMESTAMP,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS biometric_logs (
+  id SERIAL PRIMARY KEY,
+  device_serial VARCHAR(50),
+  pin VARCHAR(20) NOT NULL,
+  scan_time TIMESTAMP NOT NULL,
+  status INTEGER DEFAULT 0,
+  verify_type INTEGER DEFAULT 0,
+  processed BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS biometric_user_map (
+  id SERIAL PRIMARY KEY,
+  employee_id VARCHAR(50) NOT NULL DEFAULT '',
+  biometric_pin VARCHAR(20) NOT NULL,
+  employee_name VARCHAR(100),
+  enrolled BOOLEAN DEFAULT false,
+  enrolled_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(biometric_pin)
+);
+
+CREATE TABLE IF NOT EXISTS device_commands (
+  id SERIAL PRIMARY KEY,
+  device_serial VARCHAR(50) NOT NULL,
+  command_type VARCHAR(50) NOT NULL,
+  command_data TEXT,
+  status VARCHAR(20) DEFAULT 'pending',
+  sent_at TIMESTAMP,
+  completed_at TIMESTAMP,
+  result TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS biometric_raw_logs (
+  id SERIAL PRIMARY KEY,
+  device_serial VARCHAR(50),
+  request_method VARCHAR(10),
+  request_path TEXT,
+  query_params TEXT,
+  request_body TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_biometric_logs_pin_time ON biometric_logs (pin, scan_time);
+CREATE INDEX IF NOT EXISTS idx_biometric_logs_processed ON biometric_logs (processed) WHERE processed = false;
+CREATE INDEX IF NOT EXISTS idx_biometric_user_map_employee ON biometric_user_map (employee_id);

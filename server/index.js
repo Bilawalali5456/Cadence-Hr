@@ -7,6 +7,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
+import { registerBiometricRoutes, startBiometricProcessor } from "./biometric.js";
 
 dotenv.config();
 
@@ -18,6 +19,11 @@ const distPath = path.join(__dirname, "..", "dist");
 
 const app = express();
 app.use(cors());
+/* ADMS device pushes plain text — must parse before express.json */
+app.use("/iclock", express.text({
+  type: ["text/plain", "application/x-www-form-urlencoded", "application/octet-stream", "*/*"],
+  limit: "10mb",
+}));
 app.use(express.json({ limit: "5mb" }));
 
 function isBcryptHash(pw) {
@@ -95,6 +101,7 @@ const attToJs = (r) => ({
   totalBreakMs: r.total_break_ms != null ? Number(r.total_break_ms) : undefined,
   status: r.status || undefined,
   late: r.late || false,
+  source: r.source || "manual",
 });
 
 const leaveToJs = (r) => ({
@@ -375,13 +382,14 @@ app.put("/api/attendance", async (req, res) => {
       c.query(
         `INSERT INTO attendance (
            id, user_id, date, check_in, check_out, breaks, short_leaves, break_start, break_end,
-           auto_checkout, working_ms, total_break_ms, status, late
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           auto_checkout, working_ms, total_break_ms, status, late, source
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           a.id, a.userId, a.date, a.checkIn || null, a.checkOut || null,
           JSON.stringify(a.breaks || []), JSON.stringify(a.shortLeaves || []),
           a.breakStart || null, a.breakEnd || null, a.autoCheckout || false,
           a.workingMs ?? null, a.totalBreakMs ?? null, a.status || null, a.late || false,
+          a.source || "manual",
         ]
       )
     );
@@ -689,6 +697,8 @@ app.post("/api/send-warning-email", async (req, res) => {
   }
 });
 
+registerBiometricRoutes(app, pool);
+
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));
 app.get(/^(?!\/api).*/, (_req, res) => {
@@ -726,6 +736,7 @@ const PORT = process.env.PORT || 4000;
 ensureSchema()
   .then(() => migratePlaintextPasswords())
   .then(() => {
+    startBiometricProcessor(pool);
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);
       console.log(`  Health check: http://localhost:${PORT}/api/health`);

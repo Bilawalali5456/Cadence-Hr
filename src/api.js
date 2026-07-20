@@ -167,3 +167,68 @@ export function sanitizeWarnings(list) {
       acknowledged: !!(w.acknowledged),
     }));
 }
+
+function biometricHeaders(userId) {
+  return { "Content-Type": "application/json", "X-User-Id": userId };
+}
+
+export async function apiBiometricStatus(userId) {
+  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load device status");
+  return res.json();
+}
+
+export async function apiBiometricLogs(userId, date) {
+  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load biometric logs");
+  return res.json();
+}
+
+export async function apiBiometricUsers(userId) {
+  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load biometric users");
+  return res.json();
+}
+
+export async function apiBiometricMap(userId, pin, employeeId) {
+  const res = await fetch(`${API_URL}/biometric/map`, {
+    method: "POST",
+    headers: biometricHeaders(userId),
+    body: JSON.stringify({ pin, employee_id: employeeId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to map user");
+  return data;
+}
+
+export async function apiBiometricUnmap(userId, pin) {
+  const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}`, {
+    method: "DELETE",
+    headers: biometricHeaders(userId),
+  });
+  if (!res.ok) throw new Error("Failed to remove mapping");
+  return res.json();
+}
+
+export async function apiBiometricProcess(userId) {
+  const res = await fetch(`${API_URL}/biometric/process`, {
+    method: "POST",
+    headers: biometricHeaders(userId),
+  });
+  if (!res.ok) throw new Error("Failed to process logs");
+  return res.json();
+}
+
+export async function apiBiometricRawLogs(userId, limit = 50) {
+  const res = await fetch(`${API_URL}/biometric/raw-logs?limit=${limit}`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load raw logs");
+  return res.json();
+}
+
+export async function apiRefreshAttendance() {
+  const res = await fetch(`${API_URL}/bootstrap`);
+  if (!res.ok) throw new Error("Failed to refresh attendance");
+  const d = await res.json();
+  return sanitizeAttendance(d.attendance);
+}
