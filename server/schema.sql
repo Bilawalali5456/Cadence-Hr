@@ -231,8 +231,17 @@ CREATE TABLE IF NOT EXISTS biometric_devices (
   ip_address VARCHAR(45),
   last_seen TIMESTAMP,
   is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT NOW()
+  attlog_stamp BIGINT DEFAULT 0,
+  operlog_stamp BIGINT DEFAULT 0,
+  attphoto_stamp BIGINT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE biometric_devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE biometric_devices ADD COLUMN IF NOT EXISTS attlog_stamp BIGINT DEFAULT 0;
+ALTER TABLE biometric_devices ADD COLUMN IF NOT EXISTS operlog_stamp BIGINT DEFAULT 0;
+ALTER TABLE biometric_devices ADD COLUMN IF NOT EXISTS attphoto_stamp BIGINT DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS biometric_logs (
   id SERIAL PRIMARY KEY,
@@ -281,3 +290,48 @@ CREATE TABLE IF NOT EXISTS biometric_raw_logs (
 CREATE INDEX IF NOT EXISTS idx_biometric_logs_pin_time ON biometric_logs (pin, scan_time);
 CREATE INDEX IF NOT EXISTS idx_biometric_logs_processed ON biometric_logs (processed) WHERE processed = false;
 CREATE INDEX IF NOT EXISTS idx_biometric_user_map_employee ON biometric_user_map (employee_id);
+
+-- ADMS v2: normalized attendance logs + per-device user mapping
+CREATE TABLE IF NOT EXISTS device_user_mapping (
+  id SERIAL PRIMARY KEY,
+  device_user_id INTEGER NOT NULL,
+  employee_id VARCHAR(50) NOT NULL,
+  device_serial_number VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (device_serial_number, device_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS attendance_logs (
+  id SERIAL PRIMARY KEY,
+  employee_id VARCHAR(50),
+  device_user_id INTEGER NOT NULL,
+  device_serial_number VARCHAR(50) NOT NULL,
+  punch_time TIMESTAMP NOT NULL,
+  punch_type VARCHAR(20) NOT NULL DEFAULT 'check_in',
+  verify_method VARCHAR(20) DEFAULT 'unknown',
+  raw_data TEXT,
+  is_duplicate BOOLEAN DEFAULT false,
+  synced_to_attendance BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (device_serial_number, device_user_id, punch_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_employee ON attendance_logs (employee_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_punch_time ON attendance_logs (punch_time);
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_unsynced ON attendance_logs (synced_to_attendance) WHERE synced_to_attendance = false AND is_duplicate = false;
+CREATE INDEX IF NOT EXISTS idx_device_user_mapping_employee ON device_user_mapping (employee_id);
+
+-- Migrate legacy PIN mappings into device_user_mapping (best-effort)
+INSERT INTO device_user_mapping (device_user_id, employee_id, device_serial_number)
+SELECT CAST(bm.biometric_pin AS INTEGER), bm.employee_id,
+       COALESCE(
+         (SELECT serial_number FROM biometric_devices ORDER BY last_seen DESC NULLS LAST LIMIT 1),
+         'UNKNOWN'
+       )
+FROM biometric_user_map bm
+WHERE bm.employee_id IS NOT NULL
+  AND bm.employee_id != ''
+  AND bm.biometric_pin ~ '^[0-9]+$'
+ON CONFLICT (device_serial_number, device_user_id) DO NOTHING;

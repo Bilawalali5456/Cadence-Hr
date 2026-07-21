@@ -7,7 +7,9 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
-import { registerBiometricRoutes, startBiometricProcessor } from "./biometric.js";
+import { registerAdmsRoutes } from "./routes/adms.js";
+import { registerAttendanceApi } from "./routes/attendance.js";
+import { startAttendanceSyncProcessor } from "./lib/attendanceSync.js";
 
 dotenv.config();
 
@@ -697,7 +699,8 @@ app.post("/api/send-warning-email", async (req, res) => {
   }
 });
 
-registerBiometricRoutes(app, pool);
+registerAdmsRoutes(app, pool);
+registerAttendanceApi(app, pool);
 
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));
@@ -736,7 +739,7 @@ const PORT = process.env.PORT || 4000;
 ensureSchema()
   .then(() => migratePlaintextPasswords())
   .then(() => {
-    startBiometricProcessor(pool);
+    startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);
       console.log(`  Health check: http://localhost:${PORT}/api/health`);

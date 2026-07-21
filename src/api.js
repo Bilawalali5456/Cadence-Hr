@@ -226,6 +226,55 @@ export async function apiBiometricRawLogs(userId, limit = 50) {
   return res.json();
 }
 
+/** ZKTeco ADMS v1 admin API */
+export async function apiAttendanceLogs(userId, { date, employeeId, from, to } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (employeeId) params.set("employee_id", employeeId);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const q = params.toString() ? `?${params}` : "";
+  const res = await fetch(`${API_URL}/v1/attendance/logs${q}`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load attendance logs");
+  return res.json();
+}
+
+export async function apiAttendanceDevices(userId) {
+  const res = await fetch(`${API_URL}/v1/attendance/devices`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load devices");
+  return res.json();
+}
+
+export async function apiAttendanceDeviceMapping(userId, { deviceUserId, employeeId, deviceSerialNumber }) {
+  const res = await fetch(`${API_URL}/v1/attendance/device-mapping`, {
+    method: "POST",
+    headers: biometricHeaders(userId),
+    body: JSON.stringify({
+      device_user_id: deviceUserId,
+      employee_id: employeeId,
+      device_serial_number: deviceSerialNumber,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to save mapping");
+  return data;
+}
+
+export async function apiAttendanceUnmapped(userId) {
+  const res = await fetch(`${API_URL}/v1/attendance/unmapped`, { headers: biometricHeaders(userId) });
+  if (!res.ok) throw new Error("Failed to load unmapped users");
+  return res.json();
+}
+
+export async function apiAttendanceSync(userId) {
+  const res = await fetch(`${API_URL}/v1/attendance/sync`, {
+    method: "POST",
+    headers: biometricHeaders(userId),
+  });
+  if (!res.ok) throw new Error("Failed to sync attendance");
+  return res.json();
+}
+
 export async function apiRefreshAttendance() {
   const res = await fetch(`${API_URL}/bootstrap`);
   if (!res.ok) throw new Error("Failed to refresh attendance");
