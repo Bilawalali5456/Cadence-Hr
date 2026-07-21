@@ -10,19 +10,32 @@ import {
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 
 async function upsertDevice(pool, serial, req) {
+  if (!serial) return;
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
-  const pushver = req.query.pushver || "";
-  await pool.query(
-    `INSERT INTO biometric_devices (serial_number, device_name, firmware_version, ip_address, last_seen, is_active, updated_at)
-     VALUES ($1, $2, $3, $4, NOW(), true, NOW())
-     ON CONFLICT (serial_number) DO UPDATE SET
-       firmware_version = COALESCE(NULLIF(EXCLUDED.firmware_version, ''), biometric_devices.firmware_version),
-       ip_address = EXCLUDED.ip_address,
-       last_seen = NOW(),
-       updated_at = NOW(),
-       is_active = true`,
-    [serial, serial, pushver, ip]
-  );
+  const pushver = req.query.pushver || req.query.PushVer || "";
+  try {
+    await pool.query(
+      `INSERT INTO biometric_devices (serial_number, device_name, firmware_version, ip_address, last_seen, is_active, updated_at)
+       VALUES ($1, $2, $3, $4, NOW(), true, NOW())
+       ON CONFLICT (serial_number) DO UPDATE SET
+         firmware_version = COALESCE(NULLIF(EXCLUDED.firmware_version, ''), biometric_devices.firmware_version),
+         ip_address = EXCLUDED.ip_address,
+         last_seen = NOW(),
+         updated_at = NOW(),
+         is_active = true`,
+      [serial, serial, pushver, ip]
+    );
+  } catch (e) {
+    console.error("[adms] upsertDevice extended failed, using minimal:", e.message);
+    await pool.query(
+      `INSERT INTO biometric_devices (serial_number, device_name, last_seen, is_active)
+       VALUES ($1, $2, NOW(), true)
+       ON CONFLICT (serial_number) DO UPDATE SET
+         last_seen = NOW(),
+         is_active = true`,
+      [serial, serial]
+    );
+  }
 }
 
 async function getDeviceStamps(pool, serial) {
@@ -110,6 +123,11 @@ async function processAttLogBody(pool, serial, body) {
 }
 
 export function registerAdmsRoutes(app, pool) {
+  /** Simple connectivity check — device or admin can hit this */
+  app.get("/iclock/ping", (_req, res) => {
+    sendAdmsText(res, "OK");
+  });
+
   /** Device registration / handshake */
   app.get("/iclock/cdata", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
@@ -173,12 +191,7 @@ export function registerAdmsRoutes(app, pool) {
 
     try {
       await logRawRequest(pool, { serial, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
-      if (serial) {
-        await pool.query(
-          `UPDATE biometric_devices SET last_seen = NOW(), updated_at = NOW(), is_active = true WHERE serial_number = $1`,
-          [serial]
-        );
-      }
+      if (serial) await upsertDevice(pool, serial, req);
 
       const { rows } = await pool.query(
         `SELECT id, command_data FROM device_commands

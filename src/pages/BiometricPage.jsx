@@ -35,6 +35,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [mapSel, setMapSel] = useState({});
+  const [serverTest, setServerTest] = useState(null);
   const today = todayKey();
 
   const staff = useMemo(
@@ -63,6 +64,21 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   }, [currentUser?.id, today]);
 
   useEffect(() => { load(); }, [load]);
+
+  async function testAdmsServer() {
+    setServerTest(null);
+    setErr("");
+    try {
+      const res = await fetch("/iclock/cdata?SN=PORTALTEST&options=all&pushver=2.4.1");
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!text.includes("GET OPTION FROM:")) throw new Error("Invalid ADMS response");
+      setServerTest({ ok: true, preview: text.split("\n").slice(0, 3).join(" · ") });
+    } catch (e) {
+      setServerTest({ ok: false, error: e.message });
+      setErr(`ADMS server test failed: ${e.message}`);
+    }
+  }
 
   async function handleMap(pin) {
     const employeeId = mapSel[pin];
@@ -97,6 +113,16 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
 
   const device = status?.device;
   const connected = status?.connected;
+  const recentIclock = status?.recentIclockRequests || [];
+
+  const setupSteps = [
+    { label: "Server mode", value: "ADMS / Cloud Server (Push)" },
+    { label: "Server address", value: "hrms.adforcesolutions.com" },
+    { label: "Port", value: "80" },
+    { label: "HTTPS / SSL", value: "OFF (must be plain HTTP)" },
+    { label: "Path / URL", value: "http://hrms.adforcesolutions.com/iclock/cdata" },
+    { label: "Expected serial", value: "NYU7253801377" },
+  ];
 
   return (
     <div className="space-y-5">
@@ -104,10 +130,35 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
         <Btn variant="ghost" onClick={load} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />Refresh
         </Btn>
+        <Btn variant="ghost" onClick={testAdmsServer}>Test ADMS server</Btn>
       </div>
 
       <ErrBox msg={err} />
       <OkBox msg={ok} />
+
+      {serverTest?.ok && (
+        <OkBox msg={`ADMS server reachable — ${serverTest.preview}`} />
+      )}
+
+      <Card className="p-5">
+        <STitle>Device setup (after reset)</STitle>
+        <p className="text-xs text-slate-500 mb-3">
+          On the SenseFace 2A: Menu → Comm → Cloud Server / ADMS. Use these exact values.
+          Some firmware builds auto-append <code className="bg-slate-100 px-1 rounded">/iclock/cdata</code> —
+          if connection fails, try entering only <code className="bg-slate-100 px-1 rounded">hrms.adforcesolutions.com</code> in the server field with port 80.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+          {setupSteps.map(s => (
+            <div key={s.label} className="flex gap-2 border border-slate-100 rounded-lg px-3 py-2">
+              <span className="text-slate-400 shrink-0">{s.label}:</span>
+              <span className="font-medium font-mono text-xs break-all">{s.value}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-amber-700 mt-3">
+          After saving, reboot the device or wait 60 seconds. The portal should show serial NYU7253801377 as Connected.
+        </p>
+      </Card>
 
       <Card className="p-5">
         <STitle>Device status</STitle>
@@ -141,6 +192,18 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
               <div className="text-sm font-medium mt-1">{formatDateTime(device.last_seen)}</div>
               <div className="text-xs text-slate-400">{device.ip_address || ""}</div>
             </div>
+          </div>
+        )}
+        {recentIclock.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="text-xs text-slate-400 mb-2">Recent /iclock requests seen by server</div>
+            <ul className="text-xs space-y-1 font-mono">
+              {recentIclock.map((r, i) => (
+                <li key={i} className="text-slate-600">
+                  {formatDateTime(r.at)} · {r.method} {r.path} · SN={r.serial || "?"}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </Card>

@@ -232,7 +232,24 @@ export function registerAttendanceApi(app, pool) {
       const device = rows[0] || null;
       const connected = device?.last_seen
         && (Date.now() - new Date(device.last_seen).getTime()) < 10 * 60 * 1000;
-      res.json({ device, connected: !!connected });
+
+      const { rows: rawRows } = await pool.query(
+        `SELECT device_serial, request_method, request_path, created_at
+         FROM biometric_raw_logs
+         WHERE request_path LIKE '/iclock%'
+         ORDER BY created_at DESC LIMIT 5`
+      );
+
+      res.json({
+        device,
+        connected: !!connected,
+        recentIclockRequests: rawRows.map(r => ({
+          serial: r.device_serial,
+          method: r.request_method,
+          path: r.request_path,
+          at: r.created_at,
+        })),
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
