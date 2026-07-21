@@ -124,20 +124,21 @@ function todayRange() {
   return {
     start: `${y}-${m}-${d} 00:00:00`,
     end: `${y}-${m}-${d} 23:59:59`,
-    // Broader pull so historical punches since month start are requested
     monthStart: `${y}-${m}-01 00:00:00`,
+    // Dynamic historical window — start of current calendar year (no hardcoded dates)
+    yearStart: `${y}-01-01 00:00:00`,
   };
 }
 
 /**
  * Queue CHECK then DATA QUERY ATTLOG for the SenseFace.
- * @param {{ force?: boolean }} options - force=true inserts even if a prior pending/sent exists today
+ * Default query window: start of current year → end of today (override via options).
+ * @param {{ force?: boolean, startTime?: string, endTime?: string }} options
  */
 export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, options = {}) {
   const force = !!options.force;
-  const { end, monthStart } = todayRange();
-  // Prefer a wide window so the device dumps all recent punches
-  const start = options.startTime || monthStart || "2026-07-01 00:00:00";
+  const { end, yearStart } = todayRange();
+  const start = options.startTime || yearStart;
   const endTime = options.endTime || end;
 
   const commands = [
