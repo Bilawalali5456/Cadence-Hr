@@ -1,9 +1,8 @@
 /**
- * Biometric / ZK pull admin API (JSON for HRMS frontend)
+ * Biometric / ZKTeco ADMS admin API (JSON for HRMS frontend)
  */
 
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
-import { pullFromDevice, getPullStatus } from "../lib/zkPull.js";
 
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -31,24 +30,33 @@ export function registerAttendanceApi(app, pool) {
 
   app.get("/api/biometric/status", auth, async (_req, res) => {
     try {
-      const pull = getPullStatus();
       const { rows } = await pool.query(
-        `SELECT * FROM biometric_devices ORDER BY last_seen DESC NULLS LAST LIMIT 1`
+        `SELECT * FROM biometric_devices
+         WHERE serial_number IS NOT NULL AND serial_number <> '' AND UPPER(serial_number) <> 'PORTALTEST'
+         ORDER BY last_seen DESC NULLS LAST LIMIT 1`
       );
-      res.json({
-        device: rows[0] || null,
-        connected: pull.connected,
-        pull,
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+      const device = rows[0] || null;
+      const connected = !!(device?.last_seen
+        && (Date.now() - new Date(device.last_seen).getTime()) < 5 * 60 * 1000);
 
-  app.post("/api/biometric/pull", auth, async (_req, res) => {
-    try {
-      const result = await pullFromDevice(pool);
-      res.json({ ...result, pull: getPullStatus() });
+      const { rows: rawRows } = await pool.query(
+        `SELECT device_serial, request_method, request_path, query_params, created_at
+         FROM biometric_raw_logs
+         WHERE request_path ILIKE '%/iclock%' OR request_path ILIKE '%/ICLOCK%'
+         ORDER BY created_at DESC LIMIT 30`
+      );
+
+      res.json({
+        device,
+        connected,
+        recentIclockRequests: rawRows.map(r => ({
+          serial: r.device_serial,
+          method: r.request_method,
+          path: r.request_path,
+          query: r.query_params,
+          at: r.created_at,
+        })),
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -105,6 +113,22 @@ export function registerAttendanceApi(app, pool) {
          ORDER BY deu.device_user_id`
       );
 
+      const { rows: fromLogs } = await pool.query(
+        `SELECT DISTINCT al.device_user_id AS pin, al.device_serial_number,
+                dm.employee_id, u.name AS portal_name, u.email AS portal_email
+         FROM attendance_logs al
+         LEFT JOIN device_user_mapping dm
+           ON dm.device_serial_number = al.device_serial_number
+          AND dm.device_user_id = al.device_user_id
+         LEFT JOIN users u ON u.id = dm.employee_id
+         WHERE NOT EXISTS (
+           SELECT 1 FROM device_enrolled_users deu
+           WHERE deu.device_serial_number = al.device_serial_number
+             AND deu.device_user_id = al.device_user_id
+         )
+         ORDER BY al.device_user_id`
+      );
+
       const { rows: mappedOnly } = await pool.query(
         `SELECT dm.device_user_id AS pin, dm.device_serial_number, dm.employee_id,
                 u.name AS portal_name, u.email AS portal_email
@@ -115,6 +139,11 @@ export function registerAttendanceApi(app, pool) {
            WHERE deu.device_serial_number = dm.device_serial_number
              AND deu.device_user_id = dm.device_user_id
          )
+         AND NOT EXISTS (
+           SELECT 1 FROM attendance_logs al
+           WHERE al.device_serial_number = dm.device_serial_number
+             AND al.device_user_id = dm.device_user_id
+         )
          ORDER BY dm.device_user_id`
       );
 
@@ -122,6 +151,15 @@ export function registerAttendanceApi(app, pool) {
         ...enrolled.map(r => ({
           pin: String(r.pin),
           name: r.name || "",
+          employeeId: r.employee_id || "",
+          portalName: r.portal_name || "",
+          portalEmail: r.portal_email || "",
+          deviceSerial: r.device_serial_number,
+          mapped: !!r.employee_id,
+        })),
+        ...fromLogs.map(r => ({
+          pin: String(r.pin),
+          name: "",
           employeeId: r.employee_id || "",
           portalName: r.portal_name || "",
           portalEmail: r.portal_email || "",
@@ -154,10 +192,13 @@ export function registerAttendanceApi(app, pool) {
       let serial = deviceSerial;
       if (!serial) {
         const { rows } = await pool.query(
-          `SELECT serial_number FROM biometric_devices ORDER BY last_seen DESC NULLS LAST LIMIT 1`
+          `SELECT serial_number FROM biometric_devices
+           WHERE UPPER(serial_number) <> 'PORTALTEST'
+           ORDER BY last_seen DESC NULLS LAST LIMIT 1`
         );
-        serial = rows[0]?.serial_number || process.env.ZK_DEVICE_SERIAL || "NYU7253801377";
+        serial = rows[0]?.serial_number;
       }
+      if (!serial) return res.status(400).json({ error: "No device registered yet" });
 
       await pool.query(
         `INSERT INTO device_user_mapping (device_user_id, employee_id, device_serial_number, updated_at)
@@ -185,10 +226,13 @@ export function registerAttendanceApi(app, pool) {
       let serial = req.query.device_serial_number;
       if (!serial) {
         const { rows } = await pool.query(
-          `SELECT serial_number FROM biometric_devices ORDER BY last_seen DESC NULLS LAST LIMIT 1`
+          `SELECT serial_number FROM biometric_devices
+           WHERE UPPER(serial_number) <> 'PORTALTEST'
+           ORDER BY last_seen DESC NULLS LAST LIMIT 1`
         );
-        serial = rows[0]?.serial_number || process.env.ZK_DEVICE_SERIAL || "NYU7253801377";
+        serial = rows[0]?.serial_number;
       }
+      if (!serial) return res.status(400).json({ error: "No device registered yet" });
       await pool.query(
         `DELETE FROM device_user_mapping
          WHERE device_serial_number = $1 AND device_user_id = $2`,
@@ -204,6 +248,15 @@ export function registerAttendanceApi(app, pool) {
     try {
       const r = await syncAttendanceFromLogs(pool);
       res.json({ ok: true, ...r });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/biometric/raw-logs", auth, async (_req, res) => {
+    try {
+      await pool.query(`DELETE FROM biometric_raw_logs`);
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

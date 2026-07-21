@@ -3,14 +3,13 @@
  * Device initiates all communication — plain text only, never JSON.
  */
 
+import express from "express";
 import {
-  admsOk, sendAdmsText, splitLines, parseAttLogLine,
+  admsOk, sendAdmsText, splitLines, parseAttLogLine, parseOperLogUserLine,
   buildRegistrationResponse, logRawRequest, logAdms, logPostCdataVerbose,
   logAdmsResponseBytes,
 } from "../lib/admsHelpers.js";
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
-
-const PRIMARY_DEVICE_SN = "NYU7253801377";
 
 async function upsertDevice(pool, serial, req) {
   if (!serial) return;
@@ -104,57 +103,26 @@ async function processAttLogBody(pool, serial, body) {
   return { inserted, duplicates };
 }
 
-function attlogQueryCommand(startDate, endDate, separator = "\t") {
-  return `DATA QUERY ATTLOG StartTime=${startDate}${separator}EndTime=${endDate}`;
-}
-
-function todayRange() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return {
-    start: `${y}-${m}-${d} 00:00:00`,
-    end: `${y}-${m}-${d} 23:59:59`,
-    yearStart: `${y}-01-01 00:00:00`,
-  };
-}
-
-/**
- * Queue CHECK then DATA QUERY ATTLOG for the SenseFace.
- * @param {{ force?: boolean, startTime?: string, endTime?: string }} options
- */
-export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, options = {}) {
-  const force = !!options.force;
-  const { end, yearStart } = todayRange();
-  const start = options.startTime || yearStart;
-  const endTime = options.endTime || end;
-
-  const commands = [
-    { type: "CHECK", data: "CHECK" },
-    { type: "DATA_QUERY_ATTLOG", data: attlogQueryCommand(start, endTime, "\t") },
-  ];
-
-  for (const cmd of commands) {
-    if (!force) {
-      const existing = await pool.query(
-        `SELECT id FROM device_commands
-         WHERE UPPER(TRIM(device_serial)) = UPPER(TRIM($1))
-           AND status = 'pending' AND command_data = $2 LIMIT 1`,
-        [serial, cmd.data]
+async function processOperLogBody(pool, serial, body) {
+  let saved = 0;
+  for (const line of splitLines(body)) {
+    const user = parseOperLogUserLine(line);
+    if (!user) continue;
+    try {
+      await pool.query(
+        `INSERT INTO device_enrolled_users (device_serial_number, device_user_id, name, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (device_serial_number, device_user_id) DO UPDATE SET
+           name = COALESCE(NULLIF(EXCLUDED.name, ''), device_enrolled_users.name),
+           updated_at = NOW()`,
+        [serial, user.pin, user.name || ""]
       );
-      if (existing.rows.length) {
-        logAdms("CMD_ALREADY_QUEUED", `SN=${serial} ${cmd.type} id=${existing.rows[0].id}`);
-        continue;
-      }
+      saved += 1;
+    } catch (e) {
+      console.error("[adms] OPERLOG user save error:", e.message);
     }
-    const { rows } = await pool.query(
-      `INSERT INTO device_commands (device_serial, command_type, command_data, status)
-       VALUES ($1, $2, $3, 'pending') RETURNING id`,
-      [String(serial).trim(), cmd.type, cmd.data]
-    );
-    logAdms("CMD_QUEUED", `SN=${serial} id=${rows[0].id} ${cmd.type} data=${cmd.data}`);
   }
+  return { saved };
 }
 
 function sendHandshake(res, serial, label = "cdata") {
@@ -163,19 +131,20 @@ function sendHandshake(res, serial, label = "cdata") {
   sendAdmsText(res, body);
 }
 
-function mountAdmsHandlers(app, pool) {
-  app.get(["/iclock/ping", "/ICLOCK/ping"], (_req, res) => {
-    sendAdmsText(res, "OK");
+function createAdmsRouter(pool) {
+  const router = express.Router();
+
+  router.get("/ping", (_req, res) => {
+    sendAdmsText(res, admsOk());
   });
 
-  /** Debug: same body as GET /iclock/cdata — open in browser to inspect */
-  app.get(["/iclock/test-handshake", "/ICLOCK/test-handshake"], (req, res) => {
+  router.get("/test-handshake", (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "NYU7253801377").trim();
     sendHandshake(res, serial, "test-handshake");
   });
 
-  /** Device registration / handshake */
-  app.get(["/iclock/cdata", "/ICLOCK/cdata"], async (req, res) => {
+  /** GET /iclock/cdata — device registration / handshake */
+  router.get("/cdata", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
     logAdms("GET /iclock/cdata", `SN=${serial} IP=${ip}`);
@@ -193,8 +162,8 @@ function mountAdmsHandlers(app, pool) {
     }
   });
 
-  /** Attendance / operation log push (+ empty-body handshake from some firmware) */
-  app.post(["/iclock/cdata", "/ICLOCK/cdata"], async (req, res) => {
+  /** POST /iclock/cdata — ATTLOG / OPERLOG push */
+  router.post("/cdata", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     const table = String(req.query.table || req.query.Table || "").toUpperCase();
     const stampQ = String(req.query.Stamp || req.query.stamp || "");
@@ -208,38 +177,27 @@ function mountAdmsHandlers(app, pool) {
         serial,
         method: "POST",
         path: "/iclock/cdata",
-        query: { ...req.query, _headers: req.headers },
+        query: req.query,
         body,
       });
     } catch (_) { /* continue */ }
-
-    if (!table) {
-      logAdms("POST /iclock/cdata (handshake)", `SN=${serial} IP=${ip}`);
-      try {
-        if (serial) await upsertDevice(pool, serial, req);
-        sendHandshake(res, serial || "DEVICE", "cdata-post-handshake");
-      } catch (e) {
-        console.error("[adms] POST handshake error:", e.message);
-        sendHandshake(res, serial || "DEVICE", "cdata-post-handshake-error");
-      }
-      return;
-    }
-
-    logAdms("POST /iclock/cdata", `SN=${serial} table=${table} Stamp=${stampQ} bytes=${body.length} IP=${ip}`);
 
     try {
       if (serial) await upsertDevice(pool, serial, req);
 
       if (table === "ATTLOG") {
         const r = await processAttLogBody(pool, serial, body);
-        logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates}`);
+        logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates} SN=${serial} Stamp=${stampQ} IP=${ip}`);
         try {
           await syncAttendanceFromLogs(pool);
         } catch (e) {
           console.error("[adms] sync after ATTLOG failed:", e.message);
         }
       } else if (table === "OPERLOG") {
-        logAdms("OPERLOG", `stored raw (${splitLines(body).length} lines)`);
+        const r = await processOperLogBody(pool, serial, body);
+        logAdms("OPERLOG", `users_saved=${r.saved} lines=${splitLines(body).length}`);
+      } else if (!table) {
+        logAdms("POST /iclock/cdata (no table)", `SN=${serial} IP=${ip}`);
       } else {
         logAdms("POST_UNKNOWN_TABLE", `table=${table} body=<<${body.slice(0, 500)}>>`);
       }
@@ -250,37 +208,14 @@ function mountAdmsHandlers(app, pool) {
     sendAdmsText(res, admsOk());
   });
 
-  /** Command polling — pending command text, else OK */
-  app.get(["/iclock/getrequest", "/ICLOCK/getrequest"], async (req, res) => {
+  /** GET /iclock/getrequest — proven firmware expects plain OK */
+  router.get("/getrequest", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     logAdms("GET /iclock/getrequest", `SN=${serial}`);
 
     try {
       await logRawRequest(pool, { serial, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
       if (serial) await upsertDevice(pool, serial, req);
-
-      const { rows } = await pool.query(
-        `SELECT id, command_type, command_data FROM device_commands
-         WHERE UPPER(TRIM(device_serial)) = UPPER(TRIM($1))
-           AND status = 'pending'
-         ORDER BY id ASC
-         LIMIT 1`,
-        [serial]
-      );
-
-      logAdms("GETREQUEST_PENDING", `SN=${serial} count=${rows.length}${rows[0] ? ` next=${rows[0].id}:${rows[0].command_data}` : ""}`);
-
-      if (rows.length > 0) {
-        const cmd = rows[0];
-        const payload = `C:${cmd.id}:${cmd.command_data || ""}`;
-        await pool.query(
-          `UPDATE device_commands SET status = 'sent', sent_at = NOW() WHERE id = $1 AND status = 'pending'`,
-          [cmd.id]
-        );
-        logAdms("CMD_SENT", `SN=${serial} ${payload}`);
-        sendAdmsText(res, payload);
-        return;
-      }
     } catch (e) {
       console.error("[adms] getrequest error:", e.message);
     }
@@ -288,29 +223,27 @@ function mountAdmsHandlers(app, pool) {
     sendAdmsText(res, admsOk());
   });
 
-  app.post(["/iclock/devicecmd", "/ICLOCK/devicecmd"], async (req, res) => {
+  /** POST /iclock/devicecmd */
+  router.post("/devicecmd", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");
     logAdms("POST /iclock/devicecmd", `SN=${serial} body=<<${body}>>`);
 
     try {
       await logRawRequest(pool, { serial, method: "POST", path: "/iclock/devicecmd", query: req.query, body });
-      const idM = String(body).match(/ID=([0-9]+)/i) || String(body).match(/^([0-9]+)/);
-      const cmdId = idM ? parseInt(idM[1], 10) : null;
-      if (cmdId) {
-        await pool.query(
-          `UPDATE device_commands SET status = 'completed', completed_at = NOW(), result = $1 WHERE id = $2`,
-          [String(body).slice(0, 2000), cmdId]
-        );
-      }
     } catch (e) {
       console.error("[adms] devicecmd error:", e.message);
     }
 
     sendAdmsText(res, admsOk());
   });
+
+  return router;
 }
 
 export function registerAdmsRoutes(app, pool) {
-  mountAdmsHandlers(app, pool);
+  const admsRouter = createAdmsRouter(pool);
+  app.use("/iclock", admsRouter);
+  app.use("/ICLOCK", admsRouter);
+  app.use("/iClock", admsRouter);
 }

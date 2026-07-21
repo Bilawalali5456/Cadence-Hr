@@ -15,17 +15,18 @@ export const VERIFY_METHODS = {
   0: "password",
   1: "fingerprint",
   2: "card",
+  3: "password",
+  4: "card",
   15: "face",
 };
 
 export function admsOk() {
-  return "OK\n";
+  return "OK";
 }
 
+/** Plain-text ADMS response: Content-Type text/plain (no charset), status 200. */
 export function sendAdmsText(res, body, status = 200) {
-  // Exact Content-Type text/plain — NO charset. Trailing newline required.
-  let text = body == null ? "" : String(body);
-  if (!text.endsWith("\n")) text += "\n";
+  const text = body == null ? "" : String(body);
   const buf = Buffer.from(text, "utf8");
   res.status(status);
   res.setHeader("Content-Type", "text/plain");
@@ -38,10 +39,10 @@ export function sendAdmsText(res, body, status = 200) {
 
 /** Log exact handshake/response bytes for debugging */
 export function logAdmsResponseBytes(label, text) {
-  const raw = text.endsWith("\n") ? text : `${text}\n`;
+  const raw = String(text ?? "");
   const buf = Buffer.from(raw, "utf8");
   console.log(`[adms RESP ${label}] bytes=${buf.length}`);
-  console.log(`[adms RESP ${label}] utf8=<<${raw.replace(/\n/g, "\\n")}>>`);
+  console.log(`[adms RESP ${label}] utf8=<<${raw.replace(/\r/g, "\\r").replace(/\n/g, "\\n")}>>`);
   console.log(`[adms RESP ${label}] hex=${buf.toString("hex")}`);
 }
 
@@ -91,27 +92,72 @@ export function parseAttLogLine(line) {
   };
 }
 
+/**
+ * Proven ZAM70 / SenseFace handshake — exact \r\n endings, Stamp=9999, Encrypt=0.
+ * Do not change line endings or stamp values without device testing.
+ */
 export function buildRegistrationResponse(serial) {
   const sn = serial || "DEVICE";
-  // Exact lines — Stamp=None means "send everything" on some ZKTeco firmware
-  return [
-    `GET OPTION FROM: ${sn}`,
-    "Stamp=None",
-    "OpStamp=None",
-    "PhotoStamp=None",
-    "ErrorDelay=30",
-    "Delay=5",
-    "TransTimes=00:00;14:05",
-    "TransInterval=1",
-    "TransFlag=1111000000",
-    "Realtime=1",
-    "TimeZone=5",
-    "OPERLOGStamp=None",
-    "ATTLOGStamp=None",
-    "ATTPHOTOStamp=None",
-    "ServerVer=2.4.1",
-    "TableNameStamp=None",
-  ].join("\n");
+  return (
+    `GET OPTION FROM: ${sn}\r\n` +
+    `Stamp=9999\r\n` +
+    `OpStamp=9999\r\n` +
+    `PhotoStamp=9999\r\n` +
+    `ErrorDelay=30\r\n` +
+    `Delay=5\r\n` +
+    `TransTimes=00:00;14:05\r\n` +
+    `TransInterval=1\r\n` +
+    `TransFlag=TransData AttLog OpLog AttPhoto\r\n` +
+    `Realtime=1\r\n` +
+    `Encrypt=0\r\n` +
+    `ServerVer=2.4.1\r\n` +
+    `TableNameStamp=\r\n`
+  );
+}
+
+/** Parse OPERLOG USER line: PIN, Name, Card, Pri, Passwd, Grp, TZ, Verify */
+export function parseOperLogUserLine(line) {
+  const s = String(line || "").trim();
+  if (!s) return null;
+
+  if (/^USER\b/i.test(s) || /\bPIN=/i.test(s)) {
+    const fields = {};
+    const re = /(\w+)=([^\t]*)/g;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      fields[m[1].toLowerCase()] = String(m[2] || "").trim();
+    }
+    const pin = parseInt(fields.pin, 10);
+    if (!Number.isFinite(pin)) return null;
+    return {
+      pin,
+      name: fields.name || "",
+      card: fields.card || "",
+      pri: fields.pri || "",
+      passwd: fields.passwd || "",
+      grp: fields.grp || "",
+      tz: fields.tz || "",
+      verify: fields.verify || "",
+      rawData: line,
+    };
+  }
+
+  const parts = s.split("\t");
+  if (parts.length >= 2 && /^\d+$/.test(parts[0].trim())) {
+    return {
+      pin: parseInt(parts[0].trim(), 10),
+      name: (parts[1] || "").trim(),
+      card: (parts[2] || "").trim(),
+      pri: (parts[3] || "").trim(),
+      passwd: (parts[4] || "").trim(),
+      grp: (parts[5] || "").trim(),
+      tz: (parts[6] || "").trim(),
+      verify: (parts[7] || "").trim(),
+      rawData: line,
+    };
+  }
+
+  return null;
 }
 
 /** Log every POST /iclock/cdata in full for debugging missing ATTLOG pushes */
