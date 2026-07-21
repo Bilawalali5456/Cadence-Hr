@@ -112,14 +112,21 @@ async function processAttLogBody(pool, serial, body) {
   return { inserted, duplicates };
 }
 
-function todayAttlogQueryCommand(separator = "\t") {
+function attlogQueryCommand(startDate, endDate, separator = "\t") {
+  return `DATA QUERY ATTLOG StartTime=${startDate}${separator}EndTime=${endDate}`;
+}
+
+function todayRange() {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
-  const start = `${y}-${m}-${d} 00:00:00`;
-  const end = `${y}-${m}-${d} 23:59:59`;
-  return `DATA QUERY ATTLOG StartTime=${start}${separator}EndTime=${end}`;
+  return {
+    start: `${y}-${m}-${d} 00:00:00`,
+    end: `${y}-${m}-${d} 23:59:59`,
+    // Broader pull so historical punches since month start are requested
+    monthStart: `${y}-${m}-01 00:00:00`,
+  };
 }
 
 /**
@@ -128,17 +135,22 @@ function todayAttlogQueryCommand(separator = "\t") {
  */
 export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, options = {}) {
   const force = !!options.force;
+  const { end, monthStart } = todayRange();
+  // Prefer a wide window so the device dumps all recent punches
+  const start = options.startTime || monthStart || "2026-07-01 00:00:00";
+  const endTime = options.endTime || end;
+
   const commands = [
     { type: "CHECK", data: "CHECK" },
-    { type: "DATA_QUERY_ATTLOG", data: todayAttlogQueryCommand("\t") },
-    { type: "DATA_QUERY_ATTLOG", data: todayAttlogQueryCommand(" ") },
+    { type: "DATA_QUERY_ATTLOG", data: attlogQueryCommand(start, endTime, "\t") },
   ];
 
   for (const cmd of commands) {
     if (!force) {
       const existing = await pool.query(
         `SELECT id FROM device_commands
-         WHERE device_serial = $1 AND status = 'pending' AND command_data = $2 LIMIT 1`,
+         WHERE UPPER(TRIM(device_serial)) = UPPER(TRIM($1))
+           AND status = 'pending' AND command_data = $2 LIMIT 1`,
         [serial, cmd.data]
       );
       if (existing.rows.length) {
@@ -149,7 +161,7 @@ export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, 
     const { rows } = await pool.query(
       `INSERT INTO device_commands (device_serial, command_type, command_data, status)
        VALUES ($1, $2, $3, 'pending') RETURNING id`,
-      [serial, cmd.type, cmd.data]
+      [String(serial).trim(), cmd.type, cmd.data]
     );
     logAdms("CMD_QUEUED", `SN=${serial} id=${rows[0].id} ${cmd.type} data=${cmd.data}`);
   }
@@ -175,8 +187,8 @@ function mountAdmsHandlers(app, pool) {
       if (serial) await upsertDevice(pool, serial, req);
       const stamps = await getDeviceStamps(pool, serial);
       const body = buildRegistrationResponse(serial, stamps);
-      if (!body.includes("Realtime=1") || !body.includes("AttLog")) {
-        console.error("[adms] handshake missing Realtime/AttLog — check buildRegistrationResponse");
+      if (!body.includes("Realtime=1") || !body.includes("TransFlag=1111000000") || !body.includes("Stamp=0")) {
+        console.error("[adms] handshake missing required options — check buildRegistrationResponse");
       }
       logAdms("HANDSHAKE_RESPONSE", body.replace(/\r\n/g, " | "));
       sendAdmsText(res, body);
@@ -258,7 +270,7 @@ function mountAdmsHandlers(app, pool) {
     sendAdmsText(res, admsOk());
   });
 
-  /** Command polling — returns pending C:id:command or OK */
+  /** Command polling — MUST return C:id:command when pending, never OK in that case */
   app.get(["/iclock/getrequest", "/ICLOCK/getrequest"], async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     logAdms("GET /iclock/getrequest", `SN=${serial}`);
@@ -267,25 +279,36 @@ function mountAdmsHandlers(app, pool) {
       await logRawRequest(pool, { serial, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
       if (serial) await upsertDevice(pool, serial, req);
 
+      // Case-insensitive serial match — pending commands must be delivered as C:id:data
       const { rows } = await pool.query(
         `SELECT id, command_type, command_data FROM device_commands
-         WHERE device_serial = $1 AND status = 'pending' ORDER BY id ASC LIMIT 1`,
+         WHERE UPPER(TRIM(device_serial)) = UPPER(TRIM($1))
+           AND status = 'pending'
+         ORDER BY id ASC
+         LIMIT 1`,
         [serial]
       );
 
-      if (rows.length) {
+      logAdms("GETREQUEST_PENDING", `SN=${serial} count=${rows.length}${rows[0] ? ` next=${rows[0].id}:${rows[0].command_data}` : ""}`);
+
+      if (rows.length > 0) {
         const cmd = rows[0];
+        const payload = `C:${cmd.id}:${cmd.command_data || ""}`;
+
+        // Mark sent only after we have a payload ready
         await pool.query(
-          `UPDATE device_commands SET status = 'sent', sent_at = NOW() WHERE id = $1`,
+          `UPDATE device_commands SET status = 'sent', sent_at = NOW() WHERE id = $1 AND status = 'pending'`,
           [cmd.id]
         );
-        const payload = `C:${cmd.id}:${cmd.command_data || ""}`;
+
         logAdms("CMD_SENT", `SN=${serial} ${payload}`);
-        sendAdmsText(res, `${payload}\r\n`);
+        // Body must be the command text itself — not OK
+        sendAdmsText(res, payload);
         return;
       }
     } catch (e) {
       console.error("[adms] getrequest error:", e.message);
+      // Still try to return OK so the device keeps polling
     }
 
     sendAdmsText(res, admsOk());

@@ -747,7 +747,17 @@ ensureSchema()
   .then(async () => {
     // Queue after schema exists — registerAdmsRoutes runs earlier and must not hit the DB yet
     try {
-      await queueAttlogPullCommands(pool, "NYU7253801377", { force: true });
+      await queueAttlogPullCommands(pool, "NYU7253801377", {
+        force: true,
+        startTime: "2026-07-01 00:00:00",
+        endTime: (() => {
+          const n = new Date();
+          const y = n.getFullYear();
+          const m = String(n.getMonth() + 1).padStart(2, "0");
+          const d = String(n.getDate()).padStart(2, "0");
+          return `${y}-${m}-${d} 23:59:59`;
+        })(),
+      });
     } catch (e) {
       console.error("[adms] failed to queue pull commands:", e.message);
     }

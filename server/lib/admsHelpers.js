@@ -81,21 +81,24 @@ export function parseAttLogLine(line) {
 
 export function buildRegistrationResponse(serial, stamps = {}) {
   const sn = serial || "DEVICE";
+  // Exact option names/order expected by SenseFace / ZAM70 ADMS firmware
   return [
     `GET OPTION FROM: ${sn}`,
-    `ATTLOGStamp=${stamps.attlogStamp ?? 0}`,
-    `OPERLOGStamp=${stamps.operlogStamp ?? 0}`,
-    `ATTPHOTOStamp=${stamps.attphotoStamp ?? 0}`,
-    "ErrorDelay=60",
-    "Delay=10",
+    "Stamp=0",
+    "OpStamp=0",
+    "PhotoStamp=0",
+    "ErrorDelay=30",
+    "Delay=5",
     "TransTimes=00:00;14:05",
     "TransInterval=1",
-    // AttLog must be enabled for punches to POST; Realtime=1 pushes on each scan
-    "TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP UserPic",
+    "TransFlag=1111000000",
     "Realtime=1",
-    "Encrypt=0",
     "TimeZone=5",
+    "OPERLOGStamp=0",
+    "ATTLOGStamp=0",
+    "ATTPHOTOStamp=0",
     "ServerVer=2.4.1",
+    "TableNameStamp=",
   ].join("\r\n");
 }
 

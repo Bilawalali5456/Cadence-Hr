@@ -210,11 +210,16 @@ export function registerAttendanceApi(app, pool) {
     }
   });
 
-  /** POST /api/v1/attendance/pull-logs — queue CHECK + DATA QUERY ATTLOG for device */
   app.post("/api/v1/attendance/pull-logs", auth, async (req, res) => {
     try {
       const serial = String(req.body?.serial || req.query.serial || "NYU7253801377").trim();
-      await queueAttlogPullCommands(pool, serial, { force: true });
+      const n = new Date();
+      const end = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")} 23:59:59`;
+      await queueAttlogPullCommands(pool, serial, {
+        force: true,
+        startTime: "2026-07-01 00:00:00",
+        endTime: end,
+      });
       res.json({ ok: true, serial, queued: ["CHECK", "DATA QUERY ATTLOG"], force: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -224,7 +229,13 @@ export function registerAttendanceApi(app, pool) {
   app.post("/api/biometric/pull-logs", auth, async (req, res) => {
     try {
       const serial = String(req.body?.serial || "NYU7253801377").trim();
-      await queueAttlogPullCommands(pool, serial, { force: true });
+      const n = new Date();
+      const end = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")} 23:59:59`;
+      await queueAttlogPullCommands(pool, serial, {
+        force: true,
+        startTime: "2026-07-01 00:00:00",
+        endTime: end,
+      });
       res.json({ ok: true, serial });
     } catch (e) {
       res.status(500).json({ error: e.message });
