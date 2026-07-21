@@ -214,8 +214,18 @@ export function registerAttendanceApi(app, pool) {
   app.post("/api/v1/attendance/pull-logs", auth, async (req, res) => {
     try {
       const serial = String(req.body?.serial || req.query.serial || "NYU7253801377").trim();
-      await queueAttlogPullCommands(pool, serial);
-      res.json({ ok: true, serial, queued: ["CHECK", "DATA QUERY ATTLOG"] });
+      await queueAttlogPullCommands(pool, serial, { force: true });
+      res.json({ ok: true, serial, queued: ["CHECK", "DATA QUERY ATTLOG"], force: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/biometric/pull-logs", auth, async (req, res) => {
+    try {
+      const serial = String(req.body?.serial || "NYU7253801377").trim();
+      await queueAttlogPullCommands(pool, serial, { force: true });
+      res.json({ ok: true, serial });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -243,22 +253,69 @@ export function registerAttendanceApi(app, pool) {
       );
       const device = rows[0] || null;
       const connected = device?.last_seen
-        && (Date.now() - new Date(device.last_seen).getTime()) < 10 * 60 * 1000;
+        && (Date.now() - new Date(device.last_seen).getTime()) < 15 * 60 * 1000;
 
       const { rows: rawRows } = await pool.query(
-        `SELECT device_serial, request_method, request_path, created_at
+        `SELECT device_serial, request_method, request_path, query_params, created_at
          FROM biometric_raw_logs
          WHERE request_path LIKE '/iclock%'
-         ORDER BY created_at DESC LIMIT 5`
+         ORDER BY created_at DESC LIMIT 15`
       );
+
+      const { rows: attCountRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM attendance_logs WHERE is_duplicate = false`
+      );
+      const { rows: todayAttRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM attendance_logs
+         WHERE is_duplicate = false AND punch_time::date = CURRENT_DATE`
+      );
+      const { rows: postAttRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM biometric_raw_logs
+         WHERE request_method = 'POST' AND request_path LIKE '%/cdata%'
+           AND (query_params ILIKE '%ATTLOG%' OR query_params ILIKE '%"table":"ATTLOG"%')`
+      );
+      const { rows: pendingCmd } = await pool.query(
+        `SELECT id, command_type, command_data, status, created_at FROM device_commands
+         WHERE device_serial = $1 AND status = 'pending' ORDER BY id ASC LIMIT 5`,
+        [device?.serial_number || "NYU7253801377"]
+      );
+
+      const attlogPosts = postAttRows[0]?.n || 0;
+      const punchCount = attCountRows[0]?.n || 0;
+      const todayPunches = todayAttRows[0]?.n || 0;
+      const isPolling = rawRows.some(r =>
+        r.request_method === "GET" && String(r.request_path).includes("getrequest")
+        && r.device_serial === (device?.serial_number || "NYU7253801377")
+      );
+
+      let diagnosis = "waiting";
+      if (!device) diagnosis = "no_device";
+      else if (attlogPosts === 0 && punchCount === 0) {
+        diagnosis = isPolling
+          ? "polling_no_attlog"
+          : "offline_no_attlog";
+      } else if (todayPunches === 0) {
+        diagnosis = "connected_no_today_punches";
+      } else {
+        diagnosis = "ok";
+      }
 
       res.json({
         device,
         connected: !!connected,
+        diagnosis,
+        stats: {
+          attlogPosts,
+          punchCount,
+          todayPunches,
+          pendingCommands: pendingCmd.length,
+        },
+        pendingCommands: pendingCmd,
         recentIclockRequests: rawRows.map(r => ({
           serial: r.device_serial,
           method: r.request_method,
           path: r.request_path,
+          query: r.query_params,
           at: r.created_at,
         })),
       });

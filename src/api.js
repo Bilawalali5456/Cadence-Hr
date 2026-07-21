@@ -212,6 +212,17 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
   return res.json();
 }
 
+export async function apiBiometricPullLogs(userId, serial) {
+  const res = await fetch(`${API_URL}/biometric/pull-logs`, {
+    method: "POST",
+    headers: biometricHeaders(userId),
+    body: JSON.stringify({ serial: serial || "NYU7253801377" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to queue pull commands");
+  return data;
+}
+
 export async function apiBiometricProcess(userId) {
   const res = await fetch(`${API_URL}/biometric/process`, {
     method: "POST",

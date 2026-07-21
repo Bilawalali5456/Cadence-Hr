@@ -87,12 +87,13 @@ export function buildRegistrationResponse(serial, stamps = {}) {
     `OPERLOGStamp=${stamps.operlogStamp ?? 0}`,
     `ATTPHOTOStamp=${stamps.attphotoStamp ?? 0}`,
     "ErrorDelay=60",
-    "Delay=5",
+    "Delay=10",
     "TransTimes=00:00;14:05",
     "TransInterval=1",
-    // Spaces (not tabs) — SenseFace / ZAM70 expects this exact TransFlag form
-    "TransFlag=TransData AttLog OpLog",
+    // AttLog must be enabled for punches to POST; Realtime=1 pushes on each scan
+    "TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP UserPic",
     "Realtime=1",
+    "Encrypt=0",
     "TimeZone=5",
     "ServerVer=2.4.1",
   ].join("\r\n");

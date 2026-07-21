@@ -112,35 +112,39 @@ async function processAttLogBody(pool, serial, body) {
   return { inserted, duplicates };
 }
 
-function todayAttlogQueryCommand() {
+function todayAttlogQueryCommand(separator = "\t") {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   const start = `${y}-${m}-${d} 00:00:00`;
   const end = `${y}-${m}-${d} 23:59:59`;
-  return `DATA QUERY ATTLOG StartTime=${start}\tEndTime=${end}`;
+  return `DATA QUERY ATTLOG StartTime=${start}${separator}EndTime=${end}`;
 }
 
 /**
- * Queue CHECK (push unsent) then DATA QUERY ATTLOG (today) for the SenseFace.
- * Idempotent: skips if the same pending command_data already exists.
+ * Queue CHECK then DATA QUERY ATTLOG for the SenseFace.
+ * @param {{ force?: boolean }} options - force=true inserts even if a prior pending/sent exists today
  */
-export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN) {
+export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, options = {}) {
+  const force = !!options.force;
   const commands = [
     { type: "CHECK", data: "CHECK" },
-    { type: "DATA_QUERY_ATTLOG", data: todayAttlogQueryCommand() },
+    { type: "DATA_QUERY_ATTLOG", data: todayAttlogQueryCommand("\t") },
+    { type: "DATA_QUERY_ATTLOG", data: todayAttlogQueryCommand(" ") },
   ];
 
   for (const cmd of commands) {
-    const existing = await pool.query(
-      `SELECT id FROM device_commands
-       WHERE device_serial = $1 AND status = 'pending' AND command_data = $2 LIMIT 1`,
-      [serial, cmd.data]
-    );
-    if (existing.rows.length) {
-      logAdms("CMD_ALREADY_QUEUED", `SN=${serial} ${cmd.type} id=${existing.rows[0].id}`);
-      continue;
+    if (!force) {
+      const existing = await pool.query(
+        `SELECT id FROM device_commands
+         WHERE device_serial = $1 AND status = 'pending' AND command_data = $2 LIMIT 1`,
+        [serial, cmd.data]
+      );
+      if (existing.rows.length) {
+        logAdms("CMD_ALREADY_QUEUED", `SN=${serial} ${cmd.type} id=${existing.rows[0].id}`);
+        continue;
+      }
     }
     const { rows } = await pool.query(
       `INSERT INTO device_commands (device_serial, command_type, command_data, status)
@@ -171,8 +175,8 @@ function mountAdmsHandlers(app, pool) {
       if (serial) await upsertDevice(pool, serial, req);
       const stamps = await getDeviceStamps(pool, serial);
       const body = buildRegistrationResponse(serial, stamps);
-      if (!body.includes("Realtime=1") || !body.includes("TransFlag=TransData AttLog OpLog")) {
-        console.error("[adms] handshake missing Realtime/TransFlag — check buildRegistrationResponse");
+      if (!body.includes("Realtime=1") || !body.includes("AttLog")) {
+        console.error("[adms] handshake missing Realtime/AttLog — check buildRegistrationResponse");
       }
       logAdms("HANDSHAKE_RESPONSE", body.replace(/\r\n/g, " | "));
       sendAdmsText(res, body);

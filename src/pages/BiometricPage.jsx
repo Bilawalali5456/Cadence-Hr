@@ -3,7 +3,7 @@ import { Fingerprint, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { B } from "../brand.jsx";
 import {
   apiBiometricLogs, apiBiometricMap, apiBiometricProcess, apiBiometricStatus,
-  apiBiometricUnmap, apiBiometricUsers, apiRefreshAttendance,
+  apiBiometricUnmap, apiBiometricUsers, apiBiometricPullLogs, apiRefreshAttendance,
 } from "../api.js";
 import { employeeRoster, todayKey, formatTime } from "../utils.js";
 import { Pill, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
@@ -80,6 +80,18 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     }
   }
 
+  async function handlePullLogs() {
+    setErr("");
+    try {
+      await apiBiometricPullLogs(currentUser.id, device?.serial_number || "NYU7253801377");
+      setOk("Pull commands queued (CHECK + DATA QUERY ATTLOG). Wait ~30–60s for the device to poll, then Refresh.");
+      setTimeout(() => setOk(""), 8000);
+      load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
   async function handleMap(pin) {
     const employeeId = mapSel[pin];
     if (!employeeId) { setErr("Select an employee to map."); return; }
@@ -114,6 +126,9 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   const device = status?.device;
   const connected = status?.connected;
   const recentIclock = status?.recentIclockRequests || [];
+  const diagnosis = status?.diagnosis || "";
+  const stats = status?.stats || {};
+  const pollingNoAttlog = diagnosis === "polling_no_attlog" || diagnosis === "offline_no_attlog";
 
   const setupSteps = [
     { label: "Server mode", value: "ADMS / Cloud Server (Push)" },
@@ -143,6 +158,9 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />Refresh
         </Btn>
         <Btn variant="ghost" onClick={testAdmsServer}>Test ADMS server</Btn>
+        <Btn variant="ghost" onClick={handlePullLogs} disabled={!currentUser?.id}>
+          Pull logs from device
+        </Btn>
       </div>
 
       <ErrBox msg={err} />
@@ -173,7 +191,36 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
         </p>
       </Card>
 
-      {!connected && (
+      {pollingNoAttlog && (
+        <Card className="p-5 border-amber-300 bg-amber-50">
+          <STitle>Why punch data is missing</STitle>
+          <p className="text-sm text-slate-700 mb-3">
+            The machine <strong>is contacting the server</strong> (heartbeat /{" "}
+            <code className="bg-white px-1 rounded text-xs">getrequest</code>),
+            but it has <strong>never sent attendance punches</strong> (
+            <code className="bg-white px-1 rounded text-xs">POST /iclock/cdata?table=ATTLOG</code>).
+            That is why scans do not appear here or in attendance.
+          </p>
+          <ul className="text-sm space-y-2 list-disc pl-5 text-slate-700 mb-3">
+            <li>ATTLOG POSTs received: <strong>{stats.attlogPosts ?? 0}</strong></li>
+            <li>Punches stored: <strong>{stats.punchCount ?? 0}</strong> (today: {stats.todayPunches ?? 0})</li>
+            <li>Pending device commands: <strong>{stats.pendingCommands ?? 0}</strong></li>
+          </ul>
+          <p className="text-sm text-slate-700 mb-2">Do this now:</p>
+          <ol className="text-sm space-y-1 list-decimal pl-5 text-slate-700 mb-3">
+            <li>Click <strong>Pull logs from device</strong> above.</li>
+            <li>On the machine, scan one face (create a new punch).</li>
+            <li>Wait 60 seconds, then click <strong>Refresh</strong>.</li>
+            <li>In recent requests below, look for a line with <strong>POST</strong> and <strong>ATTLOG</strong>.</li>
+          </ol>
+          <p className="text-xs text-slate-500">
+            If you only ever see GET getrequest / GET cdata — the machine is online but not uploading logs.
+            On device: Comm → Cloud Server → confirm Realtime/Push is enabled, then reboot the device.
+          </p>
+        </Card>
+      )}
+
+      {!connected && !pollingNoAttlog && (
         <Card className="p-5 border-amber-200 bg-amber-50/50">
           <STitle>Device not reaching server — check the office network</STitle>
           <p className="text-xs text-slate-600 mb-3">
