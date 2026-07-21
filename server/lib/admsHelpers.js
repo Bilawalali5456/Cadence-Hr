@@ -24,7 +24,13 @@ export function admsOk() {
 
 export function sendAdmsText(res, body, status = 200) {
   const text = body.endsWith("\r\n") ? body : `${body}\r\n`;
-  res.status(status).type("text/plain").send(text);
+  res.status(status);
+  // ZKTeco firmware rejects charset suffix and extra Express headers (ETag, CORS, etc.)
+  res.setHeader("Content-Type", "text/plain");
+  res.setHeader("Content-Length", Buffer.byteLength(text, "utf8"));
+  res.setHeader("Connection", "close");
+  res.removeHeader("ETag");
+  res.end(text);
 }
 
 export function splitLines(body) {
@@ -76,7 +82,7 @@ export function buildRegistrationResponse(serial, stamps = {}) {
     "Delay=5",
     "TransTimes=00:00;14:05",
     "TransInterval=1",
-    "TransFlag=TransData AttLog OpLog",
+    "TransFlag=TransData AttLog\tOpLog\tAttPhoto",
     "Realtime=1",
     "TimeZone=5",
     "ServerVer=2.4.1",

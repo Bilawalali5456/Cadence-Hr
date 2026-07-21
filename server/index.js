@@ -20,12 +20,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
 
 const app = express();
-app.use(cors());
-/* ADMS device pushes plain text — must parse before express.json */
+app.disable("x-powered-by");
+
+/* ADMS device pushes plain text — must parse before express.json; no CORS/JSON headers */
 app.use("/iclock", express.text({
   type: ["text/plain", "application/x-www-form-urlencoded", "application/octet-stream", "*/*"],
   limit: "10mb",
 }));
+app.use((req, res, next) => {
+  if (req.path.startsWith("/iclock")) return next();
+  return cors()(req, res, next);
+});
 app.use(express.json({ limit: "5mb" }));
 
 function isBcryptHash(pw) {

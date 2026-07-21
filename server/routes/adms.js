@@ -131,7 +131,8 @@ export function registerAdmsRoutes(app, pool) {
   /** Device registration / handshake */
   app.get("/iclock/cdata", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
-    logAdms("GET /iclock/cdata", `SN=${serial}`);
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
+    logAdms("GET /iclock/cdata", `SN=${serial} IP=${ip}`);
 
     try {
       await logRawRequest(pool, { serial, method: "GET", path: "/iclock/cdata", query: req.query, body: "" });
@@ -147,12 +148,28 @@ export function registerAdmsRoutes(app, pool) {
     }
   });
 
-  /** Attendance / operation log push */
+  /** Some firmware sends registration as POST with empty body */
   app.post("/iclock/cdata", async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     const table = String(req.query.table || req.query.Table || "").toUpperCase();
     const body = typeof req.body === "string" ? req.body : (req.body ? String(req.body) : "");
-    logAdms("POST /iclock/cdata", `SN=${serial} table=${table} bytes=${body.length}`);
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
+
+    if (!table) {
+      logAdms("POST /iclock/cdata (handshake)", `SN=${serial} IP=${ip}`);
+      try {
+        await logRawRequest(pool, { serial, method: "POST", path: "/iclock/cdata", query: req.query, body });
+        if (serial) await upsertDevice(pool, serial, req);
+        const stamps = serial ? await getDeviceStamps(pool, serial) : {};
+        sendAdmsText(res, buildRegistrationResponse(serial, stamps));
+      } catch (e) {
+        console.error("[adms] POST handshake error:", e.message);
+        sendAdmsText(res, buildRegistrationResponse(serial || "DEVICE"));
+      }
+      return;
+    }
+
+    logAdms("POST /iclock/cdata", `SN=${serial} table=${table} bytes=${body.length} IP=${ip}`);
 
     try {
       await logRawRequest(pool, { serial, method: "POST", path: "/iclock/cdata", query: req.query, body });

@@ -117,11 +117,23 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
 
   const setupSteps = [
     { label: "Server mode", value: "ADMS / Cloud Server (Push)" },
+    { label: "Enable domain name", value: "ON" },
+    { label: "Proxy server", value: "OFF" },
     { label: "Server address", value: "hrms.adforcesolutions.com" },
     { label: "Port", value: "80" },
-    { label: "HTTPS / SSL", value: "OFF (must be plain HTTP)" },
-    { label: "Path / URL", value: "http://hrms.adforcesolutions.com/iclock/cdata" },
+    { label: "HTTPS / SSL", value: "OFF (plain HTTP only)" },
+    { label: "Path (if separate field)", value: "/iclock/cdata" },
     { label: "Expected serial", value: "NYU7253801377" },
+  ];
+
+  const troubleshooting = [
+    "Server-side ADMS is working — use “Test ADMS server” above to confirm.",
+    "Your device (192.168.1.2) must reach the internet on outbound port 80.",
+    "On the device: Menu → Comm → Network test / ping — verify DNS and gateway.",
+    "If domain fails: set Enable Domain Name OFF, use your VPS public IP as server address, port 80, path /iclock/cdata.",
+    "If one URL field only: enter http://hrms.adforcesolutions.com/iclock/cdata — do not also fill a separate path.",
+    "Set device time: Menu → System → Date/Time → sync or use NTP (pool.ntp.org).",
+    "After saving cloud settings, reboot the device and wait 60 seconds, then click Refresh.",
   ];
 
   return (
@@ -156,9 +168,29 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
           ))}
         </div>
         <p className="text-xs text-amber-700 mt-3">
-          After saving, reboot the device or wait 60 seconds. The portal should show serial NYU7253801377 as Connected.
+          SenseFace 2A · {device?.serial_number || "NYU7253801377"} · firmware ZAM70-NF24HA-Ver3.3.12
+          — after saving, reboot the device. The portal should show serial NYU7253801377 as Connected.
         </p>
       </Card>
+
+      {!connected && (
+        <Card className="p-5 border-amber-200 bg-amber-50/50">
+          <STitle>Device not reaching server — check the office network</STitle>
+          <p className="text-xs text-slate-600 mb-3">
+            Settings on the machine look correct. The most common cause is the kiosk LAN (192.168.1.x)
+            cannot reach the public server on port 80, or DNS cannot resolve the domain.
+          </p>
+          <ul className="text-sm space-y-2 list-disc pl-5 text-slate-700">
+            {troubleshooting.map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+          <p className="text-xs text-slate-500 mt-4">
+            From any PC on the same office Wi‑Fi, open a browser to{" "}
+            <code className="bg-white px-1 rounded">http://hrms.adforcesolutions.com/iclock/cdata?SN=LANTEST</code>
+            {" "}— you should see plain text starting with <code className="bg-white px-1 rounded">GET OPTION FROM:</code>.
+            If that fails, the device cannot connect either.
+          </p>
+        </Card>
+      )}
 
       <Card className="p-5">
         <STitle>Device status</STitle>
