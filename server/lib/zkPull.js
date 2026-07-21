@@ -70,9 +70,14 @@ function log(msg, detail = "") {
 
 function loadZkLib() {
   if (ZKLib) return ZKLib;
-  if (zkLoadError) throw new Error(zkLoadError);
 
+  // Always retry — do not permanently cache load failure (npm install may fix it without restart)
   try {
+    // Drop cached zklib modules so a newly installed package is picked up
+    for (const key of Object.keys(require.cache)) {
+      if (key.includes("zklib-js")) delete require.cache[key];
+    }
+
     const utils = require("zklib-js/utils.js");
 
     function parseZkTime(time) {
@@ -106,6 +111,7 @@ function loadZkLib() {
       };
     };
 
+    // Reload TCP/UDP after patching the decoder
     for (const key of Object.keys(require.cache)) {
       if (key.includes("zklib-js") && (key.includes("zklibtcp") || key.includes("zklibudp") || key.endsWith("zklib.js"))) {
         delete require.cache[key];
@@ -113,6 +119,10 @@ function loadZkLib() {
     }
 
     ZKLib = require("zklib-js");
+    zkLoadError = null;
+    if (pullStatus.lastError && String(pullStatus.lastError).includes("Failed to load zklib-js")) {
+      pullStatus.lastError = null;
+    }
     return ZKLib;
   } catch (e) {
     zkLoadError = `Failed to load zklib-js: ${formatErr(e)}. Run: cd server && npm install`;
