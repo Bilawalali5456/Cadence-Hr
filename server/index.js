@@ -7,7 +7,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
-import { registerAdmsRoutes } from "./routes/adms.js";
+import { registerAdmsRoutes, queueAttlogPullCommands } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
 import { startAttendanceSyncProcessor } from "./lib/attendanceSync.js";
 
@@ -744,7 +744,13 @@ const PORT = process.env.PORT || 4000;
 
 ensureSchema()
   .then(() => migratePlaintextPasswords())
-  .then(() => {
+  .then(async () => {
+    // Queue after schema exists — registerAdmsRoutes runs earlier and must not hit the DB yet
+    try {
+      await queueAttlogPullCommands(pool, "NYU7253801377");
+    } catch (e) {
+      console.error("[adms] failed to queue pull commands:", e.message);
+    }
     startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);

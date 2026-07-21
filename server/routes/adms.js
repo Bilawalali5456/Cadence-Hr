@@ -313,9 +313,4 @@ function mountAdmsHandlers(app, pool) {
 
 export function registerAdmsRoutes(app, pool) {
   mountAdmsHandlers(app, pool);
-
-  // Queue CHECK then today's DATA QUERY ATTLOG for the primary device
-  queueAttlogPullCommands(pool, PRIMARY_DEVICE_SN).catch((e) => {
-    console.error("[adms] failed to queue pull commands:", e.message);
-  });
 }
