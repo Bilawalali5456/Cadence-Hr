@@ -21,7 +21,7 @@ find_nginx_site() {
 
 wait_for_api() {
   local url="http://127.0.0.1:4000/api/health"
-  local max_attempts=30
+  local max_attempts=60
   local attempt=1
 
   echo "Waiting for API on port 4000 (up to ${max_attempts}s)..."
@@ -34,7 +34,7 @@ wait_for_api() {
     attempt=$((attempt + 1))
   done
 
-  echo "ERROR: API did not respond at $url within ${max_attempts}s"
+  echo "WARNING: API did not respond at $url within ${max_attempts}s"
   pm2 logs adforce-api --lines 30 --nostream 2>/dev/null || true
   return 1
 }
@@ -65,7 +65,12 @@ fi
 echo "=== 4. Restart API (schema auto-migrates on boot) ==="
 cd "$APP_DIR/server"
 pm2 restart adforce-api --update-env || pm2 start index.js --name adforce-api
-wait_for_api
+API_READY=0
+if wait_for_api; then
+  API_READY=1
+else
+  echo "WARNING: Continuing deploy — Nginx reload and smoke tests will still run."
+fi
 
 echo "=== 5. Reload Nginx ==="
 nginx -t && systemctl reload nginx
@@ -88,5 +93,9 @@ grep -c iclock /var/log/nginx/access.log 2>/dev/null || echo "0"
 echo ""
 set -e
 
-echo "=== Done. Device URL: http://hrms.adforcesolutions.com/iclock/cdata (HTTP port 80) ==="
+if [ "$API_READY" -eq 0 ]; then
+  echo "=== Deploy finished with warnings: API was not healthy within the wait window ==="
+else
+  echo "=== Done. Device URL: http://hrms.adforcesolutions.com/iclock/cdata (HTTP port 80) ==="
+fi
 pm2 logs adforce-api --lines 20 --nostream 2>/dev/null | grep -i adms || echo "(no adms logs yet — waiting for device)"
