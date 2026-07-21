@@ -6,6 +6,7 @@
 import {
   admsOk, sendAdmsText, splitLines, parseAttLogLine,
   buildRegistrationResponse, logRawRequest, logAdms, logPostCdataVerbose,
+  logAdmsResponseBytes,
 } from "../lib/admsHelpers.js";
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 
@@ -38,14 +39,6 @@ async function upsertDevice(pool, serial, req) {
       [serial, serial]
     );
   }
-}
-
-async function getDeviceStamps(pool, serial) {
-  // Force ATTLOGStamp=0 until realtime ATTLOG POSTs are confirmed working.
-  // Storing JS Date.getTime() millis previously confused some firmware into skipping pushes.
-  void pool;
-  void serial;
-  return { attlogStamp: 0, operlogStamp: 0, attphotoStamp: 0 };
 }
 
 async function resolveEmployeeId(pool, deviceSerial, deviceUserId) {
@@ -108,7 +101,6 @@ async function processAttLogBody(pool, serial, body) {
     }
   }
 
-  // Prefer device Stamp query param (ADMS protocol) over JS millis
   return { inserted, duplicates };
 }
 
@@ -124,15 +116,12 @@ function todayRange() {
   return {
     start: `${y}-${m}-${d} 00:00:00`,
     end: `${y}-${m}-${d} 23:59:59`,
-    monthStart: `${y}-${m}-01 00:00:00`,
-    // Dynamic historical window — start of current calendar year (no hardcoded dates)
     yearStart: `${y}-01-01 00:00:00`,
   };
 }
 
 /**
  * Queue CHECK then DATA QUERY ATTLOG for the SenseFace.
- * Default query window: start of current year → end of today (override via options).
  * @param {{ force?: boolean, startTime?: string, endTime?: string }} options
  */
 export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, options = {}) {
@@ -168,10 +157,21 @@ export async function queueAttlogPullCommands(pool, serial = PRIMARY_DEVICE_SN, 
   }
 }
 
+function sendHandshake(res, serial, label = "cdata") {
+  const body = buildRegistrationResponse(serial);
+  logAdmsResponseBytes(label, body);
+  sendAdmsText(res, body);
+}
+
 function mountAdmsHandlers(app, pool) {
-  /** Simple connectivity check */
   app.get(["/iclock/ping", "/ICLOCK/ping"], (_req, res) => {
     sendAdmsText(res, "OK");
+  });
+
+  /** Debug: same body as GET /iclock/cdata — open in browser to inspect */
+  app.get(["/iclock/test-handshake", "/ICLOCK/test-handshake"], (req, res) => {
+    const serial = String(req.query.SN || req.query.sn || "NYU7253801377").trim();
+    sendHandshake(res, serial, "test-handshake");
   });
 
   /** Device registration / handshake */
@@ -186,16 +186,10 @@ function mountAdmsHandlers(app, pool) {
 
     try {
       if (serial) await upsertDevice(pool, serial, req);
-      const stamps = await getDeviceStamps(pool, serial);
-      const body = buildRegistrationResponse(serial, stamps);
-      if (!body.includes("Realtime=1") || !body.includes("TransFlag=1111000000") || !body.includes("Stamp=0")) {
-        console.error("[adms] handshake missing required options — check buildRegistrationResponse");
-      }
-      logAdms("HANDSHAKE_RESPONSE", body.replace(/\r\n/g, " | "));
-      sendAdmsText(res, body);
+      sendHandshake(res, serial || "DEVICE", "cdata");
     } catch (e) {
       console.error("[adms] registration error:", e.message);
-      sendAdmsText(res, buildRegistrationResponse(serial || "DEVICE"));
+      sendHandshake(res, serial || "DEVICE", "cdata-error");
     }
   });
 
@@ -223,11 +217,10 @@ function mountAdmsHandlers(app, pool) {
       logAdms("POST /iclock/cdata (handshake)", `SN=${serial} IP=${ip}`);
       try {
         if (serial) await upsertDevice(pool, serial, req);
-        const stamps = await getDeviceStamps(pool, serial);
-        sendAdmsText(res, buildRegistrationResponse(serial, stamps));
+        sendHandshake(res, serial || "DEVICE", "cdata-post-handshake");
       } catch (e) {
         console.error("[adms] POST handshake error:", e.message);
-        sendAdmsText(res, buildRegistrationResponse(serial || "DEVICE"));
+        sendHandshake(res, serial || "DEVICE", "cdata-post-handshake-error");
       }
       return;
     }
@@ -240,15 +233,6 @@ function mountAdmsHandlers(app, pool) {
       if (table === "ATTLOG") {
         const r = await processAttLogBody(pool, serial, body);
         logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates}`);
-
-        // Persist device Stamp if provided (protocol stamp, not JS millis)
-        if (stampQ && /^\d+$/.test(stampQ)) {
-          await pool.query(
-            `UPDATE biometric_devices SET attlog_stamp = $1, updated_at = NOW() WHERE serial_number = $2`,
-            [Number(stampQ), serial]
-          ).catch(() => {});
-        }
-
         try {
           await syncAttendanceFromLogs(pool);
         } catch (e) {
@@ -256,11 +240,6 @@ function mountAdmsHandlers(app, pool) {
         }
       } else if (table === "OPERLOG") {
         logAdms("OPERLOG", `stored raw (${splitLines(body).length} lines)`);
-        await pool.query(
-          `UPDATE biometric_devices SET operlog_stamp = GREATEST(COALESCE(operlog_stamp,0), $1), updated_at = NOW()
-           WHERE serial_number = $2`,
-          [Date.now(), serial]
-        ).catch(() => {});
       } else {
         logAdms("POST_UNKNOWN_TABLE", `table=${table} body=<<${body.slice(0, 500)}>>`);
       }
@@ -271,7 +250,7 @@ function mountAdmsHandlers(app, pool) {
     sendAdmsText(res, admsOk());
   });
 
-  /** Command polling — MUST return C:id:command when pending, never OK in that case */
+  /** Command polling — pending command text, else OK */
   app.get(["/iclock/getrequest", "/ICLOCK/getrequest"], async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     logAdms("GET /iclock/getrequest", `SN=${serial}`);
@@ -280,7 +259,6 @@ function mountAdmsHandlers(app, pool) {
       await logRawRequest(pool, { serial, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
       if (serial) await upsertDevice(pool, serial, req);
 
-      // Case-insensitive serial match — pending commands must be delivered as C:id:data
       const { rows } = await pool.query(
         `SELECT id, command_type, command_data FROM device_commands
          WHERE UPPER(TRIM(device_serial)) = UPPER(TRIM($1))
@@ -295,27 +273,21 @@ function mountAdmsHandlers(app, pool) {
       if (rows.length > 0) {
         const cmd = rows[0];
         const payload = `C:${cmd.id}:${cmd.command_data || ""}`;
-
-        // Mark sent only after we have a payload ready
         await pool.query(
           `UPDATE device_commands SET status = 'sent', sent_at = NOW() WHERE id = $1 AND status = 'pending'`,
           [cmd.id]
         );
-
         logAdms("CMD_SENT", `SN=${serial} ${payload}`);
-        // Body must be the command text itself — not OK
         sendAdmsText(res, payload);
         return;
       }
     } catch (e) {
       console.error("[adms] getrequest error:", e.message);
-      // Still try to return OK so the device keeps polling
     }
 
     sendAdmsText(res, admsOk());
   });
 
-  /** Command result callback */
   app.post(["/iclock/devicecmd", "/ICLOCK/devicecmd"], async (req, res) => {
     const serial = String(req.query.SN || req.query.sn || "").trim();
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");

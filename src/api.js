@@ -212,6 +212,15 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
   return res.json();
 }
 
+export async function apiBiometricClearLogs(userId) {
+  const res = await fetch(`${API_URL}/biometric/raw-logs`, {
+    method: "DELETE",
+    headers: biometricHeaders(userId),
+  });
+  if (!res.ok) throw new Error("Failed to clear logs");
+  return res.json();
+}
+
 export async function apiBiometricPullLogs(userId, serial) {
   const res = await fetch(`${API_URL}/biometric/pull-logs`, {
     method: "POST",

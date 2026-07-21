@@ -474,4 +474,13 @@ export function registerAttendanceApi(app, pool) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  app.delete("/api/biometric/raw-logs", auth, async (_req, res) => {
+    try {
+      await pool.query(`DELETE FROM biometric_raw_logs`);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }

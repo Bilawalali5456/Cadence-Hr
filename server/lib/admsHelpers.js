@@ -19,18 +19,30 @@ export const VERIFY_METHODS = {
 };
 
 export function admsOk() {
-  return "OK\r\n";
+  return "OK\n";
 }
 
 export function sendAdmsText(res, body, status = 200) {
-  const text = body.endsWith("\r\n") ? body : `${body}\r\n`;
+  // Exact Content-Type text/plain — NO charset. Trailing newline required.
+  let text = body == null ? "" : String(body);
+  if (!text.endsWith("\n")) text += "\n";
+  const buf = Buffer.from(text, "utf8");
   res.status(status);
-  // ZKTeco firmware rejects charset suffix and extra Express headers (ETag, CORS, etc.)
   res.setHeader("Content-Type", "text/plain");
-  res.setHeader("Content-Length", Buffer.byteLength(text, "utf8"));
+  res.setHeader("Content-Length", buf.length);
   res.setHeader("Connection", "close");
   res.removeHeader("ETag");
-  res.end(text);
+  res.removeHeader("X-Powered-By");
+  res.end(buf);
+}
+
+/** Log exact handshake/response bytes for debugging */
+export function logAdmsResponseBytes(label, text) {
+  const raw = text.endsWith("\n") ? text : `${text}\n`;
+  const buf = Buffer.from(raw, "utf8");
+  console.log(`[adms RESP ${label}] bytes=${buf.length}`);
+  console.log(`[adms RESP ${label}] utf8=<<${raw.replace(/\n/g, "\\n")}>>`);
+  console.log(`[adms RESP ${label}] hex=${buf.toString("hex")}`);
 }
 
 export function splitLines(body) {
@@ -79,14 +91,14 @@ export function parseAttLogLine(line) {
   };
 }
 
-export function buildRegistrationResponse(serial, stamps = {}) {
+export function buildRegistrationResponse(serial) {
   const sn = serial || "DEVICE";
-  // Exact option names/order expected by SenseFace / ZAM70 ADMS firmware
+  // Exact lines — Stamp=None means "send everything" on some ZKTeco firmware
   return [
     `GET OPTION FROM: ${sn}`,
-    "Stamp=0",
-    "OpStamp=0",
-    "PhotoStamp=0",
+    "Stamp=None",
+    "OpStamp=None",
+    "PhotoStamp=None",
     "ErrorDelay=30",
     "Delay=5",
     "TransTimes=00:00;14:05",
@@ -94,12 +106,12 @@ export function buildRegistrationResponse(serial, stamps = {}) {
     "TransFlag=1111000000",
     "Realtime=1",
     "TimeZone=5",
-    "OPERLOGStamp=0",
-    "ATTLOGStamp=0",
-    "ATTPHOTOStamp=0",
+    "OPERLOGStamp=None",
+    "ATTLOGStamp=None",
+    "ATTPHOTOStamp=None",
     "ServerVer=2.4.1",
-    "TableNameStamp=",
-  ].join("\r\n");
+    "TableNameStamp=None",
+  ].join("\n");
 }
 
 /** Log every POST /iclock/cdata in full for debugging missing ATTLOG pushes */
