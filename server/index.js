@@ -734,7 +734,11 @@ const PORT = process.env.PORT || 4000;
 ensureSchema()
   .then(() => migratePlaintextPasswords())
   .then(() => {
-    startZkPullService(pool);
+    try {
+      startZkPullService(pool);
+    } catch (e) {
+      console.error("[zk-pull] failed to start scheduler (API continues):", e?.message || e);
+    }
     startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);

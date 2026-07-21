@@ -1,54 +1,12 @@
 /**
  * ZKTeco SenseFace Pull SDK service (TCP port 4370 via zklib-js).
+ * zklib-js is loaded lazily so a missing package / LAN failure cannot crash the API.
  */
 
 import { createRequire } from "module";
 import { syncAttendanceFromLogs } from "./attendanceSync.js";
 
 const require = createRequire(import.meta.url);
-
-// Patch attendance decoder BEFORE loading ZKLib so status + verify type are available
-const utils = require("zklib-js/utils.js");
-
-function parseZkTime(time) {
-  let t = time;
-  const second = t % 60;
-  t = (t - second) / 60;
-  const minute = t % 60;
-  t = (t - minute) / 60;
-  const hour = t % 24;
-  t = (t - hour) / 24;
-  const day = (t % 31) + 1;
-  t = (t - (day - 1)) / 31;
-  const month = t % 12;
-  t = (t - month) / 12;
-  const year = t + 2000;
-  return new Date(year, month, day, hour, minute, second);
-}
-
-utils.decodeRecordData40 = (recordData) => {
-  const deviceUserId = recordData
-    .slice(2, 2 + 9)
-    .toString("ascii")
-    .split("\0")
-    .shift();
-  return {
-    userSn: recordData.readUIntLE(0, 2),
-    deviceUserId,
-    state: recordData[26] ?? 0,
-    type: recordData[28] ?? 0,
-    recordTime: parseZkTime(recordData.readUInt32LE(27)),
-  };
-};
-
-// Ensure TCP/UDP modules pick up the patched decoder
-for (const key of Object.keys(require.cache)) {
-  if (key.includes("zklib-js") && (key.includes("zklibtcp") || key.includes("zklibudp") || key.endsWith("zklib.js"))) {
-    delete require.cache[key];
-  }
-}
-
-const ZKLib = require("zklib-js");
 
 const DEVICE_IP = process.env.ZK_DEVICE_IP || "192.168.1.2";
 const DEVICE_PORT = parseInt(process.env.ZK_DEVICE_PORT || "4370", 10);
@@ -89,12 +47,83 @@ export const pullStatus = {
   intervalMs: PULL_INTERVAL_MS,
 };
 
+let ZKLib = null;
+let zkLoadError = null;
+
+function formatErr(err) {
+  if (!err) return "Unknown error";
+  if (typeof err === "string") return err;
+  if (err.toast && typeof err.toast === "function") {
+    try { return err.toast(); } catch (_) { /* fall through */ }
+  }
+  if (err.getError && typeof err.getError === "function") {
+    try { return JSON.stringify(err.getError()); } catch (_) { /* fall through */ }
+  }
+  if (err.err?.message) return `${err.command || "ZK"}: ${err.err.message}`;
+  if (err.message && typeof err.message === "string") return err.message;
+  try { return JSON.stringify(err); } catch (_) { return String(err); }
+}
+
 function log(msg, detail = "") {
   console.log(`[zk-pull ${new Date().toISOString()}] ${msg}${detail ? ` — ${detail}` : ""}`);
 }
 
+function loadZkLib() {
+  if (ZKLib) return ZKLib;
+  if (zkLoadError) throw new Error(zkLoadError);
+
+  try {
+    const utils = require("zklib-js/utils.js");
+
+    function parseZkTime(time) {
+      let t = time;
+      const second = t % 60;
+      t = (t - second) / 60;
+      const minute = t % 60;
+      t = (t - minute) / 60;
+      const hour = t % 24;
+      t = (t - hour) / 24;
+      const day = (t % 31) + 1;
+      t = (t - (day - 1)) / 31;
+      const month = t % 12;
+      t = (t - month) / 12;
+      const year = t + 2000;
+      return new Date(year, month, day, hour, minute, second);
+    }
+
+    utils.decodeRecordData40 = (recordData) => {
+      const deviceUserId = recordData
+        .slice(2, 2 + 9)
+        .toString("ascii")
+        .split("\0")
+        .shift();
+      return {
+        userSn: recordData.readUIntLE(0, 2),
+        deviceUserId,
+        state: recordData[26] ?? 0,
+        type: recordData[28] ?? 0,
+        recordTime: parseZkTime(recordData.readUInt32LE(27)),
+      };
+    };
+
+    for (const key of Object.keys(require.cache)) {
+      if (key.includes("zklib-js") && (key.includes("zklibtcp") || key.includes("zklibudp") || key.endsWith("zklib.js"))) {
+        delete require.cache[key];
+      }
+    }
+
+    ZKLib = require("zklib-js");
+    return ZKLib;
+  } catch (e) {
+    zkLoadError = `Failed to load zklib-js: ${formatErr(e)}. Run: cd server && npm install`;
+    log("LOAD_ERROR", zkLoadError);
+    throw new Error(zkLoadError);
+  }
+}
+
 function createDevice() {
-  return new ZKLib(DEVICE_IP, DEVICE_PORT, DEVICE_TIMEOUT, DEVICE_INPORT);
+  const Lib = loadZkLib();
+  return new Lib(DEVICE_IP, DEVICE_PORT, DEVICE_TIMEOUT, DEVICE_INPORT);
 }
 
 async function withDevice(fn) {
@@ -244,7 +273,7 @@ export async function pullFromDevice(pool) {
       try {
         await syncAttendanceFromLogs(pool);
       } catch (e) {
-        log("attendance sync warning", e.message);
+        log("attendance sync warning", formatErr(e));
       }
 
       return {
@@ -266,7 +295,7 @@ export async function pullFromDevice(pool) {
     log("ok", `users=${result.userCount} logs=${result.logCount} inserted=${result.inserted} dup=${result.duplicates} ${Date.now() - started}ms`);
     return { ok: true, ...result };
   } catch (err) {
-    const msg = err?.message || String(err);
+    const msg = formatErr(err);
     pullStatus.lastPullAt = new Date().toISOString();
     pullStatus.nextPullAt = new Date(Date.now() + PULL_INTERVAL_MS).toISOString();
     pullStatus.lastPullOk = false;
@@ -286,12 +315,22 @@ export function startZkPullService(pool) {
   pullStatus.nextPullAt = new Date(Date.now() + 2000).toISOString();
   log("scheduler started", `every ${PULL_INTERVAL_MS / 1000}s → ${DEVICE_IP}:${DEVICE_PORT}`);
 
-  pullFromDevice(pool).catch(() => {});
+  // Never let pull crashes take down Express
+  const safePull = () => {
+    pullFromDevice(pool).catch((e) => {
+      log("unhandled pull error", formatErr(e));
+    });
+  };
 
-  intervalHandle = setInterval(() => {
-    pullFromDevice(pool).catch(() => {});
-  }, PULL_INTERVAL_MS);
+  try {
+    loadZkLib();
+  } catch (e) {
+    pullStatus.lastError = formatErr(e);
+    log("zklib unavailable — API will still run; pull disabled until npm install", pullStatus.lastError);
+  }
 
+  safePull();
+  intervalHandle = setInterval(safePull, PULL_INTERVAL_MS);
   if (typeof intervalHandle.unref === "function") intervalHandle.unref();
 }
 
