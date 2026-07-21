@@ -52,7 +52,15 @@ export function dateKeyFromDate(d) {
 
 /** Parse ATTLOG tab-separated line: user_id\ttimestamp\tstatus\tverify_type\t... */
 export function parseAttLogLine(line) {
-  const parts = line.split("\t");
+  let parts = line.split("\t");
+  // Some firmware variants use multiple spaces instead of tabs
+  if (parts.length < 2) {
+    parts = line.trim().split(/\s{2,}|\s+/);
+    // Reconstruct timestamp if split as "2026-07-21" "09:00:15"
+    if (parts.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(parts[1]) && /^\d{2}:\d{2}:\d{2}$/.test(parts[2])) {
+      parts = [parts[0], `${parts[1]} ${parts[2]}`, ...parts.slice(3)];
+    }
+  }
   if (parts.length < 2) return null;
   const deviceUserId = parseInt(String(parts[0] || "").trim(), 10);
   const tsRaw = String(parts[1] || "").trim();
@@ -82,11 +90,30 @@ export function buildRegistrationResponse(serial, stamps = {}) {
     "Delay=5",
     "TransTimes=00:00;14:05",
     "TransInterval=1",
-    "TransFlag=TransData AttLog\tOpLog\tAttPhoto",
+    // Spaces (not tabs) — SenseFace / ZAM70 expects this exact TransFlag form
+    "TransFlag=TransData AttLog OpLog",
     "Realtime=1",
     "TimeZone=5",
     "ServerVer=2.4.1",
   ].join("\r\n");
+}
+
+/** Log every POST /iclock/cdata in full for debugging missing ATTLOG pushes */
+export function logPostCdataVerbose(req, body) {
+  const serial = String(req.query.SN || req.query.sn || "").trim();
+  const table = String(req.query.table || req.query.Table || "");
+  const stamp = String(req.query.Stamp || req.query.stamp || "");
+  const headers = {};
+  for (const [k, v] of Object.entries(req.headers || {})) headers[k] = v;
+  const bodyStr = body != null ? String(body) : "";
+  const bodyType = typeof req.body;
+  console.log("[adms POST /iclock/cdata] ══════════════════════════════════════");
+  console.log(`[adms POST] SN=${serial} table=${table} Stamp=${stamp}`);
+  console.log(`[adms POST] query=`, JSON.stringify(req.query));
+  console.log(`[adms POST] headers=`, JSON.stringify(headers));
+  console.log(`[adms POST] bodyType=${bodyType} bodyLength=${bodyStr.length}`);
+  console.log(`[adms POST] rawBody=<<${bodyStr}>>`);
+  console.log("[adms POST /iclock/cdata] ══════════════════════════════════════");
 }
 
 export async function logRawRequest(pool, { serial, method, path, query, body }) {

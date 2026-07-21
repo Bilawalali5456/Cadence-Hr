@@ -5,6 +5,7 @@
 
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 import { dateKeyFromDate } from "../lib/admsHelpers.js";
+import { queueAttlogPullCommands } from "./adms.js";
 
 export function requireHrAdmin(pool) {
   return async (req, res, next) => {
@@ -204,6 +205,17 @@ export function registerAttendanceApi(app, pool) {
     try {
       const r = await syncAttendanceFromLogs(pool);
       res.json({ ok: true, ...r });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** POST /api/v1/attendance/pull-logs — queue CHECK + DATA QUERY ATTLOG for device */
+  app.post("/api/v1/attendance/pull-logs", auth, async (req, res) => {
+    try {
+      const serial = String(req.body?.serial || req.query.serial || "NYU7253801377").trim();
+      await queueAttlogPullCommands(pool, serial);
+      res.json({ ok: true, serial, queued: ["CHECK", "DATA QUERY ATTLOG"] });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

@@ -22,13 +22,14 @@ const distPath = path.join(__dirname, "..", "dist");
 const app = express();
 app.disable("x-powered-by");
 
-/* ADMS device pushes plain text — must parse before express.json; no CORS/JSON headers */
-app.use("/iclock", express.text({
-  type: ["text/plain", "application/x-www-form-urlencoded", "application/octet-stream", "*/*"],
-  limit: "10mb",
-}));
+/* ADMS plain-text body — MUST be registered before /iclock routes */
+const admsTextParser = express.text({ type: "*/*", limit: "10mb" });
+app.use("/iclock", admsTextParser);
+app.use("/ICLOCK", admsTextParser);
+
 app.use((req, res, next) => {
-  if (req.path.startsWith("/iclock")) return next();
+  const p = req.path || "";
+  if (p.startsWith("/iclock") || p.startsWith("/ICLOCK")) return next();
   return cors()(req, res, next);
 });
 app.use(express.json({ limit: "5mb" }));
