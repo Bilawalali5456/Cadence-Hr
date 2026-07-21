@@ -83,10 +83,10 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     }
   }
 
-  async function handleUnmap(pin) {
+  async function handleUnmap(pin, deviceSerial) {
     if (!window.confirm(`Remove mapping for PIN ${pin}?`)) return;
     try {
-      await apiBiometricUnmap(currentUser.id, pin);
+      await apiBiometricUnmap(currentUser.id, pin, deviceSerial || device?.serial_number);
       setOk(`Mapping removed for PIN ${pin}.`);
       setTimeout(() => setOk(""), 4000);
       load();
@@ -189,7 +189,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
                   </td>
                   <td className="py-2.5 text-right">
                     {u.mapped ? (
-                      <Btn size="sm" variant="ghost" onClick={() => handleUnmap(u.pin)}>Unmap</Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => handleUnmap(u.pin, u.deviceSerial)}>Unmap</Btn>
                     ) : (
                       <Btn size="sm" onClick={() => handleMap(u.pin)}>Map</Btn>
                     )}

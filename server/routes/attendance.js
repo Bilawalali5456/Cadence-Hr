@@ -346,9 +346,21 @@ export function registerAttendanceApi(app, pool) {
 
   app.delete("/api/biometric/map/:pin", auth, async (req, res) => {
     try {
+      let serial = req.query.device_serial_number;
+      if (!serial) {
+        const { rows } = await pool.query(
+          `SELECT serial_number FROM biometric_devices ORDER BY last_seen DESC NULLS LAST LIMIT 1`
+        );
+        serial = rows[0]?.serial_number;
+      }
+      if (!serial) {
+        return res.status(400).json({ error: "device_serial_number required (no registered device found)" });
+      }
+
       await pool.query(
-        `DELETE FROM device_user_mapping WHERE device_user_id = $1`,
-        [parseInt(req.params.pin, 10)]
+        `DELETE FROM device_user_mapping
+         WHERE device_serial_number = $1 AND device_user_id = $2`,
+        [String(serial), parseInt(req.params.pin, 10)]
       );
       res.json({ ok: true });
     } catch (e) {

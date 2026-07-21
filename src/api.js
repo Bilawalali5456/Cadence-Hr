@@ -202,8 +202,9 @@ export async function apiBiometricMap(userId, pin, employeeId) {
   return data;
 }
 
-export async function apiBiometricUnmap(userId, pin) {
-  const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}`, {
+export async function apiBiometricUnmap(userId, pin, deviceSerial) {
+  const q = deviceSerial ? `?device_serial_number=${encodeURIComponent(deviceSerial)}` : "";
+  const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}${q}`, {
     method: "DELETE",
     headers: biometricHeaders(userId),
   });

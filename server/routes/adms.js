@@ -51,7 +51,7 @@ async function insertAttendanceLog(pool, serial, parsed) {
   const employeeId = await resolveEmployeeId(pool, serial, parsed.deviceUserId);
 
   const dup = await pool.query(
-    `SELECT id FROM attendance_logs
+    `SELECT id, employee_id FROM attendance_logs
      WHERE device_serial_number = $1 AND device_user_id = $2 AND punch_time = $3 LIMIT 1`,
     [serial, parsed.deviceUserId, parsed.punchTime]
   );
