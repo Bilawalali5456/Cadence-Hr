@@ -323,6 +323,19 @@ CREATE INDEX IF NOT EXISTS idx_attendance_logs_punch_time ON attendance_logs (pu
 CREATE INDEX IF NOT EXISTS idx_attendance_logs_unsynced ON attendance_logs (synced_to_attendance) WHERE synced_to_attendance = false AND is_duplicate = false;
 CREATE INDEX IF NOT EXISTS idx_device_user_mapping_employee ON device_user_mapping (employee_id);
 
+-- Enrolled users pulled from device (PIN + name) for mapping UI
+CREATE TABLE IF NOT EXISTS device_enrolled_users (
+  id SERIAL PRIMARY KEY,
+  device_serial_number VARCHAR(50) NOT NULL,
+  device_user_id INTEGER NOT NULL,
+  name VARCHAR(100) DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (device_serial_number, device_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_enrolled_users_serial ON device_enrolled_users (device_serial_number);
+
 -- Migrate legacy PIN mappings into device_user_mapping (best-effort)
 INSERT INTO device_user_mapping (device_user_id, employee_id, device_serial_number)
 SELECT CAST(bm.biometric_pin AS INTEGER), bm.employee_id,

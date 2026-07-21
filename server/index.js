@@ -7,9 +7,9 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
-import { registerAdmsRoutes, queueAttlogPullCommands } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
 import { startAttendanceSyncProcessor } from "./lib/attendanceSync.js";
+import { startZkPullService } from "./lib/zkPull.js";
 
 dotenv.config();
 
@@ -21,17 +21,7 @@ const distPath = path.join(__dirname, "..", "dist");
 
 const app = express();
 app.disable("x-powered-by");
-
-/* ADMS plain-text body — MUST be registered before /iclock routes */
-const admsTextParser = express.text({ type: "*/*", limit: "10mb" });
-app.use("/iclock", admsTextParser);
-app.use("/ICLOCK", admsTextParser);
-
-app.use((req, res, next) => {
-  const p = req.path || "";
-  if (p.startsWith("/iclock") || p.startsWith("/ICLOCK")) return next();
-  return cors()(req, res, next);
-});
+app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 function isBcryptHash(pw) {
@@ -705,7 +695,6 @@ app.post("/api/send-warning-email", async (req, res) => {
   }
 });
 
-registerAdmsRoutes(app, pool);
 registerAttendanceApi(app, pool);
 
 /* ─── Production: serve built frontend ─── */
@@ -744,13 +733,8 @@ const PORT = process.env.PORT || 4000;
 
 ensureSchema()
   .then(() => migratePlaintextPasswords())
-  .then(async () => {
-    // Queue after schema exists — registerAdmsRoutes runs earlier and must not hit the DB yet
-    try {
-      await queueAttlogPullCommands(pool, "NYU7253801377", { force: true });
-    } catch (e) {
-      console.error("[adms] failed to queue pull commands:", e.message);
-    }
+  .then(() => {
+    startZkPullService(pool);
     startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {
       console.log(`✓ Adforce HR API running on http://localhost:${PORT}`);

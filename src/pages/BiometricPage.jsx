@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Fingerprint, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { CreditCard, Fingerprint, RefreshCw, Smile, Wifi, WifiOff } from "lucide-react";
 import {
   apiBiometricLogs, apiBiometricMap, apiBiometricProcess, apiBiometricStatus,
-  apiBiometricUnmap, apiBiometricUsers, apiBiometricClearLogs, apiRefreshAttendance,
+  apiBiometricUnmap, apiBiometricUsers, apiBiometricPull, apiRefreshAttendance,
 } from "../api.js";
 import { employeeRoster, todayKey } from "../utils.js";
 import { Pill, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
@@ -14,28 +14,28 @@ function formatDateTime(iso) {
   });
 }
 
-function scanTypeLabel(log, dayScans) {
-  const list = (dayScans || []).filter(s => s.pin === log.pin).sort(
-    (a, b) => new Date(a.scanTime) - new Date(b.scanTime)
-  );
-  if (list.length <= 1) return "In";
-  const first = list[0]?.scanTime;
-  const last = list[list.length - 1]?.scanTime;
-  if (log.scanTime === first) return "In";
-  if (log.scanTime === last) return "Out";
-  return "Scan";
+function punchLabel(type) {
+  if (type === "check_out") return "Check-out";
+  if (type === "break_out") return "Break-out";
+  if (type === "break_in") return "Break-in";
+  if (type === "ot_in") return "OT-in";
+  if (type === "ot_out") return "OT-out";
+  return "Check-in";
 }
 
-function querySnippet(query) {
-  if (!query) return "";
-  try {
-    const q = typeof query === "string" ? JSON.parse(query) : query;
-    const table = q.table || q.Table || "";
-    const sn = q.SN || q.sn || "";
-    return [table && `table=${table}`, sn && `SN=${sn}`].filter(Boolean).join(" ");
-  } catch {
-    return String(query).slice(0, 80);
-  }
+function MethodIcon({ method }) {
+  if (method === "fingerprint") return <Fingerprint size={14} className="inline text-slate-600" />;
+  if (method === "face") return <Smile size={14} className="inline text-slate-600" />;
+  if (method === "card") return <CreditCard size={14} className="inline text-slate-600" />;
+  return <span className="text-slate-400">•</span>;
+}
+
+function methodLabel(method) {
+  if (method === "fingerprint") return "Fingerprint";
+  if (method === "face") return "Face";
+  if (method === "card") return "Card";
+  if (method === "password") return "Password";
+  return method || "Unknown";
 }
 
 export function BiometricPage({ currentUser, users, setAttendance }) {
@@ -43,9 +43,11 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   const [bioUsers, setBioUsers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pulling, setPulling] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [mapSel, setMapSel] = useState({});
+  const [methodFilter, setMethodFilter] = useState("all");
   const today = todayKey();
 
   const staff = useMemo(
@@ -61,7 +63,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
       const [st, bu, lg] = await Promise.all([
         apiBiometricStatus(currentUser.id),
         apiBiometricUsers(currentUser.id),
-        apiBiometricLogs(currentUser.id, today),
+        apiBiometricLogs(currentUser.id, today, methodFilter),
       ]);
       setStatus(st);
       setBioUsers(Array.isArray(bu) ? bu : []);
@@ -71,19 +73,32 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.id, today]);
+  }, [currentUser?.id, today, methodFilter]);
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleClearLogs() {
-    if (!window.confirm("Clear all recent /iclock request logs?")) return;
+  async function handlePullNow() {
+    setErr("");
+    setPulling(true);
     try {
-      await apiBiometricClearLogs(currentUser.id);
-      setOk("Request logs cleared.");
-      setTimeout(() => setOk(""), 3000);
-      load();
+      const r = await apiBiometricPull(currentUser.id);
+      if (r.ok) {
+        setOk(`Pull OK — ${r.inserted || 0} new logs, ${r.userCount || 0} users, ${r.logCount || 0} total on device.`);
+      } else {
+        setErr(r.error || "Pull failed — is the API on the same network as 192.168.1.2?");
+      }
+      setTimeout(() => setOk(""), 6000);
+      if (setAttendance) {
+        try {
+          const att = await apiRefreshAttendance();
+          setAttendance(att);
+        } catch (_) { /* */ }
+      }
+      await load();
     } catch (e) {
       setErr(e.message);
+    } finally {
+      setPulling(false);
     }
   }
 
@@ -119,8 +134,8 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   }
 
   const device = status?.device;
+  const pull = status?.pull || {};
   const connected = status?.connected;
-  const recentIclock = status?.recentIclockRequests || [];
 
   return (
     <div className="space-y-5">
@@ -128,8 +143,9 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
         <Btn variant="ghost" onClick={load} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />Refresh
         </Btn>
-        <Btn variant="ghost" onClick={handleClearLogs} disabled={!currentUser?.id}>
-          Clear logs
+        <Btn onClick={handlePullNow} disabled={pulling || !currentUser?.id}>
+          <RefreshCw size={14} className={pulling ? "animate-spin" : ""} />
+          {pulling ? "Pulling…" : "Pull now"}
         </Btn>
       </div>
 
@@ -137,78 +153,61 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
       <OkBox msg={ok} />
 
       <Card className="p-5">
-        <STitle>Device status</STitle>
-        {loading && !device ? (
-          <p className="text-sm text-slate-400">Loading…</p>
-        ) : !device ? (
-          <div className="flex items-center gap-3 text-slate-500">
-            <WifiOff size={20} />
-            <span className="text-sm">No device has connected yet.</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-slate-400">Status</div>
-              <div className="flex items-center gap-2 mt-1">
-                {connected ? <Wifi size={16} className="text-emerald-600" /> : <WifiOff size={16} className="text-amber-500" />}
-                <Pill tone={connected ? "green" : "amber"}>{connected ? "Connected" : "Offline"}</Pill>
-              </div>
+        <STitle>Device status (Pull SDK)</STitle>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <div className="text-xs text-slate-400">Pull status</div>
+            <div className="flex items-center gap-2 mt-1">
+              {connected ? <Wifi size={16} className="text-emerald-600" /> : <WifiOff size={16} className="text-amber-500" />}
+              <Pill tone={connected ? "green" : "amber"}>
+                {connected ? "Connected" : "Offline / unreachable"}
+              </Pill>
             </div>
-            <div>
-              <div className="text-xs text-slate-400">Serial number</div>
-              <div className="text-sm font-medium mt-1 font-mono">{device.serial_number || "—"}</div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-400">Model / firmware</div>
-              <div className="text-sm font-medium mt-1">{device.model || device.device_name || "SenseFace 2A"}</div>
-              <div className="text-xs text-slate-400">{device.firmware_version || "—"}</div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-400">Last seen</div>
-              <div className="text-sm font-medium mt-1">{formatDateTime(device.last_seen)}</div>
-              <div className="text-xs text-slate-400">{device.ip_address || ""}</div>
+            <div className="text-xs text-slate-400 mt-1">
+              OK if last pull succeeded within 5 minutes
             </div>
           </div>
+          <div>
+            <div className="text-xs text-slate-400">Device</div>
+            <div className="text-sm font-medium mt-1 font-mono">
+              {pull.deviceIp || "192.168.1.2"}:{pull.devicePort || 4370}
+            </div>
+            <div className="text-xs text-slate-400">{device?.serial_number || "NYU7253801377"}</div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-400">Last pull</div>
+            <div className="text-sm font-medium mt-1">{formatDateTime(pull.lastPullAt)}</div>
+            <div className="text-xs text-slate-400">
+              {pull.lastPullOk
+                ? `${pull.lastInserted ?? 0} new · ${pull.lastLogCount ?? 0} on device · ${pull.lastUserCount ?? 0} users`
+                : (pull.lastError || "—")}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-400">Next scheduled pull</div>
+            <div className="text-sm font-medium mt-1">{formatDateTime(pull.nextPullAt)}</div>
+            <div className="text-xs text-slate-400">
+              Every {Math.round((pull.intervalMs || 120000) / 60000)} min
+            </div>
+          </div>
+        </div>
+        {!connected && (
+          <p className="text-xs text-amber-700 mt-4">
+            The API must reach the kiosk on the office LAN (192.168.1.2:4370). A Hostinger VPS cannot
+            reach that IP unless you run the API on-site or via VPN.
+          </p>
         )}
       </Card>
 
       <Card className="p-5 overflow-x-auto">
-        <STitle right={<Btn size="sm" variant="ghost" onClick={handleClearLogs}>Clear logs</Btn>}>
-          Recent /iclock requests
+        <STitle right={<Pill tone="dark"><Fingerprint size={12} />Machine users</Pill>}>
+          PIN → Employee mapping
         </STitle>
-        <p className="text-xs text-slate-500 mb-3">
-          POST rows in green mean attendance data arrived. GET rows (gray) are handshake/polling only.
-        </p>
-        {recentIclock.length === 0 ? (
-          <p className="text-sm text-slate-400 py-4 text-center">No requests logged yet.</p>
-        ) : (
-          <ul className="text-sm space-y-1.5 font-mono">
-            {recentIclock.map((r, i) => {
-              const isPost = String(r.method || "").toUpperCase() === "POST";
-              return (
-                <li
-                  key={i}
-                  className={`rounded-md px-3 py-2 ${isPost ? "bg-emerald-50 text-emerald-800" : "bg-slate-50 text-slate-500"}`}
-                >
-                  <span className="font-semibold">{r.method}</span>
-                  {" "}{r.path}
-                  {" · "}SN={r.serial || "?"}
-                  {querySnippet(r.query) ? ` · ${querySnippet(r.query)}` : ""}
-                  {" · "}{formatDateTime(r.at)}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
-
-      <Card className="p-5 overflow-x-auto">
-        <STitle right={<Pill tone="dark"><Fingerprint size={12} />Machine users</Pill>}>PIN → Employee mapping</STitle>
         <p className="text-xs text-slate-500 mb-4">
-          Map each device PIN to a portal employee after OPERLOG sync or manual entry.
+          Users are loaded from the device on each pull. Map each PIN to a portal employee.
         </p>
         {(bioUsers || []).length === 0 ? (
-          <p className="text-sm text-slate-400 py-6 text-center">No machine users yet.</p>
+          <p className="text-sm text-slate-400 py-6 text-center">No users yet — click Pull now.</p>
         ) : (
           <table className="w-full text-sm min-w-[640px]">
             <thead>
@@ -259,28 +258,51 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
       </Card>
 
       <Card className="p-5 overflow-x-auto">
-        <STitle>Today&apos;s scans ({today})</STitle>
+        <STitle
+          right={
+            <select
+              value={methodFilter}
+              onChange={e => setMethodFilter(e.target.value)}
+              className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+            >
+              <option value="all">All methods</option>
+              <option value="face">Face</option>
+              <option value="fingerprint">Fingerprint</option>
+              <option value="card">Card</option>
+              <option value="password">Password</option>
+            </select>
+          }
+        >
+          Today&apos;s scans ({today})
+        </STitle>
         {(logs || []).length === 0 ? (
           <p className="text-sm text-slate-400 py-6 text-center">No scans recorded today.</p>
         ) : (
-          <table className="w-full text-sm min-w-[520px]">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="py-2 font-medium">Time</th>
-                <th className="py-2 font-medium">PIN</th>
                 <th className="py-2 font-medium">Employee</th>
-                <th className="py-2 font-medium">Type</th>
+                <th className="py-2 font-medium">PIN</th>
+                <th className="py-2 font-medium">Time</th>
+                <th className="py-2 font-medium">Method</th>
+                <th className="py-2 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
               {(logs || []).map(log => (
                 <tr key={log.id} className="border-b border-slate-50 last:border-0">
-                  <td className="py-2.5 tabular-nums">{formatDateTime(log.scanTime)}</td>
-                  <td className="py-2.5 font-mono">{log.pin}</td>
                   <td className="py-2.5">{log.employeeName || <span className="text-slate-400">Unmapped</span>}</td>
+                  <td className="py-2.5 font-mono">{log.pin}</td>
+                  <td className="py-2.5 tabular-nums">{formatDateTime(log.scanTime)}</td>
                   <td className="py-2.5">
-                    <Pill tone={scanTypeLabel(log, logs) === "In" ? "green" : scanTypeLabel(log, logs) === "Out" ? "blue" : "slate"}>
-                      {scanTypeLabel(log, logs)}
+                    <span className="inline-flex items-center gap-1.5">
+                      <MethodIcon method={log.verifyMethod} />
+                      {methodLabel(log.verifyMethod)}
+                    </span>
+                  </td>
+                  <td className="py-2.5">
+                    <Pill tone={log.punchType === "check_out" ? "blue" : "green"}>
+                      {punchLabel(log.punchType)}
                     </Pill>
                   </td>
                 </tr>

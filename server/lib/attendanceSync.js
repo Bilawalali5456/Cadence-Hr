@@ -2,7 +2,9 @@
  * Sync attendance_logs → main HRMS attendance table.
  */
 
-import { dateKeyFromDate } from "./admsHelpers.js";
+export function dateKeyFromDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function genAttId() {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

@@ -178,8 +178,11 @@ export async function apiBiometricStatus(userId) {
   return res.json();
 }
 
-export async function apiBiometricLogs(userId, date) {
-  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+export async function apiBiometricLogs(userId, date, method = "all") {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (method && method !== "all") params.set("method", method);
+  const q = params.toString() ? `?${params}` : "";
   const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders(userId) });
   if (!res.ok) throw new Error("Failed to load biometric logs");
   return res.json();
@@ -212,23 +215,13 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
   return res.json();
 }
 
-export async function apiBiometricClearLogs(userId) {
-  const res = await fetch(`${API_URL}/biometric/raw-logs`, {
-    method: "DELETE",
-    headers: biometricHeaders(userId),
-  });
-  if (!res.ok) throw new Error("Failed to clear logs");
-  return res.json();
-}
-
-export async function apiBiometricPullLogs(userId, serial) {
-  const res = await fetch(`${API_URL}/biometric/pull-logs`, {
+export async function apiBiometricPull(userId) {
+  const res = await fetch(`${API_URL}/biometric/pull`, {
     method: "POST",
     headers: biometricHeaders(userId),
-    body: JSON.stringify({ serial: serial || "NYU7253801377" }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Failed to queue pull commands");
+  if (!res.ok) throw new Error(data.error || "Failed to pull from device");
   return data;
 }
 
@@ -238,61 +231,6 @@ export async function apiBiometricProcess(userId) {
     headers: biometricHeaders(userId),
   });
   if (!res.ok) throw new Error("Failed to process logs");
-  return res.json();
-}
-
-export async function apiBiometricRawLogs(userId, limit = 50) {
-  const res = await fetch(`${API_URL}/biometric/raw-logs?limit=${limit}`, { headers: biometricHeaders(userId) });
-  if (!res.ok) throw new Error("Failed to load raw logs");
-  return res.json();
-}
-
-/** ZKTeco ADMS v1 admin API */
-export async function apiAttendanceLogs(userId, { date, employeeId, from, to } = {}) {
-  const params = new URLSearchParams();
-  if (date) params.set("date", date);
-  if (employeeId) params.set("employee_id", employeeId);
-  if (from) params.set("from", from);
-  if (to) params.set("to", to);
-  const q = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_URL}/v1/attendance/logs${q}`, { headers: biometricHeaders(userId) });
-  if (!res.ok) throw new Error("Failed to load attendance logs");
-  return res.json();
-}
-
-export async function apiAttendanceDevices(userId) {
-  const res = await fetch(`${API_URL}/v1/attendance/devices`, { headers: biometricHeaders(userId) });
-  if (!res.ok) throw new Error("Failed to load devices");
-  return res.json();
-}
-
-export async function apiAttendanceDeviceMapping(userId, { deviceUserId, employeeId, deviceSerialNumber }) {
-  const res = await fetch(`${API_URL}/v1/attendance/device-mapping`, {
-    method: "POST",
-    headers: biometricHeaders(userId),
-    body: JSON.stringify({
-      device_user_id: deviceUserId,
-      employee_id: employeeId,
-      device_serial_number: deviceSerialNumber,
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Failed to save mapping");
-  return data;
-}
-
-export async function apiAttendanceUnmapped(userId) {
-  const res = await fetch(`${API_URL}/v1/attendance/unmapped`, { headers: biometricHeaders(userId) });
-  if (!res.ok) throw new Error("Failed to load unmapped users");
-  return res.json();
-}
-
-export async function apiAttendanceSync(userId) {
-  const res = await fetch(`${API_URL}/v1/attendance/sync`, {
-    method: "POST",
-    headers: biometricHeaders(userId),
-  });
-  if (!res.ok) throw new Error("Failed to sync attendance");
   return res.json();
 }
 
