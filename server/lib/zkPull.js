@@ -68,15 +68,17 @@ function log(msg, detail = "") {
   console.log(`[zk-pull ${new Date().toISOString()}] ${msg}${detail ? ` — ${detail}` : ""}`);
 }
 
-function loadZkLib() {
-  if (ZKLib) return ZKLib;
+function clearZkRequireCache() {
+  for (const key of Object.keys(require.cache)) {
+    if (key.includes("zklib-js")) delete require.cache[key];
+  }
+}
 
-  // Always retry — do not permanently cache load failure (npm install may fix it without restart)
+function loadZkLib() {
+  // Always clear require.cache and re-require — do not return a cached ZKLib.
+  // Otherwise a post-failure `npm install` (or package upgrade) is invisible until process restart.
   try {
-    // Drop cached zklib modules so a newly installed package is picked up
-    for (const key of Object.keys(require.cache)) {
-      if (key.includes("zklib-js")) delete require.cache[key];
-    }
+    clearZkRequireCache();
 
     const utils = require("zklib-js/utils.js");
 
@@ -111,9 +113,12 @@ function loadZkLib() {
       };
     };
 
-    // Reload TCP/UDP after patching the decoder
+    // Reload TCP/UDP after patching the decoder (keep patched utils.js in cache)
     for (const key of Object.keys(require.cache)) {
-      if (key.includes("zklib-js") && (key.includes("zklibtcp") || key.includes("zklibudp") || key.endsWith("zklib.js"))) {
+      if (
+        key.includes("zklib-js") &&
+        (key.includes("zklibtcp") || key.includes("zklibudp") || key.endsWith("zklib.js"))
+      ) {
         delete require.cache[key];
       }
     }
@@ -125,6 +130,7 @@ function loadZkLib() {
     }
     return ZKLib;
   } catch (e) {
+    ZKLib = null;
     zkLoadError = `Failed to load zklib-js: ${formatErr(e)}. Run: cd server && npm install`;
     log("LOAD_ERROR", zkLoadError);
     throw new Error(zkLoadError);
