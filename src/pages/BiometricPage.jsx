@@ -116,7 +116,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
         ) : !device ? (
           <div className="flex items-center gap-3 text-slate-500">
             <WifiOff size={20} />
-            <span className="text-sm">No device has connected yet. Point the machine to <code className="text-xs bg-slate-100 px-1 rounded">https://hrms.adforcesolutions.com/iclock/cdata</code></span>
+            <span className="text-sm">No device has connected yet. Set Cloud Server to <code className="text-xs bg-slate-100 px-1 rounded">http://hrms.adforcesolutions.com/iclock/cdata</code> (HTTP only — the device cannot follow HTTPS redirects)</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
