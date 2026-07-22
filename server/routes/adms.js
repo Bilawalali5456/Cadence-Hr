@@ -11,9 +11,16 @@ import {
 } from "../lib/admsHelpers.js";
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 
+function serialFromQuery(req, fallback = "unknown") {
+  const raw = req.query.SN || req.query.sn || fallback;
+  const trimmed = String(raw).trim();
+  return trimmed || fallback;
+}
+
 function handshakeBody(sn) {
+  const serial = String(sn || "").trim() || "unknown";
   return (
-    "GET OPTION FROM: " + sn + "\r\n" +
+    "GET OPTION FROM: " + serial + "\r\n" +
     "ATTLOGStamp=0\r\n" +
     "OPERLOGStamp=0\r\n" +
     "ATTPHOTOStamp=0\r\n" +
@@ -151,7 +158,7 @@ function createAdmsRouter(pool) {
   });
 
   router.get("/test-handshake", (req, res) => {
-    const sn = req.query.SN || req.query.sn || "NYU7253801377";
+    const sn = serialFromQuery(req, "NYU7253801377");
     const body = handshakeBody(sn);
     logAdmsResponseBytes("test-handshake", body);
     endAdmsPlain(res, body);
@@ -159,12 +166,12 @@ function createAdmsRouter(pool) {
 
   /** GET /iclock/cdata — device registration / handshake */
   router.get("/cdata", async (req, res) => {
-    const sn = req.query.SN || req.query.sn || "unknown";
+    const sn = serialFromQuery(req);
     console.log("HANDSHAKE from:", sn, "at", new Date().toISOString());
 
     try {
       await logRawRequest(pool, { serial: sn, method: "GET", path: "/iclock/cdata", query: req.query, body: "" });
-      await upsertDevice(pool, String(sn).trim(), req);
+      await upsertDevice(pool, sn, req);
     } catch (e) {
       console.error("[adms] handshake DB error:", e.message);
     }
@@ -176,7 +183,7 @@ function createAdmsRouter(pool) {
 
   /** POST /iclock/cdata — ATTLOG / OPERLOG push */
   router.post("/cdata", async (req, res) => {
-    const sn = req.query.SN || req.query.sn || "unknown";
+    const sn = serialFromQuery(req);
     const table = String(req.query.table || req.query.Table || "").toUpperCase();
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");
     console.log("POST DATA from:", sn, "table:", table, "body:", body);
@@ -191,10 +198,10 @@ function createAdmsRouter(pool) {
         query: req.query,
         body,
       });
-      await upsertDevice(pool, String(sn).trim(), req);
+      await upsertDevice(pool, sn, req);
 
       if (table === "ATTLOG") {
-        const r = await processAttLogBody(pool, String(sn).trim(), body);
+        const r = await processAttLogBody(pool, sn, body);
         logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates} SN=${sn}`);
         try {
           await syncAttendanceFromLogs(pool);
@@ -202,7 +209,7 @@ function createAdmsRouter(pool) {
           console.error("[adms] sync after ATTLOG failed:", e.message);
         }
       } else if (table === "OPERLOG") {
-        const r = await processOperLogBody(pool, String(sn).trim(), body);
+        const r = await processOperLogBody(pool, sn, body);
         logAdms("OPERLOG", `users_saved=${r.saved} lines=${splitLines(body).length}`);
       }
     } catch (e) {
@@ -214,12 +221,12 @@ function createAdmsRouter(pool) {
 
   /** GET /iclock/getrequest — device command poll */
   router.get("/getrequest", async (req, res) => {
-    const sn = req.query.SN || req.query.sn || "unknown";
+    const sn = serialFromQuery(req);
     console.log("POLL from:", sn, "at", new Date().toISOString());
 
     try {
       await logRawRequest(pool, { serial: sn, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
-      await upsertDevice(pool, String(sn).trim(), req);
+      await upsertDevice(pool, sn, req);
     } catch (e) {
       console.error("[adms] getrequest DB error:", e.message);
     }
@@ -229,7 +236,7 @@ function createAdmsRouter(pool) {
 
   /** POST /iclock/devicecmd */
   router.post("/devicecmd", async (req, res) => {
-    const sn = req.query.SN || req.query.sn || "unknown";
+    const sn = serialFromQuery(req);
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");
     logAdms("POST /iclock/devicecmd", `SN=${sn} body=<<${body}>>`);
 
