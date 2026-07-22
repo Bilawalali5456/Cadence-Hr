@@ -73,11 +73,20 @@ else
 fi
 
 echo "=== 5. Install / reload Nginx (HTTP/1.0 iclock — no chunked encoding) ==="
-if [ -f "$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf" ]; then
-  cp "$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf" /etc/nginx/sites-available/hrms
-  ln -sf /etc/nginx/sites-available/hrms /etc/nginx/sites-enabled/hrms
+NGINX_SRC="$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf"
+NGINX_DST="/etc/nginx/sites-available/hrms"
+
+if [ ! -f "$NGINX_SRC" ]; then
+  echo "ERROR: Nginx config not found at $NGINX_SRC"
+  echo "       Skipping nginx reload — stale /iclock/ proxy settings would remain."
+  echo "       Fix git pull / repo checkout, then re-run this script."
+  exit 1
 fi
+
+cp "$NGINX_SRC" "$NGINX_DST"
+ln -sf "$NGINX_DST" /etc/nginx/sites-enabled/hrms
 nginx -t && systemctl reload nginx
+echo "OK: Installed $NGINX_SRC and reloaded nginx"
 
 echo "=== 6. Header smoke tests ==="
 set +e
