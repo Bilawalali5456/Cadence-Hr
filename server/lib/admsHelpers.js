@@ -24,17 +24,40 @@ export function admsOk() {
   return "OK";
 }
 
-/** Plain-text ADMS response: Content-Type text/plain (no charset), status 200. */
-export function sendAdmsText(res, body, status = 200) {
+/** Minimal ADMS response — writeHead + end only (no Express res.send/set). */
+export function endAdmsPlain(res, body) {
   const text = body == null ? "" : String(body);
-  const buf = Buffer.from(text, "utf8");
-  res.status(status);
-  res.setHeader("Content-Type", "text/plain");
-  res.setHeader("Content-Length", buf.length);
-  res.setHeader("Connection", "close");
-  res.removeHeader("ETag");
-  res.removeHeader("X-Powered-By");
-  res.end(buf);
+  res.writeHead(200, {
+    "Content-Type": "text/plain",
+    "Content-Length": Buffer.byteLength(text),
+    "Connection": "close",
+  });
+  res.end(text);
+}
+
+/** Plain "OK" response for getrequest / POST cdata ack. */
+export function endAdmsOk(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/plain",
+    "Content-Length": 2,
+    "Connection": "close",
+  });
+  res.end("OK");
+}
+
+/** @deprecated use endAdmsPlain — kept for ping/test-handshake */
+export function sendAdmsText(res, body, status = 200) {
+  if (status !== 200) {
+    const text = body == null ? "" : String(body);
+    res.writeHead(status, {
+      "Content-Type": "text/plain",
+      "Content-Length": Buffer.byteLength(text),
+      "Connection": "close",
+    });
+    res.end(text);
+    return;
+  }
+  endAdmsPlain(res, body);
 }
 
 /** Log exact handshake/response bytes for debugging */

@@ -1,18 +1,36 @@
 /**
  * ZKTeco ADMS device-facing routes (/iclock/*)
  * Device initiates all communication — plain text only, never JSON.
+ * Responses use res.writeHead + res.end only (no res.send/set).
  */
 
 import express from "express";
 import {
-  admsOk, sendAdmsText, splitLines, parseAttLogLine, parseOperLogUserLine,
-  buildRegistrationResponse, logRawRequest, logAdms, logPostCdataVerbose,
-  logAdmsResponseBytes,
+  admsOk, endAdmsPlain, endAdmsOk, splitLines, parseAttLogLine, parseOperLogUserLine,
+  logRawRequest, logAdms, logPostCdataVerbose, logAdmsResponseBytes,
 } from "../lib/admsHelpers.js";
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 
+function handshakeBody(sn) {
+  return (
+    "GET OPTION FROM: " + sn + "\r\n" +
+    "ATTLOGStamp=0\r\n" +
+    "OPERLOGStamp=0\r\n" +
+    "ATTPHOTOStamp=0\r\n" +
+    "ErrorDelay=30\r\n" +
+    "Delay=5\r\n" +
+    "TransTimes=00:00;14:05\r\n" +
+    "TransInterval=1\r\n" +
+    "TransFlag=TransData AttLog OpLog\r\n" +
+    "Realtime=1\r\n" +
+    "Encrypt=0\r\n" +
+    "TimeZone=5\r\n" +
+    "ServerVer=2.4.1\r\n"
+  );
+}
+
 async function upsertDevice(pool, serial, req) {
-  if (!serial) return;
+  if (!serial || serial === "unknown") return;
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
   const pushver = req.query.pushver || req.query.PushVer || "";
   try {
@@ -125,117 +143,103 @@ async function processOperLogBody(pool, serial, body) {
   return { saved };
 }
 
-function sendHandshake(res, serial, label = "cdata") {
-  const body = buildRegistrationResponse(serial);
-  logAdmsResponseBytes(label, body);
-  sendAdmsText(res, body);
-}
-
 function createAdmsRouter(pool) {
   const router = express.Router();
 
   router.get("/ping", (_req, res) => {
-    sendAdmsText(res, admsOk());
+    endAdmsOk(res);
   });
 
   router.get("/test-handshake", (req, res) => {
-    const serial = String(req.query.SN || req.query.sn || "NYU7253801377").trim();
-    sendHandshake(res, serial, "test-handshake");
+    const sn = req.query.SN || req.query.sn || "NYU7253801377";
+    const body = handshakeBody(sn);
+    logAdmsResponseBytes("test-handshake", body);
+    endAdmsPlain(res, body);
   });
 
   /** GET /iclock/cdata — device registration / handshake */
   router.get("/cdata", async (req, res) => {
-    const serial = String(req.query.SN || req.query.sn || "").trim();
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
-    logAdms("GET /iclock/cdata", `SN=${serial} IP=${ip}`);
+    const sn = req.query.SN || req.query.sn || "unknown";
+    console.log("HANDSHAKE from:", sn, "at", new Date().toISOString());
 
     try {
-      await logRawRequest(pool, { serial, method: "GET", path: "/iclock/cdata", query: req.query, body: "" });
-    } catch (_) { /* always respond */ }
-
-    try {
-      if (serial) await upsertDevice(pool, serial, req);
-      sendHandshake(res, serial || "DEVICE", "cdata");
+      await logRawRequest(pool, { serial: sn, method: "GET", path: "/iclock/cdata", query: req.query, body: "" });
+      await upsertDevice(pool, String(sn).trim(), req);
     } catch (e) {
-      console.error("[adms] registration error:", e.message);
-      sendHandshake(res, serial || "DEVICE", "cdata-error");
+      console.error("[adms] handshake DB error:", e.message);
     }
+
+    const body = handshakeBody(sn);
+    logAdmsResponseBytes("cdata", body);
+    endAdmsPlain(res, body);
   });
 
   /** POST /iclock/cdata — ATTLOG / OPERLOG push */
   router.post("/cdata", async (req, res) => {
-    const serial = String(req.query.SN || req.query.sn || "").trim();
+    const sn = req.query.SN || req.query.sn || "unknown";
     const table = String(req.query.table || req.query.Table || "").toUpperCase();
-    const stampQ = String(req.query.Stamp || req.query.stamp || "");
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
+    console.log("POST DATA from:", sn, "table:", table, "body:", body);
 
     logPostCdataVerbose(req, body);
 
     try {
       await logRawRequest(pool, {
-        serial,
+        serial: sn,
         method: "POST",
         path: "/iclock/cdata",
         query: req.query,
         body,
       });
-    } catch (_) { /* continue */ }
-
-    try {
-      if (serial) await upsertDevice(pool, serial, req);
+      await upsertDevice(pool, String(sn).trim(), req);
 
       if (table === "ATTLOG") {
-        const r = await processAttLogBody(pool, serial, body);
-        logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates} SN=${serial} Stamp=${stampQ} IP=${ip}`);
+        const r = await processAttLogBody(pool, String(sn).trim(), body);
+        logAdms("ATTLOG", `inserted=${r.inserted} duplicates=${r.duplicates} SN=${sn}`);
         try {
           await syncAttendanceFromLogs(pool);
         } catch (e) {
           console.error("[adms] sync after ATTLOG failed:", e.message);
         }
       } else if (table === "OPERLOG") {
-        const r = await processOperLogBody(pool, serial, body);
+        const r = await processOperLogBody(pool, String(sn).trim(), body);
         logAdms("OPERLOG", `users_saved=${r.saved} lines=${splitLines(body).length}`);
-      } else if (!table) {
-        logAdms("POST /iclock/cdata (no table)", `SN=${serial} IP=${ip}`);
-      } else {
-        logAdms("POST_UNKNOWN_TABLE", `table=${table} body=<<${body.slice(0, 500)}>>`);
       }
     } catch (e) {
       console.error("[adms] POST cdata processing error:", e.message);
     }
 
-    sendAdmsText(res, admsOk());
+    endAdmsOk(res);
   });
 
-  /** GET /iclock/getrequest — proven firmware expects plain OK */
+  /** GET /iclock/getrequest — device command poll */
   router.get("/getrequest", async (req, res) => {
-    const serial = String(req.query.SN || req.query.sn || "").trim();
-    logAdms("GET /iclock/getrequest", `SN=${serial}`);
+    const sn = req.query.SN || req.query.sn || "unknown";
+    console.log("POLL from:", sn, "at", new Date().toISOString());
 
     try {
-      await logRawRequest(pool, { serial, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
-      if (serial) await upsertDevice(pool, serial, req);
+      await logRawRequest(pool, { serial: sn, method: "GET", path: "/iclock/getrequest", query: req.query, body: "" });
+      await upsertDevice(pool, String(sn).trim(), req);
     } catch (e) {
-      console.error("[adms] getrequest error:", e.message);
+      console.error("[adms] getrequest DB error:", e.message);
     }
 
-    sendAdmsText(res, admsOk());
+    endAdmsOk(res);
   });
 
   /** POST /iclock/devicecmd */
   router.post("/devicecmd", async (req, res) => {
-    const serial = String(req.query.SN || req.query.sn || "").trim();
+    const sn = req.query.SN || req.query.sn || "unknown";
     const body = typeof req.body === "string" ? req.body : (req.body != null ? String(req.body) : "");
-    logAdms("POST /iclock/devicecmd", `SN=${serial} body=<<${body}>>`);
+    logAdms("POST /iclock/devicecmd", `SN=${sn} body=<<${body}>>`);
 
     try {
-      await logRawRequest(pool, { serial, method: "POST", path: "/iclock/devicecmd", query: req.query, body });
+      await logRawRequest(pool, { serial: sn, method: "POST", path: "/iclock/devicecmd", query: req.query, body });
     } catch (e) {
       console.error("[adms] devicecmd error:", e.message);
     }
 
-    sendAdmsText(res, admsOk());
+    endAdmsOk(res);
   });
 
   return router;

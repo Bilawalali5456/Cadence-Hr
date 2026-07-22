@@ -22,11 +22,12 @@ const distPath = path.join(__dirname, "..", "dist");
 const app = express();
 app.disable("x-powered-by");
 
-/* ADMS plain-text body — MUST be before /iclock routes (do not use globally — breaks JSON APIs) */
+/* ADMS: text body parser + routes BEFORE express.json (GET cdata must not go through JSON parser) */
 const admsTextParser = express.text({ type: "*/*", limit: "10mb" });
 app.use("/iclock", admsTextParser);
 app.use("/ICLOCK", admsTextParser);
 app.use("/iClock", admsTextParser);
+registerAdmsRoutes(app, pool);
 
 app.use((req, res, next) => {
   const p = req.path || "";
@@ -706,7 +707,6 @@ app.post("/api/send-warning-email", async (req, res) => {
   }
 });
 
-registerAdmsRoutes(app, pool);
 registerAttendanceApi(app, pool);
 
 /* ─── Production: serve built frontend ─── */
