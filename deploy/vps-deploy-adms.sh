@@ -19,6 +19,34 @@ find_nginx_site() {
   return 1
 }
 
+# Prefer site found in section 3; else first existing candidate; else default hrms path.
+resolve_nginx_dst() {
+  if [ -n "${NGINX_SITE:-}" ] && [ -f "$NGINX_SITE" ]; then
+    echo "$NGINX_SITE"
+    return 0
+  fi
+  if resolved="$(find_nginx_site)"; then
+    echo "$resolved"
+    return 0
+  fi
+  echo "/etc/nginx/sites-available/hrms"
+}
+
+disable_other_nginx_sites() {
+  local active_dst="$1"
+  local other enabled
+  for other in "${NGINX_CANDIDATES[@]}"; do
+    if [ "$other" = "$active_dst" ]; then
+      continue
+    fi
+    enabled="/etc/nginx/sites-enabled/$(basename "$other")"
+    if [ -e "$enabled" ]; then
+      echo "Removing duplicate enabled site: $enabled"
+      rm -f "$enabled"
+    fi
+  done
+}
+
 wait_for_api() {
   local url="http://127.0.0.1:4000/api/health"
   local max_attempts=60
@@ -53,13 +81,11 @@ if NGINX_SITE="$(find_nginx_site)"; then
   if grep -q "location /iclock/" "$NGINX_SITE"; then
     echo "OK: /iclock/ block found in $NGINX_SITE"
   else
-    echo "WARNING: $NGINX_SITE has no /iclock/ block."
-    echo "Install: sudo cp $APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf /etc/nginx/sites-available/hrms"
-    echo "         sudo ln -sf /etc/nginx/sites-available/hrms /etc/nginx/sites-enabled/hrms"
+    echo "WARNING: $NGINX_SITE has no /iclock/ block (will be replaced in step 5)."
   fi
 else
-  echo "WARNING: No Nginx site file found (checked: ${NGINX_CANDIDATES[*]})"
-  echo "Install: sudo cp $APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf /etc/nginx/sites-available/hrms"
+  echo "WARNING: No Nginx site file found (checked: ${NGINX_CANDIDATES[*]})."
+  echo "         Step 5 will install to /etc/nginx/sites-available/hrms"
 fi
 
 echo "=== 4. Restart API (schema auto-migrates on boot) ==="
@@ -74,7 +100,8 @@ fi
 
 echo "=== 5. Install / reload Nginx (HTTP/1.0 iclock — no chunked encoding) ==="
 NGINX_SRC="$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf"
-NGINX_DST="/etc/nginx/sites-available/hrms"
+NGINX_DST="$(resolve_nginx_dst)"
+NGINX_ENABLED="/etc/nginx/sites-enabled/$(basename "$NGINX_DST")"
 
 if [ ! -f "$NGINX_SRC" ]; then
   echo "ERROR: Nginx config not found at $NGINX_SRC"
@@ -83,10 +110,12 @@ if [ ! -f "$NGINX_SRC" ]; then
   exit 1
 fi
 
+echo "Installing to $NGINX_DST (enabled as $NGINX_ENABLED)"
 cp "$NGINX_SRC" "$NGINX_DST"
-ln -sf "$NGINX_DST" /etc/nginx/sites-enabled/hrms
+ln -sf "$NGINX_DST" "$NGINX_ENABLED"
+disable_other_nginx_sites "$NGINX_DST"
 nginx -t && systemctl reload nginx
-echo "OK: Installed $NGINX_SRC and reloaded nginx"
+echo "OK: Installed $NGINX_SRC → $NGINX_DST and reloaded nginx"
 
 echo "=== 6. Header smoke tests ==="
 set +e
