@@ -93,25 +93,26 @@ export function parseAttLogLine(line) {
 }
 
 /**
- * Proven ZAM70 / SenseFace handshake — exact \r\n endings, Stamp=9999, Encrypt=0.
- * Do not change line endings or stamp values without device testing.
+ * ZKTeco ADMS registration response for GET /iclock/cdata.
+ * ATTLOGStamp=0 means send all attendance; Stamp=9999 would block pushes.
+ * Use exact \r\n line endings — do not change without device testing.
  */
 export function buildRegistrationResponse(serial) {
   const sn = serial || "DEVICE";
   return (
     `GET OPTION FROM: ${sn}\r\n` +
-    `Stamp=9999\r\n` +
-    `OpStamp=9999\r\n` +
-    `PhotoStamp=9999\r\n` +
+    `ATTLOGStamp=0\r\n` +
+    `OPERLOGStamp=0\r\n` +
+    `ATTPHOTOStamp=0\r\n` +
     `ErrorDelay=30\r\n` +
     `Delay=5\r\n` +
     `TransTimes=00:00;14:05\r\n` +
     `TransInterval=1\r\n` +
-    `TransFlag=TransData AttLog OpLog AttPhoto\r\n` +
+    `TransFlag=TransData AttLog OpLog\r\n` +
     `Realtime=1\r\n` +
     `Encrypt=0\r\n` +
-    `ServerVer=2.4.1\r\n` +
-    `TableNameStamp=\r\n`
+    `TimeZone=5\r\n` +
+    `ServerVer=2.4.1\r\n`
   );
 }
 
