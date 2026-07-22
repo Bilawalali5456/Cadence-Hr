@@ -72,18 +72,20 @@ else
   echo "WARNING: Continuing deploy — Nginx reload and smoke tests will still run."
 fi
 
-echo "=== 5. Reload Nginx ==="
+echo "=== 5. Install / reload Nginx (HTTP/1.0 iclock — no chunked encoding) ==="
+if [ -f "$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf" ]; then
+  cp "$APP_DIR/deploy/nginx/hrms.adforcesolutions.com.conf" /etc/nginx/sites-available/hrms
+  ln -sf /etc/nginx/sites-available/hrms /etc/nginx/sites-enabled/hrms
+fi
 nginx -t && systemctl reload nginx
 
-echo "=== 6. Smoke tests (non-fatal) ==="
+echo "=== 6. Header smoke tests ==="
 set +e
-echo -n "HTTP /iclock/cdata: "
-if curl -sf "http://127.0.0.1:4000/iclock/cdata?SN=DEPLOYTEST" | head -1; then
-  :
-else
-  echo "FAIL (direct)"
-  curl -sf "http://hrms.adforcesolutions.com/iclock/cdata?SN=DEPLOYTEST" | head -1 || echo "FAIL (via nginx)"
-fi
+echo "--- Direct Node :4000 ---"
+curl -v "http://127.0.0.1:4000/iclock/cdata?SN=DIRECTTEST" 2>&1 | sed -n '1,40p'
+echo ""
+echo "--- Via Nginx :80 ---"
+curl -v "http://hrms.adforcesolutions.com/iclock/cdata?SN=NGINXTEST" 2>&1 | sed -n '1,40p'
 echo ""
 echo -n "API health: "
 curl -sf "http://127.0.0.1:4000/api/health" || echo "FAIL"
