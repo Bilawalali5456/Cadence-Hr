@@ -137,7 +137,9 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
   if (!checkIn || !checkOut || !user) return false;
   const dateKey = dateKeyFromDate(new Date(checkIn));
   if (isWeekendDateKey(dateKey)) return false;
-  const worked = options.netWorkingMs != null
+  // Only trust a precomputed net when it is an actual number.
+  // (undefined/null must fall through — `!= null` already does, but typeof is clearer.)
+  const worked = typeof options.netWorkingMs === "number"
     ? options.netWorkingMs
     : computeNetWorkingMs(
       checkIn,
@@ -147,7 +149,7 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
       options.breakStart,
       options.breakEnd
     );
-  if (worked == null) return false;
+  if (worked == null || Number.isNaN(worked)) return false;
   const required = requiredDutyMs(user, dateKey);
   return required > 0 && worked < required;
 }
@@ -237,8 +239,10 @@ export async function syncAttendanceFromLogs(pool) {
 
     if (existing.rows.length === 0) {
       const late = isLateCheckIn(agg.checkIn, user);
-      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut);
       const workingMs = computeNetWorkingMs(agg.checkIn, agg.checkOut);
+      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut, {
+        netWorkingMs: workingMs,
+      });
 
       await pool.query(
         `INSERT INTO attendance (
