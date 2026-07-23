@@ -54,6 +54,54 @@ export function computeWorkingMs(checkIn, checkOut) {
   return ms > 0 ? ms : null;
 }
 
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Sum approved/open break intervals (portal + biometric record breaks). */
+export function computeBreakMs(breaks, breakStart = null, breakEnd = null) {
+  let total = parseJsonArray(breaks).reduce((sum, b) => {
+    if (!b?.start || !b?.end) return sum;
+    const ms = new Date(b.end) - new Date(b.start);
+    return sum + (ms > 0 ? ms : 0);
+  }, 0);
+  if (breakStart && breakEnd) {
+    const ms = new Date(breakEnd) - new Date(breakStart);
+    if (ms > 0) total += ms;
+  }
+  return total;
+}
+
+/** Sum approved short-leave intervals stored on the attendance row. */
+export function computeShortLeaveMs(shortLeaves) {
+  return parseJsonArray(shortLeaves)
+    .filter(sl => !sl.status || sl.status === "approved")
+    .reduce((sum, sl) => {
+      if (!sl?.start || !sl?.end) return sum;
+      const ms = new Date(sl.end) - new Date(sl.start);
+      return sum + (ms > 0 ? ms : 0);
+    }, 0);
+}
+
+/**
+ * Net working ms = (check-out − check-in) − breaks − approved short leaves.
+ * Used so periodic sync does not wipe portal break adjustments from status.
+ */
+export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null) {
+  const gross = computeWorkingMs(checkIn, checkOut);
+  if (gross == null) return null;
+  return Math.max(0, gross - computeBreakMs(breaks, breakStart, breakEnd) - computeShortLeaveMs(shortLeaves));
+}
+
 /** Required duty ms = shift window minus unpaid break. */
 export function requiredDutyMs(user, dateKey) {
   const shift = getUserShift(user);
@@ -85,11 +133,20 @@ export function isEarlyLeave(checkOutIso, user) {
   return d < end;
 }
 
-export function isShortHours(checkIn, checkOut, user) {
+export function isShortHours(checkIn, checkOut, user, options = {}) {
   if (!checkIn || !checkOut || !user) return false;
   const dateKey = dateKeyFromDate(new Date(checkIn));
   if (isWeekendDateKey(dateKey)) return false;
-  const worked = computeWorkingMs(checkIn, checkOut);
+  const worked = options.netWorkingMs != null
+    ? options.netWorkingMs
+    : computeNetWorkingMs(
+      checkIn,
+      checkOut,
+      options.breaks,
+      options.shortLeaves,
+      options.breakStart,
+      options.breakEnd
+    );
   if (worked == null) return false;
   const required = requiredDutyMs(user, dateKey);
   return required > 0 && worked < required;
@@ -98,14 +155,15 @@ export function isShortHours(checkIn, checkOut, user) {
 /**
  * Status priority: Absent → Late → Early Leave → Short Hours → Present
  * Check-in only (no check-out): Late or Present (checkout shown as Missing in UI)
+ * Pass breaks/shortLeaves so sync does not ignore portal adjustments.
  */
-export function computeBiometricDayStatus(user, checkIn, checkOut) {
+export function computeBiometricDayStatus(user, checkIn, checkOut, options = {}) {
   if (!checkIn) return "Absent";
   const late = isLateCheckIn(checkIn, user);
   if (!checkOut) return late ? "Late" : "Present";
   if (late) return "Late";
   if (isEarlyLeave(checkOut, user)) return "Early Leave";
-  if (isShortHours(checkIn, checkOut, user)) return "Short Hours";
+  if (isShortHours(checkIn, checkOut, user, options)) return "Short Hours";
   return "Present";
 }
 
@@ -172,16 +230,16 @@ export async function syncAttendanceFromLogs(pool) {
     const agg = aggregateDayScans(dayLogs);
     if (!agg.checkIn) continue;
 
-    const late = isLateCheckIn(agg.checkIn, user);
-    const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut);
-    const workingMs = computeWorkingMs(agg.checkIn, agg.checkOut);
-
     const existing = await pool.query(
       `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
       [employeeId, dateKey]
     );
 
     if (existing.rows.length === 0) {
+      const late = isLateCheckIn(agg.checkIn, user);
+      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut);
+      const workingMs = computeNetWorkingMs(agg.checkIn, agg.checkOut);
+
       await pool.query(
         `INSERT INTO attendance (
            id, user_id, date, check_in, check_out, breaks, short_leaves,
@@ -197,6 +255,11 @@ export async function syncAttendanceFromLogs(pool) {
     } else {
       const prev = existing.rows[0];
       const source = prev.source || "manual";
+      const breaks = parseJsonArray(prev.breaks);
+      const shortLeaves = parseJsonArray(prev.short_leaves);
+      const breakStart = prev.break_start || null;
+      const breakEnd = prev.break_end || null;
+      const timeOpts = { breaks, shortLeaves, breakStart, breakEnd };
 
       let newCheckIn = prev.check_in;
       let newCheckOut = prev.check_out;
@@ -227,18 +290,25 @@ export async function syncAttendanceFromLogs(pool) {
         newSource = "manual";
       }
 
+      // Preserve portal breaks/short leaves; recompute status + net hours from them
       const finalLate = isLateCheckIn(newCheckIn, user);
-      const finalStatus = computeBiometricDayStatus(user, newCheckIn, newCheckOut);
-      const finalWorkingMs = computeWorkingMs(newCheckIn, newCheckOut);
+      const finalWorkingMs = computeNetWorkingMs(
+        newCheckIn, newCheckOut, breaks, shortLeaves, breakStart, breakEnd
+      );
+      const finalStatus = computeBiometricDayStatus(user, newCheckIn, newCheckOut, {
+        ...timeOpts,
+        netWorkingMs: finalWorkingMs,
+      });
+      const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
 
       await pool.query(
         `UPDATE attendance SET
-           check_in = $1, check_out = $2, working_ms = $3, status = $4, late = $5,
-           source = $6, check_in_method = $7, check_out_method = $8
-         WHERE id = $9`,
+           check_in = $1, check_out = $2, working_ms = $3, total_break_ms = $4,
+           status = $5, late = $6, source = $7, check_in_method = $8, check_out_method = $9
+         WHERE id = $10`,
         [
-          newCheckIn, newCheckOut, finalWorkingMs, finalStatus, finalLate,
-          newSource, newInMethod, newOutMethod, prev.id,
+          newCheckIn, newCheckOut, finalWorkingMs, totalBreakMs,
+          finalStatus, finalLate, newSource, newInMethod, newOutMethod, prev.id,
         ]
       );
       rowsUpdated += 1;
