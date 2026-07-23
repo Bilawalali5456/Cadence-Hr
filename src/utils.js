@@ -253,9 +253,9 @@ export function computeDayStatus(user, record, holidays = []) {
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record?.checkIn) return "Absent";
 
-  // Prefer server-calculated biometric status (first/last scan rules)
-  if (record.source === "biometric" && record.status) return record.status;
-
+  // Always recompute from current times + breaks/short leaves.
+  // Do not reuse stored biometric status — server sync has no break data, so
+  // portal breaks added later would leave a stale "Short Hours" / Present label.
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return late ? "Late" : "Present";
 
@@ -273,8 +273,7 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   if (pub && !record?.checkIn) return "Public Holiday";
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record) return isWeekendDate(dateKey) || pub ? (pub ? "Public Holiday" : "Weekend Off") : "Absent";
-  if (record.source === "biometric" && record.status) return record.status;
-  return record.dayStatus || computeDayStatus(user, record, holidays);
+  return computeDayStatus(user, record, holidays);
 }
 
 export function dayStatusPill(status) {
@@ -297,6 +296,7 @@ export function finalizeRecord(record, user, holidays = []) {
   return {
     ...record,
     dayStatus,
+    status: dayStatus,
     totalBreakMs: calcTotalBreakMs(record),
     workingMs: calcNetWorkingMs(record),
   };
