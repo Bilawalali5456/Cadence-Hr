@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcTotalBreakMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, isPublicHolidayDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, isPublicHolidayDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
@@ -51,24 +51,33 @@ export function EmployeeAttendanceHistory({ user, attendance, holidays = [] }) {
           <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Check in", "Check out", "Break", "Hours", "Status"].map(h => (
+                {["Date", "Check in", "Check out", "Working Hours", "Status"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {history.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
                 const ds = dayStatusPill(resolveDayStatus(user, r, r?.date ?? todayKey(), holidays));
+                const missingOut = formatCheckOutDisplay(r);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{formatTime(r.checkIn)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {formatTime(r.checkOut)}{r.autoCheckout && <Pill tone="amber">Auto</Pill>}
+                      {formatTime(r.checkIn)}
+                      {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                     </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{formatDurationMs(calcTotalBreakMs(r))}</td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      {missingOut === "Missing"
+                        ? <span className="text-amber-600 font-medium">Missing</span>
+                        : <>
+                            {formatTime(r.checkOut)}
+                            {r.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkOutMethod}</span> : null}
+                            {r.autoCheckout && <Pill tone="amber">Auto</Pill>}
+                          </>}
+                    </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, user)}</td>
                     <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
                   </tr>
@@ -218,24 +227,27 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
 
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-          <STitle>Live attendance — today</STitle>
-          <span className="text-xs text-slate-400">{formatDate(todayKey())}</span>
+          <STitle>Daily attendance — today</STitle>
+          <span className="text-xs text-slate-400">
+            First scan = Check-in · Last scan = Check-out · {formatDate(todayKey())}
+          </span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px]">
+          <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Shift", "Check in", "Check out", "Break", "Short leave", "Hours", "Status", "Notes"].map(h => (
+                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {liveRoster.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
                 const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays));
+                const missingOut = formatCheckOutDisplay(r);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
@@ -243,30 +255,27 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         <Avatar name={u.name} size={7} />
                         <div>
                           <div className="font-medium text-slate-800">{u.name}</div>
-                          <div className="text-xs text-slate-400">{u.dept || u.role || "—"}</div>
+                          <div className="text-xs text-slate-400">{formatShiftRange(u)}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs tabular-nums text-slate-600">{formatShiftRange(u)}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(today)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
+                      {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                       {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="amber">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {formatTime(r?.checkOut)}
-                      {r?.autoCheckout && <Pill tone="amber">Auto</Pill>}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{formatDurationMs(calcTotalBreakMs(r))}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">
-                      {(r?.shortLeaves || []).filter(sl => sl.status === "approved").length
-                        ? r.shortLeaves.filter(sl => sl.status === "approved").map(sl => `${formatTime(sl.start)}–${formatTime(sl.end)}`).join(", ")
-                        : "—"}
+                      {missingOut === "Missing"
+                        ? <span className="text-amber-600 font-medium">Missing</span>
+                        : <>
+                            {formatTime(r?.checkOut)}
+                            {r?.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkOutMethod}</span> : null}
+                            {r?.autoCheckout && <Pill tone="amber">Auto</Pill>}
+                          </>}
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u)}</td>
                     <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
-                      {r?.breakStart && !r?.breakEnd ? "On break" : r?.autoCheckout ? "Auto checkout" : "—"}
-                    </td>
                   </tr>
                 );
               })}
@@ -287,33 +296,35 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[960px]">
+          <table className="w-full text-sm min-w-[880px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Employee", "Shift", "Check in", "Check out", "Break", "Hours", "Status", "Auto"].map(h => (
+                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {reportRows.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
                 const ds = dayStatusPill(resolveDayStatus(r.user, r, r?.date ?? todayKey(), holidays));
+                const missingOut = formatCheckOutDisplay(r);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
-                    <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
                     <td className="px-4 py-3 font-medium text-slate-800">{r.name}</td>
-                    <td className="px-4 py-3 text-xs tabular-nums text-slate-600">{r.shift}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r.checkIn)}
-                      {r.checkIn && isLateCheckIn(r.checkIn, r.user, holidays) && <Pill tone="amber">Late</Pill>}
+                      {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                     </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{formatTime(r.checkOut)}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{formatDurationMs(calcTotalBreakMs(r))}</td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      {missingOut === "Missing"
+                        ? <span className="text-amber-600 font-medium">Missing</span>
+                        : formatTime(r.checkOut)}
+                    </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user)}</td>
                     <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
-                    <td className="px-4 py-3">{r.autoCheckout ? <Pill tone="amber">Yes</Pill> : "—"}</td>
                   </tr>
                 );
               })}

@@ -112,6 +112,8 @@ const attToJs = (r) => ({
   status: r.status || undefined,
   late: r.late || false,
   source: r.source || "manual",
+  checkInMethod: r.check_in_method || null,
+  checkOutMethod: r.check_out_method || null,
 });
 
 const leaveToJs = (r) => ({
@@ -392,14 +394,16 @@ app.put("/api/attendance", async (req, res) => {
       c.query(
         `INSERT INTO attendance (
            id, user_id, date, check_in, check_out, breaks, short_leaves, break_start, break_end,
-           auto_checkout, working_ms, total_break_ms, status, late, source
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+           auto_checkout, working_ms, total_break_ms, status, late, source,
+           check_in_method, check_out_method
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [
           a.id, a.userId, a.date, a.checkIn || null, a.checkOut || null,
           JSON.stringify(a.breaks || []), JSON.stringify(a.shortLeaves || []),
           a.breakStart || null, a.breakEnd || null, a.autoCheckout || false,
           a.workingMs ?? null, a.totalBreakMs ?? null, a.status || null, a.late || false,
           a.source || "manual",
+          a.checkInMethod || null, a.checkOutMethod || null,
         ]
       )
     );

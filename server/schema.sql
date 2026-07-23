@@ -203,6 +203,31 @@ ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS paid_days INTEGER;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS unpaid_days INTEGER;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_in_method VARCHAR(20);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_out_method VARCHAR(20);
+
+-- Daily attendance view (processed first/last scan — not raw punches)
+CREATE OR REPLACE VIEW daily_attendance AS
+SELECT
+  a.id,
+  a.user_id AS employee_id,
+  u.name AS employee_name,
+  a.date,
+  a.check_in,
+  a.check_out,
+  a.working_ms AS total_hours_ms,
+  CASE
+    WHEN a.working_ms IS NULL THEN NULL
+    ELSE ROUND((a.working_ms::numeric / 3600000), 2)
+  END AS total_hours,
+  a.status,
+  a.late,
+  a.check_in_method,
+  a.check_out_method,
+  a.source,
+  a.auto_checkout
+FROM attendance a
+LEFT JOIN users u ON u.id = a.user_id;
 ALTER TABLE users ALTER COLUMN leave_balance SET DEFAULT 24;
 ALTER TABLE users ALTER COLUMN sick_balance SET DEFAULT 0;
 -- Align existing accounts to the new annual leave policy (was 15 + separate sick days)

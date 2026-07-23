@@ -252,14 +252,20 @@ export function computeDayStatus(user, record, holidays = []) {
   if (pub && !record?.checkIn) return "Public Holiday";
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record?.checkIn) return "Absent";
-  const bounds = getShiftBounds(user, record.date);
+
+  // Prefer server-calculated biometric status (first/last scan rules)
+  if (record.source === "biometric" && record.status) return record.status;
+
   const late = isLateCheckIn(record.checkIn, user, holidays);
-  if (!record.checkOut) return late ? "Late" : "On Time";
+  if (!record.checkOut) return late ? "Late" : "Present";
+
+  const bounds = getShiftBounds(user, record.date);
   const net = calcNetWorkingMs(record);
   const expectedNet = Math.max(0, bounds.end - bounds.start - getUserShift(user).breakMinutes * 60000);
-  if (expectedNet > 0 && net < expectedNet * 0.5) return "Half Day";
   if (late) return "Late";
-  return "On Time";
+  if (new Date(record.checkOut) < bounds.end) return "Early Leave";
+  if (expectedNet > 0 && net < expectedNet) return "Short Hours";
+  return "Present";
 }
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = []) {
@@ -267,14 +273,18 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   if (pub && !record?.checkIn) return "Public Holiday";
   if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
   if (!record) return isWeekendDate(dateKey) || pub ? (pub ? "Public Holiday" : "Weekend Off") : "Absent";
+  if (record.source === "biometric" && record.status) return record.status;
   return record.dayStatus || computeDayStatus(user, record, holidays);
 }
 
 export function dayStatusPill(status) {
   const map = {
-    "On Time": { tone: "green", label: "On Time" },
+    Present: { tone: "green", label: "Present" },
+    "On Time": { tone: "green", label: "Present" },
     Late: { tone: "amber", label: "Late" },
-    "Half Day": { tone: "red", label: "Half Day" },
+    "Early Leave": { tone: "amber", label: "Early Leave" },
+    "Short Hours": { tone: "amber", label: "Short Hours" },
+    "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
     "Weekend Off": { tone: "blue", label: "Weekend Off" },
     "Public Holiday": { tone: "blue", label: "Public Holiday" },
@@ -485,7 +495,15 @@ export function applyAutoCheckouts(attendance, users) {
 export function displayWorkingHours(record, user) {
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
   if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));
+  if (record?.checkIn && !record?.checkOut) return "—";
   return "—";
+}
+
+/** Check-out cell: show Missing when only one scan (check-in only). */
+export function formatCheckOutDisplay(record) {
+  if (!record?.checkIn) return "—";
+  if (!record.checkOut) return "Missing";
+  return null; // caller formats time
 }
 
 export function todayKey(d = new Date()) {
