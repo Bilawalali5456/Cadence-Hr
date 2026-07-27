@@ -1,9 +1,20 @@
 import React from "react";
 import { Clock, User, Shield, Phone, Mail, Landmark } from "lucide-react";
-import { SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, formatCnicInput } from "../utils.js";
+import { getDefaultShiftTemplate, formatCnicInput } from "../utils.js";
 import { TextInput, SelectInput, ErrBox } from "./ui.jsx";
 
-export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
+export function EmployeeForm({ form, setForm, ferr, lockRole = false, shifts = [] }) {
+  const defaultShift = getDefaultShiftTemplate(shifts);
+  const shiftOptions = [
+    { value: "", label: defaultShift ? `Default (${defaultShift.name})` : "Default shift" },
+    ...(shifts || [])
+      .filter(s => s && s.id)
+      .map(s => ({
+        value: s.id,
+        label: s.name + (s.isDefault ? " (default)" : ""),
+      })),
+  ];
+
   return (
     <div className="space-y-3">
       <ErrBox msg={ferr} />
@@ -35,6 +46,20 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
       </div>
       <div className="pt-2 border-t border-slate-100">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <Clock size={13} />Work shift
+        </div>
+        <SelectInput
+          label="Assigned shift"
+          value={form.shiftId || ""}
+          onChange={v => setForm({ ...form, shiftId: v || null })}
+          options={shiftOptions}
+        />
+        <p className="text-xs text-slate-400 mt-2">
+          Choose a company shift template. If none is selected, the default shift applies. Day-wise timings are managed under Policies → Work shifts.
+        </p>
+      </div>
+      <div className="pt-2 border-t border-slate-100">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
           <Phone size={13} />Emergency contact
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -43,82 +68,6 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
           <TextInput label="Emergency contact number" value={form.emergencyContactPhone || ""} onChange={v => setForm({ ...form, emergencyContactPhone: v })} Icon={Phone} placeholder="+92-300-0000000" />
           <TextInput label="Relationship with emergency contact" value={form.emergencyContactRelation || ""} onChange={v => setForm({ ...form, emergencyContactRelation: v })} placeholder="e.g. Spouse, Parent, Sibling" />
         </div>
-      </div>
-      <div className="pt-2 border-t border-slate-100">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-          <Clock size={13} />Official duty schedule
-        </div>
-        <div className="grid grid-cols-3 gap-3 mb-3">
-          <TextInput label="Late grace (minutes)" type="number" value={String(form.graceMinutes ?? 15)} onChange={v => setForm({ ...form, graceMinutes: parseInt(v) || 0 })} />
-          <TextInput label="Break duration (minutes)" type="number" value={String(form.breakMinutes ?? 60)} onChange={v => setForm({ ...form, breakMinutes: parseInt(v) || 0 })} />
-          <TextInput label="Checkout grace (minutes)" type="number" value={String(form.checkoutGraceMinutes ?? 10)} onChange={v => setForm({ ...form, checkoutGraceMinutes: parseInt(v) || 0 })} />
-        </div>
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
-          <table className="w-full text-sm min-w-[520px]">
-            <thead>
-              <tr className="text-left text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
-                <th className="px-3 py-2 font-medium">Day</th>
-                <th className="px-3 py-2 font-medium">Off</th>
-                <th className="px-3 py-2 font-medium">Start</th>
-                <th className="px-3 py-2 font-medium">End</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SHIFT_WEEKDAYS.map(day => {
-                const row = form.weeklySchedule?.[day] || { off: false, shiftStart: "09:00", shiftEnd: "18:00" };
-                return (
-                  <tr key={day} className="border-b border-slate-100 last:border-0">
-                    <td className="px-3 py-2 font-medium text-slate-700">{SHIFT_DAY_LABELS[day]}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={!!row.off}
-                        onChange={e => setForm({
-                          ...form,
-                          weeklySchedule: {
-                            ...(form.weeklySchedule || {}),
-                            [day]: { ...row, off: e.target.checked },
-                          },
-                        })}
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="time"
-                        disabled={!!row.off}
-                        value={row.shiftStart || "09:00"}
-                        onChange={e => setForm({
-                          ...form,
-                          weeklySchedule: {
-                            ...(form.weeklySchedule || {}),
-                            [day]: { ...row, shiftStart: e.target.value },
-                          },
-                        })}
-                        className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5 disabled:bg-slate-100"
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="time"
-                        disabled={!!row.off}
-                        value={row.shiftEnd || "18:00"}
-                        onChange={e => setForm({
-                          ...form,
-                          weeklySchedule: {
-                            ...(form.weeklySchedule || {}),
-                            [day]: { ...row, shiftEnd: e.target.value },
-                          },
-                        })}
-                        className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5 disabled:bg-slate-100"
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-xs text-slate-400 mt-2">Set separate timings for each weekday (Mon–Fri). Saturday and Sunday are always treated as off. Mark a weekday Off to exclude it from Late, Early Leave, Short Hours, and Absent calculations.</p>
       </div>
       <div className="pt-2 border-t border-slate-100">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">

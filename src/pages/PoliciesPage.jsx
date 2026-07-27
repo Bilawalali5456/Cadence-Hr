@@ -1,19 +1,21 @@
 import React, { useState } from "react";
-import { Search, Trash2, Edit2, Save, Plus, FileText } from "lucide-react";
+import { Search, Trash2, Edit2, Save, Plus, FileText, Clock } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
+import { ShiftsPanel } from "../components/ShiftsPanel.jsx";
 import { buildPolicyNotifications, sendPolicyEmails } from "../notifications.js";
 
 export const POLICY_CATEGORIES = [
   "Attendance", "Leave", "Code of Conduct", "IT", "Security", "HR", "Finance", "General",
 ];
 
-export function PoliciesPage({ currentUser, policies, setPolicies, roles, users = [], notifications, setNotifications }) {
+export function PoliciesPage({ currentUser, policies, setPolicies, roles, users = [], shifts = [], setShifts, notifications, setNotifications }) {
   const canManage =
     can(currentUser.role, "manage_policies", roles) ||
     isHrAdminRole(currentUser.role) ||
     isExecutiveRole(currentUser.role);
+  const [section, setSection] = useState("policies");
   const [catFilter, setCatFilter] = useState("All");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -83,6 +85,29 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles, users 
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+        <button
+          type="button"
+          onClick={() => setSection("policies")}
+          className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1.5 ${section === "policies" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+        >
+          <FileText size={14} />Policies
+        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setSection("shifts")}
+            className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1.5 ${section === "shifts" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+          >
+            <Clock size={14} />Work shifts
+          </button>
+        )}
+      </div>
+
+      {section === "shifts" && canManage ? (
+        <ShiftsPanel shifts={shifts} setShifts={setShifts} users={users} />
+      ) : (
+      <>
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-48 max-w-sm">
           <Search size={14} className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" />
@@ -179,6 +204,8 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles, users 
           </div>
         )}
       </Modal>
+      </>
+      )}
     </div>
   );
 }

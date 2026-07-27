@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts, setShiftsCatalog } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -69,6 +69,7 @@ export default function App() {
   const [policies,      setPolicies]      = useState([]);
   const [assets,        setAssets]        = useState([]);
   const [holidays,      setHolidays]      = useState(() => sanitizeHolidays(loadHolidays()));
+  const [shifts,        setShifts]        = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [warnings,      setWarnings]      = useState([]);
   const [roles,         setRoles]         = useState([]);
@@ -92,6 +93,7 @@ export default function App() {
         setPolicies(d.policies || []);
         setAssets(d.assets || []);
         setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
+        setShifts(d.shifts || []);
         setNotifications(sanitizeNotifications(d.notifications));
         setWarnings(sanitizeWarnings(d.warnings));
         setRoles(d.roles || []);
@@ -134,6 +136,8 @@ export default function App() {
   useEffect(() => { if (loadedRef.current) apiSave("payroll", payroll); }, [payroll]);
   useEffect(() => { if (loadedRef.current) apiSave("policies", policies); }, [policies]);
   useEffect(() => { if (loadedRef.current) apiSave("assets", assets); }, [assets]);
+  useEffect(() => { if (loadedRef.current) apiSave("shifts", shifts); }, [shifts]);
+  useEffect(() => { setShiftsCatalog(shifts); }, [shifts]);
   useEffect(() => { if (loadedRef.current) apiSave("holidays", holidays); }, [holidays]);
   useEffect(() => { if (loadedRef.current) apiSave("notifications", notifications); }, [notifications]);
   useEffect(() => { if (loadedRef.current) apiSave("warnings", warnings); }, [warnings]);
@@ -337,7 +341,7 @@ export default function App() {
             <p className="text-sm text-slate-400">{sub}</p>
           </div>
           {route === "home"          && <Dashboard      currentUser={currentUser} users={users} setRoute={setRoute} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} warnings={warnings} setWarnings={setWarnings} />}
-          {route === "people"        && <PeoplePage     users={users} setUsers={setUsers} currentUser={currentUser} attendance={attendance} setAttendance={setAttendance} payroll={payroll} setPayroll={setPayroll} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} warnings={warnings} setWarnings={setWarnings} />}
+          {route === "people"        && <PeoplePage     users={users} setUsers={setUsers} currentUser={currentUser} attendance={attendance} setAttendance={setAttendance} payroll={payroll} setPayroll={setPayroll} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} roles={roles} holidays={holidays} shifts={shifts} notifications={notifications} setNotifications={setNotifications} warnings={warnings} setWarnings={setWarnings} />}
           {route === "executives"    && <ExecutivesPage users={users} setUsers={setUsers} />}
           {route === "attendance"    && <AttendancePage currentUser={currentUser} users={users} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} />}
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
@@ -346,7 +350,7 @@ export default function App() {
           {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} />}
           {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={setAttendance} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
-          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
+          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} shifts={shifts} setShifts={setShifts} notifications={notifications} setNotifications={setNotifications} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
           {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
           {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} warnings={warnings} setWarnings={setWarnings} />}

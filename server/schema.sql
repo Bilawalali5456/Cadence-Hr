@@ -140,6 +140,22 @@ CREATE TABLE IF NOT EXISTS holidays (
   type  TEXT NOT NULL DEFAULT 'public'
 );
 
+CREATE TABLE IF NOT EXISTS shifts (
+  id                    TEXT PRIMARY KEY,
+  name                  TEXT NOT NULL,
+  grace_minutes         INTEGER DEFAULT 15,
+  break_minutes         INTEGER DEFAULT 60,
+  checkout_grace_minutes INTEGER DEFAULT 10,
+  weekly_schedule       JSONB NOT NULL DEFAULT '{}',
+  is_default            BOOLEAN DEFAULT false
+);
+
+INSERT INTO shifts (id, name, grace_minutes, break_minutes, checkout_grace_minutes, weekly_schedule, is_default) VALUES
+('shift-default', 'Standard (9–6)', 15, 60, 10,
+ '{"monday":{"off":false,"shiftStart":"09:00","shiftEnd":"18:00"},"tuesday":{"off":false,"shiftStart":"09:00","shiftEnd":"18:00"},"wednesday":{"off":false,"shiftStart":"09:00","shiftEnd":"18:00"},"thursday":{"off":false,"shiftStart":"09:00","shiftEnd":"18:00"},"friday":{"off":false,"shiftStart":"09:00","shiftEnd":"18:00"},"saturday":{"off":true,"shiftStart":"09:00","shiftEnd":"14:00"},"sunday":{"off":true,"shiftStart":"09:00","shiftEnd":"18:00"}}'::jsonb,
+ true)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL,
@@ -210,6 +226,7 @@ ALTER TABLE attendance ADD COLUMN IF NOT EXISTS correction_log JSONB DEFAULT '[]
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by_role TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_on TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_id TEXT;
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS

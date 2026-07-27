@@ -87,6 +87,7 @@ const userToJs = (r) => ({
   bankAccount: r.bank_account || "",
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
+  shiftId: r.shift_id || undefined,
 });
 
 /** Public user payload — never include password or tempPassword. */
@@ -198,6 +199,16 @@ const holidayToJs = (r) => ({
   type: r.type || "public",
 });
 
+const shiftToJs = (r) => ({
+  id: r.id,
+  name: r.name,
+  graceMinutes: r.grace_minutes ?? 15,
+  breakMinutes: r.break_minutes ?? 60,
+  checkoutGraceMinutes: r.checkout_grace_minutes ?? 10,
+  weeklySchedule: r.weekly_schedule || {},
+  isDefault: r.is_default === true,
+});
+
 const roleToJs = (r) => ({
   id: r.id,
   name: r.name,
@@ -228,7 +239,7 @@ const warningToJs = (r) => ({
 /* ─── GET /api/bootstrap — everything in one call ─── */
 app.get("/api/bootstrap", async (_req, res) => {
   try {
-    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, notifications, warnings] = await Promise.all([
+    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, shifts, notifications, warnings] = await Promise.all([
       pool.query("SELECT * FROM users ORDER BY name"),
       pool.query("SELECT * FROM attendance ORDER BY date DESC"),
       pool.query("SELECT * FROM leave_requests ORDER BY id"),
@@ -240,6 +251,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       pool.query("SELECT * FROM assets ORDER BY name"),
       pool.query("SELECT * FROM roles ORDER BY name"),
       pool.query("SELECT * FROM holidays ORDER BY date"),
+      pool.query("SELECT * FROM shifts ORDER BY name"),
       pool.query("SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"),
       pool.query("SELECT * FROM warnings ORDER BY date DESC"),
     ]);
@@ -255,6 +267,7 @@ app.get("/api/bootstrap", async (_req, res) => {
       assets: assets.rows.map(assetToJs),
       roles: roles.rows.map(roleToJs),
       holidays: holidays.rows.map(holidayToJs),
+      shifts: shifts.rows.map(shiftToJs),
       notifications: notifications.rows.map(notificationToJs),
       warnings: warnings.rows.map(warningToJs),
     });
@@ -294,10 +307,10 @@ app.put("/api/users", async (req, res) => {
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
            guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-           bank_name, bank_branch, bank_account, bank_iban, shift
+           bank_name, bank_branch, bank_account, bank_iban, shift, shift_id
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,$27,$28,$29
+           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30
          )`,
         [
           u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
@@ -307,6 +320,7 @@ app.put("/api/users", async (req, res) => {
           u.guardianName || "", u.emergencyContactName || "", u.emergencyContactPhone || "", u.emergencyContactRelation || "",
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
           u.shift ? JSON.stringify(u.shift) : null,
+          u.shiftId || null,
         ]
       );
     });
@@ -619,6 +633,30 @@ app.put("/api/holidays", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("holidays sync error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/shifts", async (req, res) => {
+  try {
+    await replaceAll("shifts", req.body, (c, s) =>
+      c.query(
+        `INSERT INTO shifts (id, name, grace_minutes, break_minutes, checkout_grace_minutes, weekly_schedule, is_default)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          s.id,
+          s.name,
+          s.graceMinutes ?? 15,
+          s.breakMinutes ?? 60,
+          s.checkoutGraceMinutes ?? 10,
+          JSON.stringify(s.weeklySchedule || {}),
+          s.isDefault === true,
+        ]
+      )
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("shifts sync error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
