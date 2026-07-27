@@ -417,13 +417,57 @@ export function formatDurationMs(ms) {
   return `${h}h ${m}m`;
 }
 
-export function calcTotalBreakMs(record) {
+export function calcTotalBreakMs(record, now = new Date()) {
   if (!record) return 0;
-  let total = (record.breaks || []).reduce((sum, b) => sum + (new Date(b.end) - new Date(b.start)), 0);
+  let total = (record.breaks || []).reduce((sum, b) => {
+    if (!b?.start || !b?.end) return sum;
+    const ms = new Date(b.end) - new Date(b.start);
+    return sum + (ms > 0 ? ms : 0);
+  }, 0);
   if (record.breakStart && record.breakEnd) {
-    total += new Date(record.breakEnd) - new Date(record.breakStart);
+    total += Math.max(0, new Date(record.breakEnd) - new Date(record.breakStart));
+  } else if (record.breakStart && !record.breakEnd) {
+    total += Math.max(0, now - new Date(record.breakStart));
   }
   return total;
+}
+
+export function breakMinutesUsed(record, now = new Date()) {
+  return Math.round(calcTotalBreakMs(record, now) / 60000);
+}
+
+export function formatBreakUsage(record, allowedMinutes, now = new Date()) {
+  const used = breakMinutesUsed(record, now);
+  return `${used}m of ${allowedMinutes}m`;
+}
+
+export function isOnBreak(record) {
+  return !!(record?.breakStart && !record?.breakEnd);
+}
+
+export function breakSessionCount(record) {
+  let count = (record?.breaks || []).length;
+  if (isOnBreak(record)) count += 1;
+  return count;
+}
+
+export function isBreakExceeded(record, allowedMinutes, now = new Date()) {
+  return breakMinutesUsed(record, now) > allowedMinutes;
+}
+
+export function closeActiveBreak(record, endIso) {
+  if (!record?.breakStart || record.breakEnd) return record;
+  const breaks = [...(record.breaks || []), { start: record.breakStart, end: endIso }];
+  return { ...record, breaks, breakStart: null, breakEnd: null };
+}
+
+export function calcLiveWorkingMs(record, now = new Date()) {
+  if (!record?.checkIn) return 0;
+  const end = record.checkOut ? new Date(record.checkOut) : now;
+  let ms = end - new Date(record.checkIn);
+  ms -= calcTotalBreakMs(record, now);
+  ms -= calcShortLeaveMs(record);
+  return Math.max(0, ms);
 }
 
 export function calcShortLeaveMs(record) {
@@ -665,7 +709,6 @@ export function canCheckIn(now, user, record, holidays = [], leaveRequests = [])
 export function canCheckOut(now, user, record) {
   if (!record?.checkIn) return { ok: false, msg: "Please check in first." };
   if (record.checkOut) return { ok: false, msg: "You have already checked out." };
-  if (record.breakStart && !record.breakEnd) return { ok: false, msg: "End your break before checking out." };
   const bounds = getShiftBounds(user, todayKey(now));
   if (!bounds.checkoutDeadline) return { ok: false, msg: "Today is off in your assigned shift." };
   if (now > bounds.checkoutDeadline) {
@@ -697,7 +740,7 @@ export function performCheckIn(attendance, userId, user, now = new Date(), holid
   return { attendance: next, error: null };
 }
 
-export function performCheckOut(attendance, userId, user, now = new Date()) {
+export function performCheckOut(attendance, userId, user, now = new Date(), holidays = []) {
   const list = attendance || [];
   const key = todayKey(now);
   const existing = list.find(r => r && r.userId === userId && r.date === key);
@@ -705,7 +748,9 @@ export function performCheckOut(attendance, userId, user, now = new Date()) {
   if (!gate.ok) return { attendance: list, error: gate.msg };
   const next = list.map(r => {
     if (!r || r.userId !== userId || r.date !== key) return r;
-    return finalizeRecord({ ...r, checkOut: now.toISOString() }, user);
+    let updated = r;
+    if (isOnBreak(updated)) updated = closeActiveBreak(updated, now.toISOString());
+    return finalizeRecord({ ...updated, checkOut: now.toISOString() }, user, holidays);
   });
   return { attendance: next, error: null };
 }
@@ -715,26 +760,23 @@ export function performBreakStart(attendance, userId, user, now = new Date()) {
   const key = todayKey(now);
   const existing = list.find(r => r && r.userId === userId && r.date === key);
   if (!existing?.checkIn || existing.checkOut) return { attendance: list, error: "Check in before starting a break." };
-  if (existing.breakStart && !existing.breakEnd) return { attendance: list, error: "Break already in progress." };
+  if (isOnBreak(existing)) return { attendance: list, error: "Break already in progress." };
   const bounds = getShiftBounds(user, key);
-  if (bounds.off || !bounds.start || !bounds.end) return { attendance: list, error: "Breaks are not allowed on off days." };
-  if (now < bounds.start || now > bounds.end) return { attendance: list, error: "Breaks are only allowed during your shift." };
+  if (bounds.off) return { attendance: list, error: "Breaks are not allowed on off days." };
   const next = list.map(r =>
     r && r.userId === userId && r.date === key ? { ...r, breakStart: now.toISOString(), breakEnd: null } : r
   ).filter(Boolean);
   return { attendance: next, error: null };
 }
 
-export function performBreakEnd(attendance, userId, user, now = new Date()) {
+export function performBreakEnd(attendance, userId, user, now = new Date(), holidays = []) {
   const list = attendance || [];
   const key = todayKey(now);
   const existing = list.find(r => r && r.userId === userId && r.date === key);
   if (!existing?.breakStart || existing.breakEnd) return { attendance: list, error: "No active break to end." };
-  const breaks = [...(existing.breaks || []), { start: existing.breakStart, end: now.toISOString() }];
+  const closed = closeActiveBreak(existing, now.toISOString());
   const next = list.map(r =>
-    r && r.userId === userId && r.date === key
-      ? { ...r, breaks, breakStart: null, breakEnd: null, totalBreakMs: calcTotalBreakMs({ ...r, breaks, breakStart: null, breakEnd: null }) }
-      : r
+    r && r.userId === userId && r.date === key ? finalizeRecord(closed, user, holidays) : r
   ).filter(Boolean);
   return { attendance: next, error: null };
 }
@@ -823,15 +865,13 @@ export function applyAutoCheckouts(attendance, users) {
     const bounds = getShiftBounds(user, key);
     if (now >= bounds.checkoutDeadline) {
       changed = true;
+      let updated = r;
+      const endIso = bounds.checkoutDeadline.toISOString();
+      if (isOnBreak(updated)) updated = closeActiveBreak(updated, endIso);
       return finalizeRecord({
-        ...r,
-        checkOut: bounds.checkoutDeadline.toISOString(),
+        ...updated,
+        checkOut: endIso,
         autoCheckout: true,
-        breakStart: null,
-        breakEnd: r.breakStart && !r.breakEnd ? bounds.checkoutDeadline.toISOString() : r.breakEnd,
-        breaks: r.breakStart && !r.breakEnd
-          ? [...(r.breaks || []), { start: r.breakStart, end: bounds.checkoutDeadline.toISOString() }]
-          : r.breaks,
       }, user);
     }
     return r;
@@ -839,10 +879,10 @@ export function applyAutoCheckouts(attendance, users) {
   return changed ? next : attendance;
 }
 
-export function displayWorkingHours(record, user) {
+export function displayWorkingHours(record, user, now = new Date()) {
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
   if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));
-  if (record?.checkIn && !record?.checkOut) return "—";
+  if (record?.checkIn && !record?.checkOut) return formatDurationMs(calcLiveWorkingMs(record, now));
   return "—";
 }
 
@@ -1224,6 +1264,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
         totalLateDays: 0,
         totalWorkingMs: 0,
         totalRequiredMs: 0,
+        totalBreakMs: 0,
         approvedLeaveDays: 0,
         payableDays: 0,
       };
@@ -1242,6 +1283,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
       totalLateDays: 0,
       totalWorkingMs: 0,
       totalRequiredMs: 0,
+      totalBreakMs: 0,
       approvedLeaveDays: 0,
       payableDays: 0,
     };
@@ -1259,6 +1301,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
   const presentDates = new Set(presentRows.map(r => r.date));
   const lateDays = presentRows.filter(r => resolveDayStatus(user, r, r.date, holidays, shifts) === "Late").length;
   const totalWorkingMs = presentRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r) || 0), 0);
+  const totalBreakMs = presentRows.reduce((sum, r) => sum + (r.totalBreakMs ?? calcTotalBreakMs(r) ?? 0), 0);
   const totalRequiredMs = scheduledDates
     .filter(d => !leaveDates.has(d))
     .reduce((sum, d) => sum + requiredMsForShiftDay(user, d, shifts), 0);
@@ -1273,6 +1316,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
     totalLateDays: lateDays,
     totalWorkingMs,
     totalRequiredMs,
+    totalBreakMs,
     approvedLeaveDays,
     payableDays: presentDates.size + approvedLeaveDays,
   };

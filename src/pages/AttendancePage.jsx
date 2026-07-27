@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getShiftNameForUser, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getShiftNameForUser, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -303,17 +303,17 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </select>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[1080px]">
+          <table className="w-full text-sm min-w-[1180px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Required hours", "Payable days"].map(h => (
+                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Break time", "Required hours", "Payable days"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {monthlyRows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : monthlyRows.map(({ user, summary }) => (
                 <tr key={user.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
@@ -322,6 +322,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                   <td className="px-4 py-3">{summary.totalLateDays}</td>
                   <td className="px-4 py-3">{summary.approvedLeaveDays}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalWorkingMs)}</td>
+                  <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalBreakMs)}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalRequiredMs)}</td>
                   <td className="px-4 py-3">{summary.payableDays}</td>
                 </tr>
@@ -342,18 +343,20 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
+                {["Employee", "Date", "Check-in", "Break", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
                   <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h || "Actions"}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {liveRoster.length === 0 ? (
-                <tr><td colSpan={canManageCorrections ? 7 : 6} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
+                const shiftCfg = getUserShift(u, today);
                 const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays));
                 const missingOut = formatCheckOutDisplay(r);
+                const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
@@ -371,6 +374,17 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                       {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="amber">Late</Pill>}
                     </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {!r?.checkIn ? "—" : (
+                        <div className="text-xs">
+                          <div className={`tabular-nums font-medium ${breakOver ? "text-red-600" : ""}`}>
+                            {formatBreakUsage(r, shiftCfg.breakMinutes)}
+                          </div>
+                          <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          {breakOver && <Pill tone="red">Over</Pill>}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {missingOut === "Missing"
                         ? <span className="text-amber-600 font-medium">Missing</span>
@@ -383,6 +397,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u)}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
+                        {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r?.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
                         {isWfhAttendance(r, u.id, today, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
@@ -422,20 +437,23 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[880px]">
+          <table className="w-full text-sm min-w-[980px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
+                {["Employee", "Date", "Check-in", "Break", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
                   <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h || "Actions"}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {reportRows.length === 0 ? (
-                <tr><td colSpan={canManageCorrections ? 7 : 6} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
+                <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(r.user, r, r?.date ?? todayKey(), holidays));
+                const dateKey = r?.date ?? todayKey();
+                const shiftCfg = getUserShift(r.user, dateKey);
+                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays));
                 const missingOut = formatCheckOutDisplay(r);
+                const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 font-medium text-slate-800">{r.name}</td>
@@ -443,6 +461,17 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r.checkIn)}
                       {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {!r.checkIn ? "—" : (
+                        <div className="text-xs">
+                          <div className={`tabular-nums font-medium ${breakOver ? "text-red-600" : ""}`}>
+                            {formatBreakUsage(r, shiftCfg.breakMinutes)}
+                          </div>
+                          <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          {breakOver && <Pill tone="red">Over</Pill>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {missingOut === "Missing"
@@ -452,6 +481,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user)}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
+                        {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
                         {isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user) && <Pill tone="blue">WFH</Pill>}

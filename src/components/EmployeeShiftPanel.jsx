@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { LogOut, LogIn, Coffee } from "lucide-react";
 import { B } from "../brand.jsx";
 import {
@@ -6,7 +6,9 @@ import {
   getShiftBounds,
   formatShiftRange,
   formatDurationMs,
-  calcTotalBreakMs,
+  formatBreakUsage,
+  isOnBreak,
+  isBreakExceeded,
   resolveDayStatus,
   dayStatusPill,
   performCheckIn,
@@ -26,22 +28,31 @@ import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
 
 export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays = [], leaveRequests = [], compact = false }) {
   const [err, setErr] = useState("");
+  const [now, setNow] = useState(() => new Date());
   const today = getUserTodayRecord(attendance, user.id);
   const key = todayKey();
   const shift = getUserShift(user, key);
   const bounds = getShiftBounds(user, key);
   const publicHoliday = getPublicHoliday(key, holidays);
   const dayOff = bounds.off || publicHoliday;
-  const showManualActions = canManualCheckIn(user, key, leaveRequests, holidays);
+  const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
   const checkedIn = today?.checkIn && !today?.checkOut;
-  const onBreak = today?.breakStart && !today?.breakEnd;
+  const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
-  const breakMs = calcTotalBreakMs(today);
+  const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
+  const showBreakActions = checkedIn && !dayOff;
+
+  useEffect(() => {
+    if (!checkedIn) return undefined;
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, [checkedIn, today?.breakStart, today?.checkIn]);
 
   function run(action) {
     setErr("");
     const result = action();
     if (result.error) { setErr(result.error); return; }
+    setNow(new Date());
     setAttendance(result.attendance);
   }
 
@@ -51,6 +62,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         <STitle right={
           <span className="inline-flex items-center gap-1">
             {(isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user)) && <Pill tone="blue">WFH</Pill>}
+            {onBreak && <Pill tone="amber">On Break</Pill>}
             <Pill tone={daySt.tone}>{daySt.label}</Pill>
           </span>
         }>
@@ -66,7 +78,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         ) : (
           <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-            <b>Your shift today:</b> {formatShiftRange(user, key)} · Grace {shift.graceMinutes}m · Break {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
+            <b>Your shift today:</b> {formatShiftRange(user, key)} · Grace {shift.graceMinutes}m · Break allowance {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
           </div>
         )}
         <ErrBox msg={err} />
@@ -76,6 +88,14 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
             <div className="text-xs text-emerald-600">Check in</div>
             <div className="font-semibold text-emerald-800 tabular-nums mt-1">{formatTime(today?.checkIn)}</div>
           </div>
+          <div className={`p-3 rounded-lg border text-center ${breakExceeded ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
+            <div className={`text-xs ${breakExceeded ? "text-red-600" : "text-amber-600"}`}>Break</div>
+            <div className={`font-semibold tabular-nums mt-1 ${breakExceeded ? "text-red-800" : "text-amber-800"}`}>
+              {today?.checkIn ? formatBreakUsage(today, shift.breakMinutes, now) : "—"}
+            </div>
+            {onBreak && <div className="text-[10px] text-amber-600 mt-0.5">In progress</div>}
+            {breakExceeded && !onBreak && today?.checkIn && <div className="text-[10px] text-red-600 mt-0.5">Over allowance</div>}
+          </div>
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
             <div className="text-xs text-blue-600">Check out</div>
             <div className="font-semibold text-blue-800 tabular-nums mt-1">
@@ -83,45 +103,48 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
               {today?.autoCheckout && <span className="block text-[10px] text-blue-500 mt-0.5">Auto</span>}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-amber-50 border border-amber-100 text-center">
-            <div className="text-xs text-amber-600">Break</div>
-            <div className="font-semibold text-amber-800 tabular-nums mt-1">{formatDurationMs(breakMs)}</div>
-            <div className="text-[10px] text-amber-600">of {shift.breakMinutes}m</div>
-          </div>
           <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-center">
             <div className="text-xs text-slate-500">Working hours</div>
-            <div className="font-semibold tabular-nums mt-1" style={{ color: B.dark }}>{displayWorkingHours(today, user)}</div>
+            <div className="font-semibold tabular-nums mt-1" style={{ color: B.dark }}>{displayWorkingHours(today, user, now)}</div>
+            {checkedIn && !today?.checkOut && <div className="text-[10px] text-slate-400 mt-0.5">Excludes break</div>}
           </div>
         </div>
         )}
 
-        {!dayOff && showManualActions && !today?.checkOut && (
-          <div className="flex flex-wrap gap-2 justify-center mb-4">
+        {!dayOff && showManualCheckIn && !today?.checkOut && (
+          <div className="flex flex-wrap gap-2 justify-center mb-3">
             {!checkedIn && (
               <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays, leaveRequests))}>
                 <LogIn size={14} />Check in
               </Btn>
             )}
             {checkedIn && !onBreak && (
-              <Btn onClick={() => run(() => performCheckOut(attendance, user.id, user))} variant="danger">
+              <Btn onClick={() => run(() => performCheckOut(attendance, user.id, user, new Date(), holidays))} variant="danger">
                 <LogOut size={14} />Check out
               </Btn>
             )}
-            {checkedIn && (
-              onBreak ? (
-                <Btn onClick={() => run(() => performBreakEnd(attendance, user.id, user))} variant="ghost">
-                  <Coffee size={14} />End break
-                </Btn>
-              ) : (
-                <Btn onClick={() => run(() => performBreakStart(attendance, user.id, user))} variant="ghost">
-                  <Coffee size={14} />Start break
-                </Btn>
-              )
+          </div>
+        )}
+
+        {!dayOff && showBreakActions && (
+          <div className="flex flex-wrap gap-2 justify-center mb-4">
+            {onBreak ? (
+              <Btn onClick={() => run(() => performBreakEnd(attendance, user.id, user, new Date(), holidays))} variant="ghost">
+                <Coffee size={14} />End break
+              </Btn>
+            ) : (
+              <Btn onClick={() => run(() => performBreakStart(attendance, user.id, user))} variant="ghost">
+                <Coffee size={14} />Start break
+              </Btn>
             )}
           </div>
         )}
-        {!dayOff && !showManualActions && !today?.checkIn && (
+
+        {!dayOff && !showManualCheckIn && !today?.checkIn && (
           <p className="text-xs text-center text-slate-400 mb-4">Use the office biometric device to check in, or submit a Work from Home request for approved WFH days.</p>
+        )}
+        {!dayOff && checkedIn && !showManualCheckIn && (
+          <p className="text-xs text-center text-slate-400 mb-4">Checked in via biometric — use the break buttons above to log breaks.</p>
         )}
 
         {!dayOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
@@ -133,6 +156,24 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
                 <span className="text-slate-400">{sl.reason || "—"}</span>
               </div>
             ))}
+          </div>
+        )}
+
+        {!dayOff && (today?.breaks || []).length > 0 && (
+          <div className="text-xs text-slate-500 space-y-1 mb-2">
+            <b>Breaks today ({(today.breaks || []).length + (onBreak ? 1 : 0)}):</b>
+            {(today.breaks || []).map((b, i) => (
+              <div key={i} className="flex justify-between p-2 rounded bg-white border border-slate-100 tabular-nums">
+                <span>{formatTime(b.start)} – {formatTime(b.end)}</span>
+                <span className="text-slate-400">{formatDurationMs(new Date(b.end) - new Date(b.start))}</span>
+              </div>
+            ))}
+            {onBreak && (
+              <div className="flex justify-between p-2 rounded bg-amber-50 border border-amber-100 tabular-nums">
+                <span>{formatTime(today.breakStart)} – now</span>
+                <span className="text-amber-600">In progress</span>
+              </div>
+            )}
           </div>
         )}
 
