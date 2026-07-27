@@ -169,17 +169,16 @@ export async function sendCredentialsEmail({
   await getTransporter().sendMail(mailOptions);
 }
 
-function buildNotificationHtml({ name, subject, body, link }) {
+function buildNotificationHtml({ name, subject, body, link, includeCidLogo = false }) {
   const portalUrl = link || portalLoginUrl();
   const safeBody = String(body || "").replace(/\n/g, "<br/>");
-  const logoPath = findLogoPath();
 
   return `
 <!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
   <div style="max-width:560px;margin:32px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
-    ${logoHeaderHtml(!!logoPath)}
+    ${logoHeaderHtml(includeCidLogo)}
     <div style="padding:24px;">
       <h1 style="margin:0 0 12px;font-size:20px;color:#0f172a;">${subject}</h1>
       <p style="margin:0 0 16px;color:#334155;">Hi ${name},</p>
@@ -210,6 +209,7 @@ export async function sendNotificationEmail({ to, name, subject, body, link }) {
   const portalUrl = link || portalLoginUrl();
   const safeSubject = String(subject || "Adforce HR notification").trim();
   const logoPath = findLogoPath();
+  const includeCidLogo = !!logoPath;
   const mailOptions = {
     from,
     to: recipient,
@@ -221,7 +221,13 @@ export async function sendNotificationEmail({ to, name, subject, body, link }) {
       "",
       `View in HR Portal: ${portalUrl}`,
     ].join("\n"),
-    html: buildNotificationHtml({ name: name || "there", subject: safeSubject, body, link: portalUrl }),
+    html: buildNotificationHtml({
+      name: name || "there",
+      subject: safeSubject,
+      body,
+      link: portalUrl,
+      includeCidLogo,
+    }),
   };
   if (logoPath) {
     mailOptions.attachments = [
@@ -261,6 +267,7 @@ export async function sendWarningEmail({ to, name, warningType, reason, date }) 
   ].join("\n");
 
   const logoPath = findLogoPath();
+  const includeCidLogo = !!logoPath;
   const mailOptions = {
     from,
     to: recipient,
@@ -271,6 +278,7 @@ export async function sendWarningEmail({ to, name, warningType, reason, date }) 
       subject,
       body,
       link: portalUrl,
+      includeCidLogo,
     }),
   };
   if (logoPath) {
