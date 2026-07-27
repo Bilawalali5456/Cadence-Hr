@@ -754,7 +754,7 @@ app.post("/api/send-notification-email", async (req, res) => {
       name: String(name || to).trim(),
       subject: String(subject).trim(),
       body: String(body || ""),
-      link: link || process.env.APP_URL || "https://hr.adforcesolutions.com",
+      link: link || process.env.APP_URL || "https://hrms.adforcesolutions.com",
     });
     res.json({ ok: true });
   } catch (e) {

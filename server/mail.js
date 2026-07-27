@@ -1,4 +1,15 @@
 import nodemailer from "nodemailer";
+import { existsSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_PORTAL_URL = "https://hrms.adforcesolutions.com";
+const LOGO_CANDIDATES = [
+  path.join(__dirname, "..", "dist", "adforce-logo.png"),
+  path.join(__dirname, "..", "public", "adforce-logo.png"),
+  path.join(__dirname, "assets", "adforce-logo.png"),
+];
 
 let transporter = null;
 
@@ -29,35 +40,59 @@ function roleLabel(role) {
   return "Employee";
 }
 
-function buildCredentialsHtml({ name, email, password, role, isReset, loginUrl }) {
-  const greeting = isReset ? "Your password has been reset" : "Welcome to Adforce HR";
+function portalLoginUrl() {
+  return String(process.env.APP_URL || DEFAULT_PORTAL_URL).replace(/\/+$/, "");
+}
+
+function findLogoPath() {
+  return LOGO_CANDIDATES.find((p) => existsSync(p)) || null;
+}
+
+function logoHeaderHtml(includeCidLogo) {
+  if (includeCidLogo) {
+    return `
+      <div style="background:#0f172a;padding:20px 24px;text-align:center;">
+        <img src="cid:adforce-logo" alt="Adforce Solutions" width="180" style="display:inline-block;max-width:180px;height:auto;border:0;" />
+      </div>`;
+  }
+  return `
+    <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-size:18px;font-weight:700;text-align:center;">
+      Adforce Solutions
+    </div>`;
+}
+
+function buildCredentialsHtml({ name, email, password, role, isReset, loginUrl, includeCidLogo }) {
+  const greeting = isReset
+    ? "Your password has been reset"
+    : "Welcome to Adforce Solutions";
   const intro = isReset
-    ? `<p style="margin:0 0 16px;color:#334155;">Hi ${name}, your Adforce HR login password has been reset by an administrator.</p>`
-    : `<p style="margin:0 0 16px;color:#334155;">Hi ${name}, your ${roleLabel(role)} account for Adforce HR has been created.</p>`;
+    ? `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${name}, your Adforce Solutions HRMS login password has been reset by an administrator.</p>`
+    : `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${name}, welcome to <b>Adforce Solutions</b>. Your ${roleLabel(role)} account for the HRMS portal has been created.</p>`;
 
   return `
 <!DOCTYPE html>
 <html>
-<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;">
   <div style="max-width:560px;margin:32px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
-    <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-size:18px;font-weight:700;">
-      Adforce HR
-    </div>
+    ${logoHeaderHtml(includeCidLogo)}
     <div style="padding:24px;">
       <h1 style="margin:0 0 12px;font-size:20px;color:#0f172a;">${greeting}</h1>
       ${intro}
+      <p style="margin:0 0 8px;color:#475569;font-size:13px;">Portal login URL</p>
+      <p style="margin:0 0 16px;">
+        <a href="${loginUrl}" style="color:#0f172a;font-size:15px;font-weight:700;word-break:break-all;">${loginUrl}</a>
+      </p>
       <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin:0 0 16px;">
-        <p style="margin:0 0 8px;color:#475569;font-size:13px;">Login email</p>
+        <p style="margin:0 0 8px;color:#475569;font-size:13px;">Email (username)</p>
         <p style="margin:0 0 16px;color:#0f172a;font-size:15px;font-weight:700;">${email}</p>
         <p style="margin:0 0 8px;color:#475569;font-size:13px;">${isReset ? "New temporary password" : "Temporary password"}</p>
         <p style="margin:0;color:#0f172a;font-size:15px;font-weight:700;font-family:Consolas,monospace;">${password}</p>
       </div>
-      <p style="margin:0 0 16px;color:#334155;">Please sign in and change your password on first login.</p>
-      ${
-        loginUrl
-          ? `<p style="margin:0 0 16px;"><a href="${loginUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Open Adforce HR</a></p>`
-          : ""
-      }
+      <p style="margin:0 0 16px;color:#334155;line-height:1.5;">Please change your password after your first login.</p>
+      <p style="margin:0 0 20px;color:#334155;line-height:1.5;">Click the link above, enter your email and password to access the HR portal where you can view your attendance, request leaves, and more.</p>
+      <p style="margin:0 0 16px;">
+        <a href="${loginUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;">Open HRMS Portal</a>
+      </p>
       <p style="margin:0;color:#64748b;font-size:12px;">If you did not expect this email, contact your HR administrator.</p>
     </div>
   </div>
@@ -78,17 +113,19 @@ export async function sendCredentialsEmail({
     throw new Error(`Invalid recipient email: "${recipient || "(empty)"}"`);
   }
 
-  const loginUrl = process.env.APP_URL || "";
+  const loginUrl = portalLoginUrl();
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
   if (!from || !String(from).includes("@")) {
     throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
   }
 
+  const logoPath = findLogoPath();
+  const includeCidLogo = !!logoPath;
   const subject = isReset
-    ? "Adforce HR — your password has been reset"
-    : `Adforce HR — your ${roleLabel(role)} account is ready`;
+    ? "Adforce Solutions HRMS — your password has been reset"
+    : `Welcome to Adforce Solutions — your ${roleLabel(role)} HRMS account is ready`;
 
-  await getTransporter().sendMail({
+  const mailOptions = {
     from,
     to: recipient,
     subject,
@@ -96,33 +133,53 @@ export async function sendCredentialsEmail({
       `Hi ${name},`,
       "",
       isReset
-        ? "Your Adforce HR login password has been reset."
-        : `Your ${roleLabel(role)} account for Adforce HR has been created.`,
+        ? "Your Adforce Solutions HRMS login password has been reset by an administrator."
+        : `Welcome to Adforce Solutions. Your ${roleLabel(role)} account for the HRMS portal has been created.`,
       "",
-      `Login email: ${email}`,
+      `Portal login URL: ${loginUrl}`,
+      `Email (username): ${email}`,
       `${isReset ? "New temporary password" : "Temporary password"}: ${password}`,
       "",
-      "Please sign in and change your password on first login.",
-      loginUrl ? `Sign in: ${loginUrl}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    html: buildCredentialsHtml({ name, email, password, role, isReset, loginUrl }),
-  });
+      "Please change your password after your first login.",
+      "",
+      "Click the link above, enter your email and password to access the HR portal where you can view your attendance, request leaves, and more.",
+    ].join("\n"),
+    html: buildCredentialsHtml({
+      name,
+      email,
+      password,
+      role,
+      isReset,
+      loginUrl,
+      includeCidLogo,
+    }),
+  };
+
+  if (logoPath) {
+    mailOptions.attachments = [
+      {
+        filename: "adforce-logo.png",
+        path: logoPath,
+        cid: "adforce-logo",
+        contentDisposition: "inline",
+      },
+    ];
+  }
+
+  await getTransporter().sendMail(mailOptions);
 }
 
 function buildNotificationHtml({ name, subject, body, link }) {
-  const portalUrl = link || process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const portalUrl = link || portalLoginUrl();
   const safeBody = String(body || "").replace(/\n/g, "<br/>");
+  const logoPath = findLogoPath();
 
   return `
 <!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
   <div style="max-width:560px;margin:32px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
-    <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-size:18px;font-weight:700;">
-      Adforce HR
-    </div>
+    ${logoHeaderHtml(!!logoPath)}
     <div style="padding:24px;">
       <h1 style="margin:0 0 12px;font-size:20px;color:#0f172a;">${subject}</h1>
       <p style="margin:0 0 16px;color:#334155;">Hi ${name},</p>
@@ -150,10 +207,10 @@ export async function sendNotificationEmail({ to, name, subject, body, link }) {
     throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
   }
 
-  const portalUrl = link || process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const portalUrl = link || portalLoginUrl();
   const safeSubject = String(subject || "Adforce HR notification").trim();
-
-  await getTransporter().sendMail({
+  const logoPath = findLogoPath();
+  const mailOptions = {
     from,
     to: recipient,
     subject: safeSubject,
@@ -165,7 +222,18 @@ export async function sendNotificationEmail({ to, name, subject, body, link }) {
       `View in HR Portal: ${portalUrl}`,
     ].join("\n"),
     html: buildNotificationHtml({ name: name || "there", subject: safeSubject, body, link: portalUrl }),
-  });
+  };
+  if (logoPath) {
+    mailOptions.attachments = [
+      {
+        filename: "adforce-logo.png",
+        path: logoPath,
+        cid: "adforce-logo",
+        contentDisposition: "inline",
+      },
+    ];
+  }
+  await getTransporter().sendMail(mailOptions);
 }
 
 export async function sendWarningEmail({ to, name, warningType, reason, date }) {
@@ -179,7 +247,7 @@ export async function sendWarningEmail({ to, name, warningType, reason, date }) 
     throw new Error("SMTP_FROM / SMTP_USER must be a valid email address");
   }
 
-  const portalUrl = process.env.APP_URL || "https://hr.adforcesolutions.com";
+  const portalUrl = portalLoginUrl();
   const typeLabel = String(warningType || "Warning").trim();
   const subject = `Adforce Solutions — ${typeLabel} Issued`;
   const body = [
@@ -192,7 +260,8 @@ export async function sendWarningEmail({ to, name, warningType, reason, date }) 
     "Please acknowledge this warning in the HR portal under My Profile → Warnings.",
   ].join("\n");
 
-  await getTransporter().sendMail({
+  const logoPath = findLogoPath();
+  const mailOptions = {
     from,
     to: recipient,
     subject,
@@ -203,5 +272,16 @@ export async function sendWarningEmail({ to, name, warningType, reason, date }) 
       body,
       link: portalUrl,
     }),
-  });
+  };
+  if (logoPath) {
+    mailOptions.attachments = [
+      {
+        filename: "adforce-logo.png",
+        path: logoPath,
+        cid: "adforce-logo",
+        contentDisposition: "inline",
+      },
+    ];
+  }
+  await getTransporter().sendMail(mailOptions);
 }
