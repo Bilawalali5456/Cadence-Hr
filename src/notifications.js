@@ -1,5 +1,5 @@
 import { apiSendNotificationEmail } from "./api.js";
-import { formatDate, isStaffRole } from "./utils.js";
+import { formatDate, isStaffRole, leaveTypeLabel } from "./utils.js";
 
 let _seq = 0;
 
@@ -79,7 +79,7 @@ export function buildLeaveStatusNotification(req, newStatus) {
   return createNotification({
     userId: req.userId,
     title: `Leave ${label}`,
-    body: `Your ${req.type} leave request for ${dates} has been ${newStatus}.`,
+    body: `Your ${leaveTypeLabel(req.type)} request for ${dates} has been ${newStatus}.`,
     type: "leave",
     link: "leave",
   });

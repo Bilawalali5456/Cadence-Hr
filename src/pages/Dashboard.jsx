@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canApproveLeaveRequest, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
@@ -18,7 +18,7 @@ export function HrAdminOversightPanel({
   if (pendingShort.length === 0 && pendingLeave.length === 0) return null;
 
   function adjustBalance(userId, type, delta) {
-    if (type === "Unpaid") return;
+    if (type === "Unpaid" || type === "WFH") return;
     setUsers(us => us.map(u => {
       if (u.id !== userId) return u;
       return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
@@ -115,13 +115,15 @@ export function HrAdminOversightPanel({
                     <div className="flex-1 min-w-44">
                       <div className="text-sm font-medium text-slate-800">{r.empName}</div>
                       <div className="text-xs text-slate-500">
-                        {r.type === "Unpaid" ? "Unpaid Leave" : "Annual Leave"} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}
+                        {leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}
                       </div>
                       {r.note && <div className="text-xs text-slate-400 italic">"{r.note}"</div>}
                     </div>
-                    {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
-                      ? <Pill tone="red">Unpaid</Pill>
-                      : <Pill tone="green">Paid</Pill>}
+                    {r.type === "WFH"
+                      ? <Pill tone="blue">WFH</Pill>
+                      : (r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                        ? <Pill tone="red">Unpaid</Pill>
+                        : <Pill tone="green">Paid</Pill>}
                     <div className="flex gap-2">
                       <button onClick={() => changeLeaveStatus(r.id, "approved")}
                         className="px-3 py-1.5 text-xs font-medium text-white rounded-lg" style={{ background: "#16a34a" }}>
@@ -160,7 +162,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
           <div className="text-sm opacity-70 mt-0.5">{me.title || me.role} · Shift {formatShiftRange(me)}</div>
         </div>
-        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} compact />
+        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
         <div className="grid grid-cols-1 gap-4 max-w-xs">
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
@@ -261,7 +263,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   return (
     <div className="space-y-5">
       {isHrAdminRole(role) && (
-        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} compact />
+        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
       )}
       <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
         <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>

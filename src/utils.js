@@ -377,15 +377,35 @@ export function finalizeRecord(record, user, holidays = []) {
   };
 }
 
-export function canManualCheckIn(user) {
-  return user?.workMode === "wfh" || user?.manualCheckInEnabled === true;
+export function canManualCheckIn(user, dateKey, leaveRequests = [], holidays = []) {
+  if (!user?.id || !dateKey) return false;
+  return isApprovedWfhDay(user.id, dateKey, leaveRequests, holidays, user);
 }
 
-export function canCheckIn(now, user, record, holidays = []) {
-  if (!canManualCheckIn(user)) {
-    return { ok: false, msg: "Manual check-in is not enabled for your account. Use the office biometric device." };
+export function isApprovedWfhDay(userId, dateKey, leaveRequests = [], holidays = [], user = null) {
+  for (const r of (leaveRequests || []).filter(x =>
+    x && x.userId === userId && x.status === "approved" && x.type === "WFH" && x.from && x.to
+  )) {
+    for (const d of enumerateWorkingDays(r.from, r.to, holidays)) {
+      if (d !== dateKey) continue;
+      if (user && !scheduledWorkDatesForUser(user, dateKey, dateKey, holidays).includes(dateKey)) continue;
+      return true;
+    }
   }
-  const bounds = getShiftBounds(user, todayKey(now));
+  return false;
+}
+
+export function isWfhAttendance(record, userId, dateKey, leaveRequests = [], holidays = [], user = null) {
+  if (!record?.checkIn) return false;
+  return record.source === "wfh" || isApprovedWfhDay(userId, dateKey, leaveRequests, holidays, user);
+}
+
+export function canCheckIn(now, user, record, holidays = [], leaveRequests = []) {
+  const key = todayKey(now);
+  if (!canManualCheckIn(user, key, leaveRequests, holidays)) {
+    return { ok: false, msg: "Manual check-in is only available on approved Work from Home days." };
+  }
+  const bounds = getShiftBounds(user, key);
   if (bounds.off) return { ok: false, msg: "Today is off in your assigned shift." };
   const pub = getPublicHoliday(todayKey(now), holidays);
   if (pub) return { ok: false, msg: `Public Holiday — ${pub.title}` };
@@ -412,11 +432,11 @@ export function canCheckOut(now, user, record) {
   return { ok: true };
 }
 
-export function performCheckIn(attendance, userId, user, now = new Date(), holidays = []) {
+export function performCheckIn(attendance, userId, user, now = new Date(), holidays = [], leaveRequests = []) {
   const list = attendance || [];
   const key = todayKey(now);
   const existing = list.find(r => r && r.userId === userId && r.date === key);
-  const gate = canCheckIn(now, user, existing, holidays);
+  const gate = canCheckIn(now, user, existing, holidays, leaveRequests);
   if (!gate.ok) return { attendance: list, error: gate.msg };
   const record = {
     id: "att-" + Date.now(),
@@ -429,6 +449,7 @@ export function performCheckIn(attendance, userId, user, now = new Date(), holid
     breakStart: null,
     breakEnd: null,
     autoCheckout: false,
+    source: "wfh",
   };
   const next = [...list.filter(r => !(r && r.userId === userId && r.date === key)), finalizeRecord(record, user, holidays)];
   return { attendance: next, error: null };
@@ -669,6 +690,7 @@ export function countWorkingDaysInclusive(fromKey, toKey, holidays = []) {
 
 export function leavePaidDays(req) {
   if (req == null) return 0;
+  if (req.type === "WFH") return 0;
   if (req.paidDays != null) return Number(req.paidDays) || 0;
   if (req.type === "Unpaid" || req.payTag === "Unpaid") return 0;
   return Number(req.days) || 0;
@@ -676,13 +698,23 @@ export function leavePaidDays(req) {
 
 export function leaveUnpaidDays(req) {
   if (req == null) return 0;
+  if (req.type === "WFH") return 0;
   if (req.unpaidDays != null) return Number(req.unpaidDays) || 0;
   if (req.type === "Unpaid") return Number(req.days) || 0;
   if (req.payTag === "Unpaid") return Number(req.days) || 0;
   return 0;
 }
 
+export function leaveTypeLabel(type) {
+  if (type === "Unpaid") return "Unpaid Leave";
+  if (type === "WFH") return "Work from Home";
+  return "Annual Leave";
+}
+
 export function computeLeavePaySplit(type, days, availableBalance) {
+  if (type === "WFH") {
+    return { paidDays: 0, unpaidDays: 0, payTag: "WFH" };
+  }
   if (type === "Unpaid") {
     return { paidDays: 0, unpaidDays: days, payTag: "Unpaid" };
   }
@@ -919,7 +951,9 @@ function approvedLeaveDatesForUser(leaveRequests, userId, fromKey, toKey, holida
   const rangeDays = new Set(eachDateInRange(fromKey, toKey));
   const scheduled = user ? new Set(scheduledWorkDatesForUser(user, fromKey, toKey, holidays)) : null;
   const days = new Set();
-  for (const r of (leaveRequests || []).filter(x => x && x.userId === userId && x.status === "approved" && x.from && x.to)) {
+  for (const r of (leaveRequests || []).filter(x =>
+    x && x.userId === userId && x.status === "approved" && x.from && x.to && x.type !== "WFH"
+  )) {
     for (const d of enumerateWorkingDays(r.from, r.to, holidays)) {
       if (!rangeDays.has(d)) continue;
       if (scheduled && !scheduled.has(d)) continue;
@@ -1029,7 +1063,9 @@ export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
 /** Count approved paid/unpaid leave working days overlapping a payroll month. */
 export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;
-  for (const r of (leaveRequests || []).filter(x => x && x.userId === userId && x.status === "approved" && x.from && x.to)) {
+  for (const r of (leaveRequests || []).filter(x =>
+    x && x.userId === userId && x.status === "approved" && x.from && x.to && x.type !== "WFH"
+  )) {
     const days = enumerateWorkingDays(r.from, r.to, holidays);
     let paidLeft = leavePaidDays(r);
     let unpaidLeft = leaveUnpaidDays(r);

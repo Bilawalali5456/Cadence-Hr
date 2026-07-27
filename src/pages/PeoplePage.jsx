@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { buildWarningNotification } from "../notifications.js";
 import { IssueWarningModal, warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
@@ -41,7 +41,6 @@ export function PeoplePage({
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10, weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
-    workMode: "office", manualCheckInEnabled: false,
   };
   const [form, setForm] = useState(blank);
 
@@ -61,8 +60,6 @@ export function PeoplePage({
       breakMinutes: s.breakMinutes,
       checkoutGraceMinutes: s.checkoutGraceMinutes,
       weeklySchedule: normalizeWeeklySchedule(u.shift || {}),
-      workMode: u.workMode || "office",
-      manualCheckInEnabled: !!u.manualCheckInEnabled,
     });
     setFerr("");
     setEditOpen(true);
@@ -610,12 +607,14 @@ export function PeoplePage({
                             {(leaveRequests || []).filter(r => r && r.userId === sel.id).map(r => (
                               <div key={r.id} className="p-3 rounded-lg border border-slate-100 text-xs flex items-start gap-2">
                                 <div className="flex-1">
-                                  <div className="font-medium text-slate-800">{r.type} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
+                                  <div className="font-medium text-slate-800">{leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
                                   {r.note && <div className="text-slate-400 italic mt-0.5">"{r.note}"</div>}
                                   <div className="mt-1 flex flex-wrap gap-1">
-                                    {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
-                                      ? <Pill tone="red">Unpaid</Pill>
-                                      : <Pill tone="green">Paid</Pill>}
+                                    {r.type === "WFH"
+                                      ? <Pill tone="blue">WFH</Pill>
+                                      : (r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                                        ? <Pill tone="red">Unpaid</Pill>
+                                        : <Pill tone="green">Paid</Pill>}
                                     {r.status === "pending" && <Pill tone="amber">Pending</Pill>}
                                     {r.status === "approved" && <Pill tone="green">Approved</Pill>}
                                     {r.status === "rejected" && <Pill tone="slate">Rejected</Pill>}

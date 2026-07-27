@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
@@ -115,7 +115,12 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
                           </>}
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, user)}</td>
-                    <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1 flex-wrap">
+                        <Pill tone={ds.tone}>{ds.label}</Pill>
+                        {isWfhAttendance(r, user.id, r.date, leaveRequests, holidays, user) && <Pill tone="blue">WFH</Pill>}
+                      </span>
+                    </td>
                   </tr>
                 );
               })}
@@ -367,7 +372,12 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                           </>}
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u)}</td>
-                    <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1 flex-wrap">
+                        <Pill tone={ds.tone}>{ds.label}</Pill>
+                        {isWfhAttendance(r, u.id, today, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
+                      </span>
+                    </td>
                   </tr>
                 );
               })}
@@ -416,7 +426,12 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         : formatTime(r.checkOut)}
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user)}</td>
-                    <td className="px-4 py-3"><Pill tone={ds.tone}>{ds.label}</Pill></td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1 flex-wrap">
+                        <Pill tone={ds.tone}>{ds.label}</Pill>
+                        {isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user) && <Pill tone="blue">WFH</Pill>}
+                      </span>
+                    </td>
                   </tr>
                 );
               })}

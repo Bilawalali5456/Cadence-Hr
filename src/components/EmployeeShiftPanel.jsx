@@ -19,10 +19,12 @@ import {
   formatTime,
   getUserTodayRecord,
   canManualCheckIn,
+  isApprovedWfhDay,
+  isWfhAttendance,
 } from "../utils.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
 
-export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays = [], compact = false }) {
+export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays = [], leaveRequests = [], compact = false }) {
   const [err, setErr] = useState("");
   const today = getUserTodayRecord(attendance, user.id);
   const shift = getUserShift(user);
@@ -30,7 +32,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const key = todayKey();
   const publicHoliday = getPublicHoliday(key, holidays);
   const dayOff = bounds.off || publicHoliday;
-  const showManualActions = canManualCheckIn(user);
+  const showManualActions = canManualCheckIn(user, key, leaveRequests, holidays);
   const checkedIn = today?.checkIn && !today?.checkOut;
   const onBreak = today?.breakStart && !today?.breakEnd;
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
@@ -46,7 +48,12 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   return (
     <div className={compact ? "space-y-4" : "space-y-5"}>
       <Card className={compact ? "p-4" : "p-6"}>
-        <STitle right={<Pill tone={daySt.tone}>{daySt.label}</Pill>}>
+        <STitle right={
+          <span className="inline-flex items-center gap-1">
+            {(isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user)) && <Pill tone="blue">WFH</Pill>}
+            <Pill tone={daySt.tone}>{daySt.label}</Pill>
+          </span>
+        }>
           {compact ? "Today's attendance" : "Shift attendance"}
         </STitle>
         {bounds.off ? (
@@ -91,7 +98,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         {!dayOff && showManualActions && !today?.checkOut && (
           <div className="flex flex-wrap gap-2 justify-center mb-4">
             {!checkedIn && (
-              <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays))}>
+              <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays, leaveRequests))}>
                 <LogIn size={14} />Check in
               </Btn>
             )}
@@ -114,7 +121,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         )}
         {!dayOff && !showManualActions && !today?.checkIn && (
-          <p className="text-xs text-center text-slate-400 mb-4">Use the office biometric device to check in.</p>
+          <p className="text-xs text-center text-slate-400 mb-4">Use the office biometric device to check in, or submit a Work from Home request for approved WFH days.</p>
         )}
 
         {!dayOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (

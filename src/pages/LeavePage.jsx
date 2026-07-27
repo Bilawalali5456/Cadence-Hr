@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Send, Timer, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canOverrideLeaveDecision, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canOverrideLeaveDecision, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
 
@@ -21,7 +21,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
   const listHasApprovals = visibleReqs.some(r => canApproveLeaveRequest(currentUser, r, users, roles));
 
   function adjustBalance(userId, type, delta) {
-    if (type === "Unpaid" || delta === 0) return;
+    if (type === "Unpaid" || type === "WFH" || delta === 0) return;
     setUsers(us => us.map(u => {
       if (u.id !== userId) return u;
       return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
@@ -108,11 +108,16 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
             options={[
               { value: "Annual", label: "Annual Leave" },
               { value: "Unpaid", label: "Unpaid Leave" },
+              { value: "WFH", label: "Work from Home" },
             ]} />
           <div className="flex items-end">
             <div className="text-xs text-slate-500 pb-2">
-              Remaining balance: <b style={{ color: B.dark }}>{available} days</b>
-              {previewDays > 0 && <> · Requesting <b>{previewDays}</b> working day{previewDays !== 1 ? "s" : ""}</>}
+              {form.type === "WFH" ? (
+                <>Submit a WFH request for admin approval. Manual check-in is enabled on approved WFH days only.</>
+              ) : (
+                <>Remaining balance: <b style={{ color: B.dark }}>{available} days</b>
+                {previewDays > 0 && <> · Requesting <b>{previewDays}</b> working day{previewDays !== 1 ? "s" : ""}</>}</>
+              )}
             </div>
           </div>
           <TextInput label="From date" type="date" value={form.from} onChange={v => setForm({ ...form, from: v })} required />
@@ -123,7 +128,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
           </div>
         </div>
-        {previewSplit?.unpaidDays > 0 && (
+        {form.type !== "WFH" && previewSplit?.unpaidDays > 0 && (
           <div className="mt-3 p-3 rounded-lg text-xs bg-amber-50 border border-amber-200 text-amber-800">
             You have insufficient leave balance. {previewSplit.unpaidDays} day{previewSplit.unpaidDays !== 1 ? "s" : ""} will be deducted from your salary as unpaid leave.
           </div>
@@ -151,12 +156,14 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
                   <Avatar name={r.empName} />
                   <div className="flex-1 min-w-40">
                     <div className="text-sm font-medium text-slate-800">{r.empName}</div>
-                    <div className="text-xs text-slate-500">{r.type === "Unpaid" ? "Unpaid Leave" : "Annual Leave"} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
+                    <div className="text-xs text-slate-500">{leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
                     {r.note && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.note}"</div>}
                   </div>
-                  {(r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
-                    ? <Pill tone="red">Unpaid</Pill>
-                    : <Pill tone="green">Paid</Pill>}
+                  {r.type === "WFH"
+                    ? <Pill tone="blue">WFH</Pill>
+                    : (r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
+                      ? <Pill tone="red">Unpaid</Pill>
+                      : <Pill tone="green">Paid</Pill>}
                   {r.status === "pending"  && <Pill tone="amber"><Timer size={12} />Pending</Pill>}
                   {r.status === "approved" && <Pill tone="green"><Check size={12} />Approved</Pill>}
                   {r.status === "rejected" && <Pill tone="slate"><X size={12} />Rejected</Pill>}
