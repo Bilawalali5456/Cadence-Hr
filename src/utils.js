@@ -436,6 +436,15 @@ export function breakMinutesUsed(record, now = new Date()) {
   return Math.round(calcTotalBreakMs(record, now) / 60000);
 }
 
+export function formatBreakTimer(breakStartIso, now = new Date()) {
+  if (!breakStartIso) return "0:00";
+  const ms = Math.max(0, now - new Date(breakStartIso));
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export function formatBreakUsage(record, allowedMinutes, now = new Date()) {
   const used = breakMinutesUsed(record, now);
   return `${used}m of ${allowedMinutes}m`;

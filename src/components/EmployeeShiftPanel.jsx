@@ -7,6 +7,7 @@ import {
   formatShiftRange,
   formatDurationMs,
   formatBreakUsage,
+  formatBreakTimer,
   isOnBreak,
   isBreakExceeded,
   resolveDayStatus,
@@ -40,13 +41,14 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
-  const showBreakActions = checkedIn && !dayOff;
+  const showBreakButton = checkedIn && !dayOff;
 
   useEffect(() => {
     if (!checkedIn) return undefined;
-    const id = setInterval(() => setNow(new Date()), 30000);
+    const intervalMs = onBreak ? 1000 : 30000;
+    const id = setInterval(() => setNow(new Date()), intervalMs);
     return () => clearInterval(id);
-  }, [checkedIn, today?.breakStart, today?.checkIn]);
+  }, [checkedIn, onBreak, today?.breakStart]);
 
   function run(action) {
     setErr("");
@@ -88,13 +90,36 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
             <div className="text-xs text-emerald-600">Check in</div>
             <div className="font-semibold text-emerald-800 tabular-nums mt-1">{formatTime(today?.checkIn)}</div>
           </div>
-          <div className={`p-3 rounded-lg border text-center ${breakExceeded ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
-            <div className={`text-xs ${breakExceeded ? "text-red-600" : "text-amber-600"}`}>Break</div>
+          <div className={`p-3 rounded-lg border text-center flex flex-col ${breakExceeded ? "bg-red-50 border-red-100" : onBreak ? "bg-amber-100 border-amber-200" : "bg-amber-50 border-amber-100"}`}>
+            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+              <span className={`text-xs ${breakExceeded ? "text-red-600" : "text-amber-600"}`}>Break</span>
+              {onBreak && <Pill tone="amber">On Break</Pill>}
+            </div>
             <div className={`font-semibold tabular-nums mt-1 ${breakExceeded ? "text-red-800" : "text-amber-800"}`}>
               {today?.checkIn ? formatBreakUsage(today, shift.breakMinutes, now) : "—"}
             </div>
-            {onBreak && <div className="text-[10px] text-amber-600 mt-0.5">In progress</div>}
-            {breakExceeded && !onBreak && today?.checkIn && <div className="text-[10px] text-red-600 mt-0.5">Over allowance</div>}
+            {onBreak && (
+              <div className="text-xl font-bold tabular-nums text-amber-700 mt-1 tracking-tight">
+                {formatBreakTimer(today.breakStart, now)}
+              </div>
+            )}
+            {breakExceeded && !onBreak && today?.checkIn && (
+              <div className="text-[10px] text-red-600 mt-0.5">Over allowance</div>
+            )}
+            {showBreakButton && (
+              <Btn
+                size="sm"
+                variant={onBreak ? "accent" : "primary"}
+                className="w-full mt-2 justify-center"
+                onClick={() => run(() =>
+                  onBreak
+                    ? performBreakEnd(attendance, user.id, user, new Date(), holidays)
+                    : performBreakStart(attendance, user.id, user)
+                )}
+              >
+                <Coffee size={13} />{onBreak ? "End Break" : "Start Break"}
+              </Btn>
+            )}
           </div>
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
             <div className="text-xs text-blue-600">Check out</div>
@@ -126,25 +151,8 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         )}
 
-        {!dayOff && showBreakActions && (
-          <div className="flex flex-wrap gap-2 justify-center mb-4">
-            {onBreak ? (
-              <Btn onClick={() => run(() => performBreakEnd(attendance, user.id, user, new Date(), holidays))} variant="ghost">
-                <Coffee size={14} />End break
-              </Btn>
-            ) : (
-              <Btn onClick={() => run(() => performBreakStart(attendance, user.id, user))} variant="ghost">
-                <Coffee size={14} />Start break
-              </Btn>
-            )}
-          </div>
-        )}
-
         {!dayOff && !showManualCheckIn && !today?.checkIn && (
           <p className="text-xs text-center text-slate-400 mb-4">Use the office biometric device to check in, or submit a Work from Home request for approved WFH days.</p>
-        )}
-        {!dayOff && checkedIn && !showManualCheckIn && (
-          <p className="text-xs text-center text-slate-400 mb-4">Checked in via biometric — use the break buttons above to log breaks.</p>
         )}
 
         {!dayOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (
@@ -159,10 +167,10 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         )}
 
-        {!dayOff && (today?.breaks || []).length > 0 && (
+        {!dayOff && ((today?.breaks || []).length > 0 || onBreak) && (
           <div className="text-xs text-slate-500 space-y-1 mb-2">
-            <b>Breaks today ({(today.breaks || []).length + (onBreak ? 1 : 0)}):</b>
-            {(today.breaks || []).map((b, i) => (
+            <b>Breaks today ({(today?.breaks || []).length + (onBreak ? 1 : 0)}):</b>
+            {(today?.breaks || []).map((b, i) => (
               <div key={i} className="flex justify-between p-2 rounded bg-white border border-slate-100 tabular-nums">
                 <span>{formatTime(b.start)} – {formatTime(b.end)}</span>
                 <span className="text-slate-400">{formatDurationMs(new Date(b.end) - new Date(b.start))}</span>
@@ -171,7 +179,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
             {onBreak && (
               <div className="flex justify-between p-2 rounded bg-amber-50 border border-amber-100 tabular-nums">
                 <span>{formatTime(today.breakStart)} – now</span>
-                <span className="text-amber-600">In progress</span>
+                <span className="text-amber-600 font-medium">{formatBreakTimer(today.breakStart, now)}</span>
               </div>
             )}
           </div>
