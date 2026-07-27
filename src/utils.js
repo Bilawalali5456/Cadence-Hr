@@ -89,6 +89,55 @@ export function canOverrideLeaveDecision(actor) {
   return !!actor && isExecutiveRole(actor.role);
 }
 
+/** Authority tier for approval hierarchy: Executive (2) > Admin/Manager (1). */
+export function approvalAuthorityTier(role) {
+  if (isExecutiveRole(role)) return 2;
+  if (isHrAdminRole(role) || role === "Manager") return 1;
+  return 0;
+}
+
+export function reviewerAuthorityTier(req) {
+  if (!req || req.status === "pending") return 0;
+  if (req.reviewedByRole) return approvalAuthorityTier(req.reviewedByRole);
+  return 1;
+}
+
+export function buildApprovalDecision(approver, newStatus) {
+  return {
+    status: newStatus,
+    reviewedBy: approver.name,
+    reviewedOn: new Date().toLocaleString(),
+    reviewedByRole: approver.role,
+  };
+}
+
+export function approvalStatusLabel(req) {
+  if (!req || req.status === "pending") return null;
+  const byExecutive = reviewerAuthorityTier(req) >= 2;
+  const actor = byExecutive ? "Executive" : "Admin";
+  if (req.status === "approved") return `Approved by ${actor}`;
+  if (req.status === "rejected") return `Rejected by ${actor}`;
+  return null;
+}
+
+/** Leave/WFH: pending — Admin or Executive; decided — Executive may override Admin, Admin cannot override Executive. */
+export function canChangeLeaveRequestStatus(approver, req, users, roles) {
+  if (!req || !approver || req.userId === approver.id) return false;
+  if (req.status === "pending") return canApproveLeaveRequest(approver, req, users, roles);
+  if (approvalAuthorityTier(approver.role) < 1) return false;
+  if (isExecutiveRole(approver.role)) return true;
+  return reviewerAuthorityTier(req) < 2;
+}
+
+/** Short leave — same hierarchy as leave/WFH approvals. */
+export function canChangeShortLeaveRequestStatus(approver, req, users, roles) {
+  if (!req || !approver || req.userId === approver.id) return false;
+  if (req.status === "pending") return canApproveShortLeaveRequest(approver, req, users, roles);
+  if (approvalAuthorityTier(approver.role) < 1) return false;
+  if (isExecutiveRole(approver.role)) return true;
+  return reviewerAuthorityTier(req) < 2;
+}
+
 export function canManageHrAdmin(actor, target, roles) {
   if (!actor || !target || !isHrAdminRole(target.role)) return false;
   if (actor.id === target.id) return false;
@@ -237,7 +286,7 @@ export function getShiftSchedule(user, dateKey = todayKey()) {
     day,
     label: SHIFT_DAY_LABELS[day],
     weeklySchedule,
-    off: !!daySchedule.off,
+    off: isWeekendDate(dateKey) || !!daySchedule.off,
     shiftStart: daySchedule.shiftStart || DEFAULT_SHIFT.shiftStart,
     shiftEnd: daySchedule.shiftEnd || DEFAULT_SHIFT.shiftEnd,
   };
@@ -928,12 +977,15 @@ export function eachDateInRange(fromKey, toKey) {
 }
 
 export function isShiftOffDay(user, dateKey) {
+  if (isWeekendDate(dateKey)) return true;
   return !!getShiftBounds(user, dateKey).off;
 }
 
 export function scheduledWorkDatesForUser(user, fromKey, toKey, holidays = []) {
   return eachDateInRange(fromKey, toKey).filter(dateKey =>
-    !getPublicHoliday(dateKey, holidays) && !isShiftOffDay(user, dateKey)
+    !isWeekendDate(dateKey) &&
+    !getPublicHoliday(dateKey, holidays) &&
+    !isShiftOffDay(user, dateKey)
   );
 }
 

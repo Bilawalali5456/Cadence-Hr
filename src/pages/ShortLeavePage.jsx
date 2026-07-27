@@ -1,23 +1,20 @@
 import React, { useState } from "react";
-import { Check, X, Send, Timer, Trash2 } from "lucide-react";
+import { Check, X, Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canApproveShortLeaveRequest, canOverrideLeaveDecision, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate } from "../utils.js";
+import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
+import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 
 export function ShortLeavePage({ currentUser, requests = [], setRequests, users, attendance, setAttendance, roles }) {
   const [form, setForm] = useState({ date: todayKey(), from: "", to: "", reason: "" });
   const [msg, setMsg] = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);
   const visibleReqs = visibleShortLeaveRequests(requests, currentUser, users, roles);
-  const listHasApprovals = visibleReqs.some(r => canApproveShortLeaveRequest(currentUser, r, users, roles));
+  const listHasApprovals = visibleReqs.some(r => canChangeShortLeaveRequestStatus(currentUser, r, users, roles));
 
   function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
-    if (!req) return;
-    const allowed = req.status === "pending"
-      ? canApproveShortLeaveRequest(currentUser, req, users, roles)
-      : canOverrideLeaveDecision(currentUser);
-    if (!allowed) return;
+    if (!req || !canChangeShortLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
     if (newStatus === "approved" && prev !== "approved") {
@@ -26,12 +23,7 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
     if (prev === "approved" && newStatus !== "approved") {
       setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
     }
-    setRequests(rs => rs.map(r => r.id === id ? {
-      ...r,
-      status: newStatus,
-      reviewedBy: currentUser.name,
-      reviewedOn: new Date().toLocaleString(),
-    } : r));
+    setRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
   function deleteRequest(id) {
@@ -112,35 +104,15 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
                     {formatDate(r.date)} · {r.fromTime} – {r.toTime} · {r.minutes} min
                   </div>
                   {r.reason && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.reason}"</div>}
-                  {r.reviewedBy && (
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Reviewed by {r.reviewedBy} · {r.reviewedOn}
-                    </div>
-                  )}
+                  <ApprovalReviewMeta req={r} />
                 </div>
-                {r.status === "pending"  && <Pill tone="amber"><Timer size={12} />Pending</Pill>}
-                {r.status === "approved" && <Pill tone="green"><Check size={12} />Approved</Pill>}
-                {r.status === "rejected" && <Pill tone="red"><X size={12} />Rejected</Pill>}
-                {canApproveShortLeaveRequest(currentUser, r, users, roles) && r.status === "pending" && (
-                  <div className="flex gap-2">
-                    <button onClick={() => changeStatus(r.id, "approved")}
-                      className="px-3 py-1.5 text-xs font-medium text-white rounded-lg" style={{ background: "#16a34a" }}>
-                      Approve
-                    </button>
-                    <button onClick={() => changeStatus(r.id, "rejected")}
-                      className="px-3 py-1.5 text-xs font-medium border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50">
-                      Reject
-                    </button>
-                  </div>
-                )}
-                {canOverrideLeaveDecision(currentUser) && r.status !== "pending" && (
-                  <button
-                    onClick={() => changeStatus(r.id, r.status === "approved" ? "rejected" : "approved")}
-                    className="px-3 py-1.5 text-xs font-medium border border-amber-300 text-amber-800 bg-amber-50 rounded-lg hover:bg-amber-100"
-                    title="Executive override — change HR decision">
-                    Override → {r.status === "approved" ? "Rejected" : "Approved"}
-                  </button>
-                )}
+                <ApprovalStatusBadge req={r} />
+                <ApprovalActionButtons
+                  req={r}
+                  canChange={canChangeShortLeaveRequestStatus(currentUser, r, users, roles)}
+                  onApprove={() => changeStatus(r.id, "approved")}
+                  onReject={() => changeStatus(r.id, "rejected")}
+                />
                 {canDeleteShortLeaveRecord(currentUser, r, users, roles) && (
                   <button onClick={() => deleteRequest(r.id)}
                     className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"

@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Check, X, Send, Timer, Trash2 } from "lucide-react";
+import { Check, X, Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canApproveLeaveRequest, canOverrideLeaveDecision, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
+import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
 
 export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications }) {
@@ -18,7 +19,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     ? computeLeavePaySplit(form.type, previewDays, available)
     : null;
   const visibleReqs = visibleLeaveRequests(requests, currentUser, users, roles);
-  const listHasApprovals = visibleReqs.some(r => canApproveLeaveRequest(currentUser, r, users, roles));
+  const listHasApprovals = visibleReqs.some(r => canChangeLeaveRequestStatus(currentUser, r, users, roles));
 
   function adjustBalance(userId, type, delta) {
     if (type === "Unpaid" || type === "WFH" || delta === 0) return;
@@ -63,11 +64,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
 
   function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
-    if (!req) return;
-    const allowed = req.status === "pending"
-      ? canApproveLeaveRequest(currentUser, req, users, roles)
-      : canOverrideLeaveDecision(currentUser);
-    if (!allowed) return;
+    if (!req || !canChangeLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
     const paid = leavePaidDays(req);
@@ -75,9 +72,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     if (prev === "approved" && newStatus !== "approved")  adjustBalance(req.userId, req.type, +paid);
     const note = buildLeaveStatusNotification(req, newStatus);
     if (note && setNotifications) setNotifications(prev => [...prev, note]);
-    setRequests(p => p.map(r => r.id === id ? {
-      ...r, status: newStatus, reviewedBy: currentUser.name, reviewedOn: new Date().toLocaleString(),
-    } : r));
+    setRequests(p => p.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
   function deleteRequest(id) {
@@ -158,35 +153,20 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
                     <div className="text-sm font-medium text-slate-800">{r.empName}</div>
                     <div className="text-xs text-slate-500">{leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
                     {r.note && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.note}"</div>}
+                    <ApprovalReviewMeta req={r} />
                   </div>
                   {r.type === "WFH"
                     ? <Pill tone="blue">WFH</Pill>
                     : (r.payTag === "Unpaid" || leaveUnpaidDays(r) > 0)
                       ? <Pill tone="red">Unpaid</Pill>
                       : <Pill tone="green">Paid</Pill>}
-                  {r.status === "pending"  && <Pill tone="amber"><Timer size={12} />Pending</Pill>}
-                  {r.status === "approved" && <Pill tone="green"><Check size={12} />Approved</Pill>}
-                  {r.status === "rejected" && <Pill tone="slate"><X size={12} />Rejected</Pill>}
-                  {canApproveLeaveRequest(currentUser, r, users, roles) && r.status === "pending" && (
-                    <div className="flex gap-2">
-                      <button onClick={() => changeStatus(r.id, "approved")}
-                        className="px-3 py-1.5 text-xs font-medium text-white rounded-lg" style={{ background: "#16a34a" }}>
-                        Approve
-                      </button>
-                      <button onClick={() => changeStatus(r.id, "rejected")}
-                        className="px-3 py-1.5 text-xs font-medium border border-slate-300 text-slate-600 rounded-lg">
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                  {canOverrideLeaveDecision(currentUser) && r.status !== "pending" && (
-                    <button
-                      onClick={() => changeStatus(r.id, r.status === "approved" ? "rejected" : "approved")}
-                      className="px-3 py-1.5 text-xs font-medium border border-amber-300 text-amber-800 bg-amber-50 rounded-lg hover:bg-amber-100"
-                      title="Executive override — change HR decision">
-                      Override → {r.status === "approved" ? "Rejected" : "Approved"}
-                    </button>
-                  )}
+                  <ApprovalStatusBadge req={r} />
+                  <ApprovalActionButtons
+                    req={r}
+                    canChange={canChangeLeaveRequestStatus(currentUser, r, users, roles)}
+                    onApprove={() => changeStatus(r.id, "approved")}
+                    onReject={() => changeStatus(r.id, "rejected")}
+                  />
                   {canDeleteLeaveRecord(currentUser, r, users, roles) && (
                     <button
                       onClick={() => deleteRequest(r.id)}

@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
+import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
@@ -149,13 +150,13 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const visibleIds = attendanceVisibleUserIds(users || [], currentUser.role);
   const today = todayKey();
   const pendingShort = (shortLeaveRequests || []).filter(r =>
-    r && r.status === "pending" && canApproveShortLeaveRequest(currentUser, r, users, roles)
+    r && canChangeShortLeaveRequestStatus(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
   );
 
   function changeShortStatus(id, newStatus) {
     const req = shortLeaveRequests.find(r => r.id === id);
-    if (!req || !canApproveShortLeaveRequest(currentUser, req, users, roles)) return;
+    if (!req || !canChangeShortLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
     if (newStatus === "approved" && prev !== "approved") {
@@ -164,12 +165,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     if (prev === "approved" && newStatus !== "approved") {
       setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
     }
-    setShortLeaveRequests(rs => rs.map(r => r.id === id ? {
-      ...r,
-      status: newStatus,
-      reviewedBy: currentUser.name,
-      reviewedOn: new Date().toLocaleString(),
-    } : r));
+    setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
   function deleteShort(id) {
@@ -242,22 +238,20 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     {formatDate(r.date)} · {r.fromTime} – {r.toTime} · {r.minutes} min
                   </div>
                   {r.reason && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.reason}"</div>}
+                  <ApprovalReviewMeta req={r} />
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => changeShortStatus(r.id, "approved")}
-                    className="px-3 py-1.5 text-xs font-medium text-white rounded-lg" style={{ background: "#16a34a" }}>
-                    Approve
-                  </button>
-                  <button onClick={() => changeShortStatus(r.id, "rejected")}
-                    className="px-3 py-1.5 text-xs font-medium border border-slate-300 text-slate-600 rounded-lg hover:bg-white">
-                    Reject
-                  </button>
-                  <button onClick={() => deleteShort(r.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
-                    title="Delete record">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                <ApprovalStatusBadge req={r} />
+                <ApprovalActionButtons
+                  req={r}
+                  canChange={canChangeShortLeaveRequestStatus(currentUser, r, users, roles)}
+                  onApprove={() => changeShortStatus(r.id, "approved")}
+                  onReject={() => changeShortStatus(r.id, "rejected")}
+                />
+                <button onClick={() => deleteShort(r.id)}
+                  className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
+                  title="Delete record">
+                  <Trash2 size={14} />
+                </button>
               </div>
             ))}
           </div>

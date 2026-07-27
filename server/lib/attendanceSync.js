@@ -32,6 +32,12 @@ function shiftDayKey(dateKey) {
   return SHIFT_DAYS[(d.getDay() + 6) % 7];
 }
 
+function isWeekendDate(dateKey) {
+  const d = new Date(`${dateKey}T12:00:00`);
+  const dow = d.getDay();
+  return dow === 0 || dow === 6;
+}
+
 function normalizeWeeklySchedule(shift = {}) {
   const base = shift?.weeklySchedule && typeof shift.weeklySchedule === "object"
     ? shift.weeklySchedule
@@ -57,13 +63,14 @@ export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
   const weeklySchedule = normalizeWeeklySchedule(s);
   const day = shiftDayKey(dateKey);
   const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
+  const isWeekend = day === "saturday" || day === "sunday";
   return {
     shiftStart: daySchedule.shiftStart || "09:00",
     shiftEnd: daySchedule.shiftEnd || "18:00",
     graceMinutes: s.graceMinutes ?? 15,
     breakMinutes: s.breakMinutes ?? 60,
     checkoutGraceMinutes: s.checkoutGraceMinutes ?? 10,
-    off: !!daySchedule.off,
+    off: isWeekend || !!daySchedule.off,
     weeklySchedule,
     day,
   };
