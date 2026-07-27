@@ -46,7 +46,7 @@ export function ExecutivesPage({
   function openDel(u) { setDelTgt(u); setDelOpen(true); }
   function openReset(u) { setResetTgt(u); setResetResult(""); setResetOpen(true); }
 
-  function saveAdd() {
+  async function saveAdd() {
     const email = form.email.trim();
     if (!form.name.trim() || !email) { setFerr("Full name and email are required."); return; }
     if (!form.password || form.password.length < 8) { setFerr("Password must be at least 8 characters."); return; }
@@ -71,23 +71,28 @@ export function ExecutivesPage({
     };
     setEmailSending(true);
     setFerr("");
+    setPageErr("");
     setUsers(p => [...p, newUser]);
-    apiSendCredentials({
-      to: email,
-      name: form.name.trim(),
-      email,
-      password: form.password,
-      role: "Executive",
-    })
-      .then(() => {
-        setAddOpen(false);
-        setPageOk(`Login credentials sent to ${email}.`);
-        setTimeout(() => setPageOk(""), 6000);
-      })
-      .catch(e => {
-        setFerr(`Account was created, but the email could not be sent: ${e.message}`);
-      })
-      .finally(() => setEmailSending(false));
+    try {
+      console.log(`[executives] Sending welcome credentials to ${email}`);
+      await apiSendCredentials({
+        to: email,
+        name: form.name.trim(),
+        email,
+        password: form.password,
+        role: "Executive",
+      });
+      setAddOpen(false);
+      setPageOk(`Login credentials emailed to ${email}. Portal: https://hrms.adforcesolutions.com`);
+      setTimeout(() => setPageOk(""), 8000);
+    } catch (e) {
+      const msg = e?.message || "Unknown email error";
+      console.error(`[executives] Credentials email failed for ${email}:`, msg);
+      setFerr(`Account was created, but the welcome email could not be sent: ${msg}`);
+      setPageErr(`Welcome email failed for ${email}: ${msg}`);
+    } finally {
+      setEmailSending(false);
+    }
   }
 
   function saveEdit() {

@@ -53,7 +53,7 @@ export function PeoplePage({
     (u.name + u.email + u.dept + u.role).toLowerCase().includes(q.toLowerCase())
   ));
 
-  function openAdd()    { setForm(structuredClone(blank)); setFerr(""); setAddOpen(true); }
+  function openAdd()    { setForm(structuredClone(blank)); setFerr(""); setPageErr(""); setAddOpen(true); }
   function openEdit(u) {
     const s = getUserShift(u);
     setEditTgt(u);
@@ -77,14 +77,15 @@ export function PeoplePage({
     setWarnOpen(true);
   }
 
-  function saveAdd() {
+  async function saveAdd() {
     const email = form.email.trim();
     if (!form.name.trim() || !email) { setFerr("Full name and work email are required."); return; }
     if (!isValidCnic(form.cnic)) { setFerr("A valid 13-digit CNIC is required (format: XXXXX-XXXXXXX-X)."); return; }
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.trim().toLowerCase() === email.toLowerCase())) { setFerr("This email already exists."); return; }
-    const tempPw  = genTempPw();
+    const tempPw = genTempPw();
+    const role = form.role || "Employee";
     const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, ...rest } = form;
     const newUser = {
       ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
@@ -94,23 +95,28 @@ export function PeoplePage({
     };
     setEmailSending(true);
     setFerr("");
+    setPageErr("");
     setUsers(p => [...p, newUser]);
-    apiSendCredentials({
-      to: email,
-      name: form.name.trim(),
-      email,
-      password: tempPw,
-      role: rest.role || "Employee",
-    })
-      .then(() => {
-        setAddOpen(false);
-        setPageOk(`Login credentials sent to ${email}. They must change their password on first login.`);
-        setTimeout(() => setPageOk(""), 6000);
-      })
-      .catch(e => {
-        setFerr(`Account was created, but the email could not be sent: ${e.message}`);
-      })
-      .finally(() => setEmailSending(false));
+    try {
+      console.log(`[people] Sending welcome credentials to ${email} (${role})`);
+      await apiSendCredentials({
+        to: email,
+        name: form.name.trim(),
+        email,
+        password: tempPw,
+        role,
+      });
+      setAddOpen(false);
+      setPageOk(`Login credentials emailed to ${email}. Portal: https://hrms.adforcesolutions.com — they must change their password on first login.`);
+      setTimeout(() => setPageOk(""), 8000);
+    } catch (e) {
+      const msg = e?.message || "Unknown email error";
+      console.error(`[people] Credentials email failed for ${email} (${role}):`, msg);
+      setFerr(`Account was created, but the welcome email could not be sent: ${msg}. You can use Reset credentials to resend.`);
+      setPageErr(`Welcome email failed for ${email}: ${msg}`);
+    } finally {
+      setEmailSending(false);
+    }
   }
 
   function saveEdit() {
@@ -372,11 +378,12 @@ export function PeoplePage({
       </Card>
 
       {/* Add */}
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add new employee" wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} />
+      <Modal open={addOpen} onClose={() => !emailSending && setAddOpen(false)} title="Add new employee" wide>
+        <EmployeeForm form={form} setForm={setForm} ferr="" />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
-          A temporary password will be generated and emailed to the work address above. They must change it on first login.
+          A temporary password will be generated and emailed to the work address above (login URL: https://hrms.adforcesolutions.com). They must change it on first login.
         </div>
+        <ErrBox msg={ferr} />
         <div className="flex gap-2 mt-4">
           <Btn onClick={saveAdd} disabled={emailSending}><UserPlus size={14} />{emailSending ? "Sending email…" : "Add employee"}</Btn>
           <Btn variant="ghost" onClick={() => setAddOpen(false)} disabled={emailSending}>Cancel</Btn>

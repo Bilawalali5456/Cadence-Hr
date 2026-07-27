@@ -722,7 +722,9 @@ app.get("/api/health", async (_req, res) => {
 app.post("/api/send-credentials", async (req, res) => {
   try {
     const { to, name, email, password, role, isReset } = req.body || {};
+    console.log(`[api] POST /api/send-credentials role=${role || "Employee"} to=${to || email || "(missing)"}`);
     if (!to || !email || !password) {
+      console.error("[api] send-credentials rejected: missing to, email, or password");
       return res.status(400).json({ error: "to, email, and password are required" });
     }
 
@@ -739,6 +741,7 @@ app.post("/api/send-credentials", async (req, res) => {
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
     console.error("send-credentials error:", msg);
+    if (e?.stack) console.error(e.stack);
     res.status(500).json({ error: msg });
   }
 });

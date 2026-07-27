@@ -100,7 +100,11 @@ export async function apiSendCredentials({ to, name, email, password, role, isRe
     body: JSON.stringify({ to, name, email, password, role, isReset }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Failed to send email");
+  if (!res.ok) {
+    const msg = data.error || `Failed to send email (${res.status})`;
+    console.error(`[api] send-credentials failed role=${role} to=${to}:`, msg);
+    throw new Error(msg);
+  }
   return data;
 }
 

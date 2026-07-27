@@ -61,13 +61,26 @@ function logoHeaderHtml(includeCidLogo) {
     </div>`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function buildCredentialsHtml({ name, email, password, role, isReset, loginUrl, includeCidLogo }) {
+  const safeName = escapeHtml(name);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
+  const safeUrl = escapeHtml(loginUrl);
   const greeting = isReset
     ? "Your password has been reset"
     : "Welcome to Adforce Solutions";
   const intro = isReset
-    ? `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${name}, your Adforce Solutions HRMS login password has been reset by an administrator.</p>`
-    : `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${name}, welcome to <b>Adforce Solutions</b>. Your ${roleLabel(role)} account for the HRMS portal has been created.</p>`;
+    ? `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${safeName}, your Adforce Solutions HRMS login password has been reset by an administrator.</p>`
+    : `<p style="margin:0 0 16px;color:#334155;line-height:1.5;">Hi ${safeName}, welcome to <b>Adforce Solutions</b>. Your ${escapeHtml(roleLabel(role))} account for the HRMS portal has been created.</p>`;
 
   return `
 <!DOCTYPE html>
@@ -80,18 +93,18 @@ function buildCredentialsHtml({ name, email, password, role, isReset, loginUrl, 
       ${intro}
       <p style="margin:0 0 8px;color:#475569;font-size:13px;">Portal login URL</p>
       <p style="margin:0 0 16px;">
-        <a href="${loginUrl}" style="color:#0f172a;font-size:15px;font-weight:700;word-break:break-all;">${loginUrl}</a>
+        <a href="${safeUrl}" style="color:#0f172a;font-size:15px;font-weight:700;word-break:break-all;">${safeUrl}</a>
       </p>
       <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin:0 0 16px;">
         <p style="margin:0 0 8px;color:#475569;font-size:13px;">Email (username)</p>
-        <p style="margin:0 0 16px;color:#0f172a;font-size:15px;font-weight:700;">${email}</p>
+        <p style="margin:0 0 16px;color:#0f172a;font-size:15px;font-weight:700;">${safeEmail}</p>
         <p style="margin:0 0 8px;color:#475569;font-size:13px;">${isReset ? "New temporary password" : "Temporary password"}</p>
-        <p style="margin:0;color:#0f172a;font-size:15px;font-weight:700;font-family:Consolas,monospace;">${password}</p>
+        <p style="margin:0;color:#0f172a;font-size:15px;font-weight:700;font-family:Consolas,monospace;">${safePassword}</p>
       </div>
       <p style="margin:0 0 16px;color:#334155;line-height:1.5;">Please change your password after your first login.</p>
       <p style="margin:0 0 20px;color:#334155;line-height:1.5;">Click the link above, enter your email and password to access the HR portal where you can view your attendance, request leaves, and more.</p>
       <p style="margin:0 0 16px;">
-        <a href="${loginUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;">Open HRMS Portal</a>
+        <a href="${safeUrl}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;">Open HRMS Portal</a>
       </p>
       <p style="margin:0;color:#64748b;font-size:12px;">If you did not expect this email, contact your HR administrator.</p>
     </div>
@@ -124,6 +137,8 @@ export async function sendCredentialsEmail({
   const subject = isReset
     ? "Adforce Solutions HRMS — your password has been reset"
     : `Welcome to Adforce Solutions — your ${roleLabel(role)} HRMS account is ready`;
+
+  console.log(`[mail] Sending credentials email → to=${recipient} role=${role || "Employee"} reset=${!!isReset} loginUrl=${loginUrl}`);
 
   const mailOptions = {
     from,
@@ -166,7 +181,14 @@ export async function sendCredentialsEmail({
     ];
   }
 
-  await getTransporter().sendMail(mailOptions);
+  try {
+    const info = await getTransporter().sendMail(mailOptions);
+    console.log(`[mail] Credentials email sent → to=${recipient} messageId=${info?.messageId || "n/a"}`);
+    return info;
+  } catch (e) {
+    console.error(`[mail] Credentials email FAILED → to=${recipient} role=${role}:`, e?.message || e);
+    throw e;
+  }
 }
 
 function buildNotificationHtml({ name, subject, body, link, includeCidLogo = false }) {

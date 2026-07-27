@@ -1074,7 +1074,8 @@ export function findUserByCredentials(users, email, password) {
 
 export function genId()     { return "u-" + Math.random().toString(36).slice(2, 9); }
 export function genTempPw() {
-  const c = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#!";
+  // Avoid ambiguous chars (0/O, 1/l) and symbols that break poorly configured mail filters
+  const c = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
   return Array.from({ length: 10 }, () => c[Math.floor(Math.random() * c.length)]).join("");
 }
 
