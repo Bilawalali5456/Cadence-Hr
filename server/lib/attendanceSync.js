@@ -18,7 +18,7 @@ const DEFAULT_WEEKLY_SCHEDULE = {
   tuesday:   { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
   wednesday: { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
   thursday:  { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
-  friday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  friday:    { off: false, shiftStart: "14:00", shiftEnd: "18:00" },
   saturday:  { off: true,  shiftStart: "09:00", shiftEnd: "14:00" },
   sunday:    { off: true,  shiftStart: "09:00", shiftEnd: "18:00" },
 };
@@ -58,33 +58,19 @@ function normalizeWeeklySchedule(shift = {}) {
   return weekly;
 }
 
-function shiftTemplateToUserShift(template) {
-  const weeklySchedule = normalizeWeeklySchedule({
-    weeklySchedule: template.weeklySchedule,
-    shiftStart: template.weeklySchedule?.monday?.shiftStart,
-    shiftEnd: template.weeklySchedule?.monday?.shiftEnd,
-    graceMinutes: template.graceMinutes,
-    breakMinutes: template.breakMinutes,
-    checkoutGraceMinutes: template.checkoutGraceMinutes,
-  });
-  const mon = weeklySchedule.monday || DEFAULT_WEEKLY_SCHEDULE.monday;
-  return {
-    shiftStart: mon.shiftStart,
-    shiftEnd: mon.shiftEnd,
-    graceMinutes: template.graceMinutes ?? 15,
-    breakMinutes: template.breakMinutes ?? 60,
-    checkoutGraceMinutes: template.checkoutGraceMinutes ?? 10,
-    weeklySchedule,
-  };
-}
-
-function enrichUserShift(user, shiftsById, defaultShift) {
-  if (user.shift_id && shiftsById.has(user.shift_id)) {
-    return { ...user, shift: shiftTemplateToUserShift(shiftsById.get(user.shift_id)) };
-  }
+function enrichUserShift(user) {
   if (user.shift && typeof user.shift === "object") return user;
-  if (defaultShift) return { ...user, shift: shiftTemplateToUserShift(defaultShift) };
-  return user;
+  return {
+    ...user,
+    shift: {
+      shiftStart: "09:00",
+      shiftEnd: "18:00",
+      graceMinutes: 15,
+      breakMinutes: 60,
+      checkoutGraceMinutes: 10,
+      weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
+    },
+  };
 }
 
 export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
@@ -284,21 +270,8 @@ export async function syncAttendanceFromLogs(pool) {
   );
   if (!pending.length) return { logsProcessed: 0, rowsUpdated: 0 };
 
-  const { rows: users } = await pool.query(`SELECT id, shift, shift_id FROM users WHERE status = 'active'`);
-  const { rows: shiftRows } = await pool.query(`SELECT * FROM shifts`);
-  const shiftsById = new Map(shiftRows.map(r => [r.id, {
-    id: r.id,
-    name: r.name,
-    graceMinutes: r.grace_minutes ?? 15,
-    breakMinutes: r.break_minutes ?? 60,
-    checkoutGraceMinutes: r.checkout_grace_minutes ?? 10,
-    weeklySchedule: r.weekly_schedule || {},
-    isDefault: r.is_default === true,
-  }]));
-  const defaultShift = shiftRows.find(r => r.is_default)?.id
-    ? shiftsById.get(shiftRows.find(r => r.is_default).id)
-    : shiftsById.get(shiftRows[0]?.id);
-  const userById = new Map(users.map(u => [u.id, enrichUserShift(u, shiftsById, defaultShift)]));
+  const { rows: users } = await pool.query(`SELECT id, shift FROM users WHERE status = 'active'`);
+  const userById = new Map(users.map(u => [u.id, enrichUserShift(u)]));
 
   let rowsUpdated = 0;
   let logsProcessed = 0;

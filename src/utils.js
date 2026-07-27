@@ -236,7 +236,7 @@ export const DEFAULT_WEEKLY_SCHEDULE = {
   tuesday:   { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
   wednesday: { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
   thursday:  { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
-  friday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  friday:    { off: false, shiftStart: "14:00", shiftEnd: "18:00" },
   saturday:  { off: true,  shiftStart: "09:00", shiftEnd: "14:00" },
   sunday:    { off: true,  shiftStart: "09:00", shiftEnd: "18:00" },
 };
@@ -250,83 +250,61 @@ export const DEFAULT_SHIFT = {
   weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
 };
 
-export const DEFAULT_SHIFT_ID = "shift-default";
-
-/** Client-side shift catalog — updated from App bootstrap/sync. */
-let _shiftsCatalog = [];
-
-export function setShiftsCatalog(shifts) {
-  _shiftsCatalog = Array.isArray(shifts) ? shifts : [];
+/** Resolve the employee's own stored schedule (no shared shift templates). */
+export function resolveShiftSource(user) {
+  if (user?.shift && (user.shift.weeklySchedule || user.shift.shiftStart)) {
+    return user.shift;
+  }
+  return {};
 }
 
-export function getShiftsCatalog() {
-  return _shiftsCatalog;
-}
-
-export function getDefaultShiftTemplate(shifts = getShiftsCatalog()) {
-  return (shifts || []).find(s => s.isDefault) || (shifts || [])[0] || null;
-}
-
-export function shiftTemplateToConfig(template) {
-  if (!template) return {};
-  const weeklySchedule = normalizeWeeklySchedule({
-    weeklySchedule: template.weeklySchedule,
-    shiftStart: template.weeklySchedule?.monday?.shiftStart,
-    shiftEnd: template.weeklySchedule?.monday?.shiftEnd,
-    graceMinutes: template.graceMinutes,
-    breakMinutes: template.breakMinutes,
-    checkoutGraceMinutes: template.checkoutGraceMinutes,
-  });
-  const mon = weeklySchedule.monday || DEFAULT_WEEKLY_SCHEDULE.monday;
+/** Build a complete shift config from form fields; empty day times fall back to defaults. */
+export function buildShiftFromForm(form = {}) {
+  const src = form.weeklySchedule || {};
+  const weekly = {};
+  for (const day of SHIFT_WEEKDAYS) {
+    const def = DEFAULT_WEEKLY_SCHEDULE[day];
+    const row = src[day] || {};
+    weekly[day] = {
+      off: false,
+      shiftStart: row.shiftStart || def.shiftStart,
+      shiftEnd: row.shiftEnd || def.shiftEnd,
+    };
+  }
+  const weeklySchedule = normalizeWeeklySchedule({ weeklySchedule: weekly });
+  const mon = weeklySchedule.monday;
   return {
     shiftStart: mon.shiftStart,
     shiftEnd: mon.shiftEnd,
-    graceMinutes: template.graceMinutes ?? DEFAULT_SHIFT.graceMinutes,
-    breakMinutes: template.breakMinutes ?? DEFAULT_SHIFT.breakMinutes,
-    checkoutGraceMinutes: template.checkoutGraceMinutes ?? DEFAULT_SHIFT.checkoutGraceMinutes,
+    graceMinutes: form.graceMinutes != null && form.graceMinutes !== ""
+      ? parseInt(form.graceMinutes, 10) || 0
+      : DEFAULT_SHIFT.graceMinutes,
+    breakMinutes: form.breakMinutes != null && form.breakMinutes !== ""
+      ? parseInt(form.breakMinutes, 10) || 0
+      : DEFAULT_SHIFT.breakMinutes,
+    checkoutGraceMinutes: form.checkoutGraceMinutes != null && form.checkoutGraceMinutes !== ""
+      ? parseInt(form.checkoutGraceMinutes, 10) || 0
+      : DEFAULT_SHIFT.checkoutGraceMinutes,
     weeklySchedule,
   };
 }
 
-export function createBlankShiftTemplate(name = "New shift") {
-  return {
-    id: `shift-${Date.now()}`,
-    name,
-    graceMinutes: DEFAULT_SHIFT.graceMinutes,
-    breakMinutes: DEFAULT_SHIFT.breakMinutes,
-    checkoutGraceMinutes: DEFAULT_SHIFT.checkoutGraceMinutes,
-    weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
-    isDefault: false,
+export function formatDayScheduleLine(daySchedule) {
+  if (!daySchedule || daySchedule.off) return "OFF";
+  const fmt = t => {
+    if (!t) return "—";
+    const [h, m] = String(t).split(":").map(Number);
+    const d = new Date();
+    d.setHours(h || 0, m || 0, 0, 0);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
+  return `${fmt(daySchedule.shiftStart)} – ${fmt(daySchedule.shiftEnd)}`;
 }
 
-export function resolveShiftSource(user, shifts = getShiftsCatalog()) {
-  if (user?.shiftId) {
-    const t = (shifts || []).find(s => s.id === user.shiftId);
-    if (t) return shiftTemplateToConfig(t);
-  }
-  if (user?.shift && (user.shift.weeklySchedule || user.shift.shiftStart)) {
-    return user.shift;
-  }
-  const def = getDefaultShiftTemplate(shifts);
-  if (def) return shiftTemplateToConfig(def);
-  return {};
-}
-
-export function getShiftNameForUser(user, shifts = getShiftsCatalog()) {
-  if (user?.shiftId) {
-    const t = (shifts || []).find(s => s.id === user.shiftId);
-    if (t) return t.name;
-  }
-  const def = getDefaultShiftTemplate(shifts);
-  if (user?.shift && !user.shiftId) return "Custom schedule";
-  return def?.name || "Default shift";
-}
-
-export function requiredMsForShiftDay(user, dateKey, shifts = getShiftsCatalog()) {
-  const bounds = getShiftBounds(user, dateKey, shifts);
+export function requiredMsForShiftDay(user, dateKey) {
+  const bounds = getShiftBounds(user, dateKey);
   if (bounds.off || !bounds.start || !bounds.end) return 0;
-  const s = getUserShift(user, dateKey, shifts);
+  const s = getUserShift(user, dateKey);
   return Math.max(0, bounds.end - bounds.start - (s.breakMinutes || 0) * 60000);
 }
 
@@ -357,8 +335,8 @@ export function normalizeWeeklySchedule(shift = {}) {
   return weekly;
 }
 
-export function getShiftSchedule(user, dateKey = todayKey(), shifts = getShiftsCatalog()) {
-  const shift = resolveShiftSource(user, shifts);
+export function getShiftSchedule(user, dateKey = todayKey()) {
+  const shift = resolveShiftSource(user);
   const weeklySchedule = normalizeWeeklySchedule(shift);
   const day = shiftDayKey(dateKey);
   const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
@@ -372,42 +350,48 @@ export function getShiftSchedule(user, dateKey = todayKey(), shifts = getShiftsC
   };
 }
 
-export function getUserShift(user, dateKey = todayKey(), shifts = getShiftsCatalog()) {
-  const shift = { ...DEFAULT_SHIFT, ...resolveShiftSource(user, shifts) };
-  const daySchedule = getShiftSchedule(user, dateKey, shifts);
+export function getUserShift(user, dateKey = todayKey()) {
+  const shift = { ...DEFAULT_SHIFT, ...resolveShiftSource(user) };
+  const daySchedule = getShiftSchedule(user, dateKey);
   return { ...shift, ...daySchedule, weeklySchedule: daySchedule.weeklySchedule };
 }
 
 export function shiftDateTime(dateKey, hhmm) {
-  const [h, m] = hhmm.split(":").map(Number);
+  const [h, m] = String(hhmm || "00:00").split(":").map(Number);
   const d = new Date(dateKey + "T00:00:00");
-  d.setHours(h, m, 0, 0);
+  d.setHours(h || 0, m || 0, 0, 0);
   return d;
 }
 
-export function getShiftBounds(user, dateKey, shifts = getShiftsCatalog()) {
-  const s = getUserShift(user, dateKey, shifts);
+export function getShiftBounds(user, dateKey) {
+  const s = getUserShift(user, dateKey);
   if (s.off) {
     return { start: null, end: null, lateCutoff: null, checkoutDeadline: null, ...s };
   }
   const start = shiftDateTime(dateKey, s.shiftStart);
   let end = shiftDateTime(dateKey, s.shiftEnd);
+  // Overnight shifts (e.g. 16:00 → 01:00): end is next calendar day
   if (end <= start) end = new Date(end.getTime() + 86400000);
   const lateCutoff = new Date(start.getTime() + s.graceMinutes * 60000);
   const checkoutDeadline = new Date(end.getTime() + s.checkoutGraceMinutes * 60000);
   return { start, end, lateCutoff, checkoutDeadline, ...s };
 }
 
-export function formatShiftRange(user, dateKey = todayKey(), shifts = getShiftsCatalog()) {
-  const s = getUserShift(user, dateKey, shifts);
+export function formatShiftRange(user, dateKey = todayKey()) {
+  const s = getUserShift(user, dateKey);
   if (s.off) return "OFF";
   const fmt = t => {
-    const [h, m] = t.split(":").map(Number);
+    const [h, m] = String(t).split(":").map(Number);
     const d = new Date();
     d.setHours(h, m, 0, 0);
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
-  return `${fmt(s.shiftStart)} – ${fmt(s.shiftEnd)}`;
+  const start = fmt(s.shiftStart);
+  const end = fmt(s.shiftEnd);
+  const startMs = shiftDateTime(dateKey, s.shiftStart).getTime();
+  const endMs = shiftDateTime(dateKey, s.shiftEnd).getTime();
+  const overnight = endMs <= startMs;
+  return overnight ? `${start} – ${end} (+1)` : `${start} – ${end}`;
 }
 
 export function formatDurationMs(ms) {
@@ -493,41 +477,41 @@ export function calcNetWorkingMs(record) {
   return Math.max(0, ms);
 }
 
-export function isLateCheckIn(checkInIso, user, holidays = [], shifts = getShiftsCatalog()) {
+export function isLateCheckIn(checkInIso, user, holidays = []) {
   if (!checkInIso || !user) return false;
   if (isPublicHolidayDate(checkInIso, holidays)) return false;
   const dateKey = todayKey(new Date(checkInIso));
-  const bounds = getShiftBounds(user, dateKey, shifts);
+  const bounds = getShiftBounds(user, dateKey);
   if (bounds.off || !bounds.lateCutoff) return false;
   return new Date(checkInIso) > bounds.lateCutoff;
 }
 
-export function computeDayStatus(user, record, holidays = [], shifts = getShiftsCatalog()) {
+export function computeDayStatus(user, record, holidays = []) {
   const dateKey = record?.date || todayKey();
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
-  const bounds = getShiftBounds(user, dateKey, shifts);
+  const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  const late = isLateCheckIn(record.checkIn, user, holidays, shifts);
+  const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return late ? "Late" : "Present";
 
   const net = calcNetWorkingMs(record);
-  const expectedNet = requiredMsForShiftDay(user, dateKey, shifts);
+  const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (late) return "Late";
   if (new Date(record.checkOut) < bounds.end) return "Early Leave";
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
 }
 
-export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], shifts = getShiftsCatalog()) {
+export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = []) {
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
-  const bounds = getShiftBounds(user, dateKey, shifts);
+  const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  return computeDayStatus(user, record, holidays, shifts);
+  return computeDayStatus(user, record, holidays);
 }
 
 export function dayStatusPill(status) {
@@ -546,13 +530,13 @@ export function dayStatusPill(status) {
   return map[status] || { tone: "slate", label: status || "—" };
 }
 
-export function finalizeRecord(record, user, holidays = [], shifts = getShiftsCatalog()) {
-  const dayStatus = computeDayStatus(user, record, holidays, shifts);
+export function finalizeRecord(record, user, holidays = []) {
+  const dayStatus = computeDayStatus(user, record, holidays);
   return {
     ...record,
     dayStatus,
     status: dayStatus,
-    late: !!(record?.checkIn && isLateCheckIn(record.checkIn, user, holidays, shifts)),
+    late: !!(record?.checkIn && isLateCheckIn(record.checkIn, user, holidays)),
     totalBreakMs: calcTotalBreakMs(record),
     workingMs: calcNetWorkingMs(record),
   };
@@ -1276,16 +1260,16 @@ export function eachDateInRange(fromKey, toKey) {
   return days;
 }
 
-export function isShiftOffDay(user, dateKey, shifts = getShiftsCatalog()) {
+export function isShiftOffDay(user, dateKey) {
   if (isWeekendDate(dateKey)) return true;
-  return !!getShiftBounds(user, dateKey, shifts).off;
+  return !!getShiftBounds(user, dateKey).off;
 }
 
-export function scheduledWorkDatesForUser(user, fromKey, toKey, holidays = [], shifts = getShiftsCatalog()) {
+export function scheduledWorkDatesForUser(user, fromKey, toKey, holidays = []) {
   return eachDateInRange(fromKey, toKey).filter(dateKey =>
     !isWeekendDate(dateKey) &&
     !getPublicHoliday(dateKey, holidays) &&
-    !isShiftOffDay(user, dateKey, shifts)
+    !isShiftOffDay(user, dateKey)
   );
 }
 
@@ -1315,7 +1299,7 @@ function approvedLeaveDatesForUser(leaveRequests, userId, fromKey, toKey, holida
   return days;
 }
 
-export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays = [], shifts = getShiftsCatalog()) {
+export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays = []) {
   const { start, end } = monthDateRange(month);
   const today = todayKey();
   let rangeStart = start;
@@ -1356,7 +1340,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
     };
   }
 
-  const scheduledDates = scheduledWorkDatesForUser(user, rangeStart, rangeEnd, holidays, shifts);
+  const scheduledDates = scheduledWorkDatesForUser(user, rangeStart, rangeEnd, holidays);
   const scheduledSet = new Set(scheduledDates);
   const leaveDates = approvedLeaveDatesForUser(leaveRequests, user?.id, rangeStart, rangeEnd, holidays, user);
 
@@ -1366,12 +1350,12 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
 
   const presentRows = rows.filter(r => r.checkIn && scheduledSet.has(r.date));
   const presentDates = new Set(presentRows.map(r => r.date));
-  const lateDays = presentRows.filter(r => resolveDayStatus(user, r, r.date, holidays, shifts) === "Late").length;
+  const lateDays = presentRows.filter(r => resolveDayStatus(user, r, r.date, holidays) === "Late").length;
   const totalWorkingMs = presentRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r) || 0), 0);
   const totalBreakMs = presentRows.reduce((sum, r) => sum + (r.totalBreakMs ?? calcTotalBreakMs(r) ?? 0), 0);
   const totalRequiredMs = scheduledDates
     .filter(d => !leaveDates.has(d))
-    .reduce((sum, d) => sum + requiredMsForShiftDay(user, d, shifts), 0);
+    .reduce((sum, d) => sum + requiredMsForShiftDay(user, d), 0);
   const approvedLeaveDays = leaveDates.size;
   const absentDays = scheduledDates.filter(d => !presentDates.has(d) && !leaveDates.has(d)).length;
 

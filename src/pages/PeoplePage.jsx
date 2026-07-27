@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_SHIFT_ID, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, getShiftNameForUser, getDefaultShiftTemplate, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
@@ -13,7 +13,6 @@ export function PeoplePage({
   users, setUsers, currentUser, attendance, setAttendance,
   payroll = [], setPayroll, leaveRequests = [], setLeaveRequests,
   shortLeaveRequests = [], setShortLeaveRequests, roles, holidays = [],
-  shifts = [],
   assets = [], setAssets,
   notifications, setNotifications, warnings = [], setWarnings,
 }) {
@@ -44,7 +43,8 @@ export function PeoplePage({
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
-    shiftId: null,
+    graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10,
+    weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
   };
   const [form, setForm] = useState(blank);
 
@@ -55,11 +55,15 @@ export function PeoplePage({
 
   function openAdd()    { setForm(structuredClone(blank)); setFerr(""); setAddOpen(true); }
   function openEdit(u) {
+    const s = getUserShift(u);
     setEditTgt(u);
     setForm({
       ...u,
       cnic: getUserCnic(u),
-      shiftId: u.shiftId || "",
+      graceMinutes: s.graceMinutes,
+      breakMinutes: s.breakMinutes,
+      checkoutGraceMinutes: s.checkoutGraceMinutes,
+      weeklySchedule: normalizeWeeklySchedule(u.shift || {}),
     });
     setFerr("");
     setEditOpen(true);
@@ -81,11 +85,11 @@ export function PeoplePage({
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.trim().toLowerCase() === email.toLowerCase())) { setFerr("This email already exists."); return; }
     const tempPw  = genTempPw();
-    const { cnic, ...rest } = form;
-    const defaultId = getDefaultShiftTemplate(shifts)?.id || DEFAULT_SHIFT_ID;
+    const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, ...rest } = form;
     const newUser = {
       ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
-      shiftId: form.shiftId || defaultId,
+      shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
+      shiftId: null,
       id: genId(), password: tempPw, leaveBalance: DEFAULT_ANNUAL_LEAVE, skills: [], firstLogin: true, tempPassword: tempPw,
     };
     setEmailSending(true);
@@ -116,17 +120,13 @@ export function PeoplePage({
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already used by another account."); return; }
-    const { password, tempPassword, cnic, ...rest } = form;
-    const defaultId = getDefaultShiftTemplate(shifts)?.id || DEFAULT_SHIFT_ID;
-    const hasLegacyShift = !!(editTgt.shift && (editTgt.shift.weeklySchedule || editTgt.shift.shiftStart));
-    const shiftId = form.shiftId
-      ? form.shiftId
-      : (editTgt.shiftId || (hasLegacyShift ? undefined : defaultId));
+    const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, ...rest } = form;
     const updated = {
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
       cnicEnc: encryptSensitive(cnicDigits),
-      shiftId,
+      shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
+      shiftId: null,
     };
     setUsers(p => p.map(u => u.id === editTgt.id ? { ...u, ...updated } : u));
     if (sel?.id === editTgt.id) setSel(s => ({ ...s, ...updated }));
@@ -331,7 +331,7 @@ export function PeoplePage({
                 <td className="px-4 py-3 hidden md:table-cell">
                   <Pill tone={u.role === "HR Admin" ? "dark" : "slate"}>{u.role}</Pill>
                 </td>
-                <td className="px-4 py-3 hidden lg:table-cell text-slate-500 text-xs">{getShiftNameForUser(u, shifts)}</td>
+                <td className="px-4 py-3 hidden lg:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
                     const r = getUserTodayRecord(attendance, u.id);
@@ -373,7 +373,7 @@ export function PeoplePage({
 
       {/* Add */}
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add new employee" wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} shifts={shifts} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
           A temporary password will be generated and emailed to the work address above. They must change it on first login.
         </div>
@@ -385,7 +385,7 @@ export function PeoplePage({
 
       {/* Edit */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={isHrAdminRole(editTgt?.role) ? "Edit HR Admin" : "Edit employee"} wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} shifts={shifts} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} />
         <div className="flex gap-2 mt-4">
           <Btn onClick={saveEdit}><Save size={14} />Save changes</Btn>
           <Btn variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Btn>
@@ -469,7 +469,7 @@ export function PeoplePage({
                 </div>
               </div>
               <div className="flex gap-1 mt-4 border-b border-slate-100 -mb-5 flex-wrap">
-                {["Overview", "Personal", "Shift", "Bank", "Access", "Leave", "Warnings", ...(readOnly ? ["Salary", "Attendance"] : [])].map(t => {
+                {["Overview", "Personal", "Schedule", "Bank", "Access", "Leave", "Warnings", ...(readOnly ? ["Salary", "Attendance"] : [])].map(t => {
                   const empWarnings = (warnings || []).filter(w => w && w.userId === sel.id);
                   const label = t === "Warnings" ? `Warnings (${empWarnings.length})` : t;
                   return (
@@ -545,16 +545,30 @@ export function PeoplePage({
                   )}
                 </div>
               )}
-              {selTab === "Shift" && (
+              {selTab === "Schedule" && (
                 <div className="space-y-3">
-                  {[["Assigned shift", getShiftNameForUser(sel, shifts)], ["Today's timing", formatShiftRange(sel, todayKey(), shifts)], ["Late grace", `${getUserShift(sel, todayKey(), shifts).graceMinutes} min`], ["Break allowance", `${getUserShift(sel, todayKey(), shifts).breakMinutes} min`], ["Checkout grace", `${getUserShift(sel, todayKey(), shifts).checkoutGraceMinutes} min after shift end`]].map(([k, v]) => (
+                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Work schedule</div>
+                  {SHIFT_WEEKDAYS.map(day => {
+                    const schedule = getUserShift(sel).weeklySchedule?.[day];
+                    return (
+                      <div key={day} className="flex justify-between border-b border-slate-50 pb-2 gap-4">
+                        <span className="text-slate-400 shrink-0">{SHIFT_DAY_LABELS[day]}</span>
+                        <span className="font-medium text-slate-800 text-right tabular-nums">{formatDayScheduleLine(schedule)}</span>
+                      </div>
+                    );
+                  })}
+                  {[
+                    ["Break", `${getUserShift(sel).breakMinutes} min`],
+                    ["Grace", `${getUserShift(sel).graceMinutes} min`],
+                    ["Today", formatShiftRange(sel, todayKey())],
+                  ].map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-slate-50 pb-2 gap-4">
                       <span className="text-slate-400 shrink-0">{k}</span>
                       <span className="font-medium text-slate-800 text-right">{v}</span>
                     </div>
                   ))}
                   {managingSel() && (
-                    <Btn size="sm" onClick={() => openEdit(sel)}><Edit2 size={13} />Change shift</Btn>
+                    <Btn size="sm" onClick={() => openEdit(sel)}><Edit2 size={13} />Edit work schedule</Btn>
                   )}
                 </div>
               )}
@@ -699,7 +713,7 @@ export function PeoplePage({
               {selTab === "Attendance" && readOnly && (
                 <div className="space-y-3">
                   <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                    <div className="font-medium text-slate-700 mb-1">Today's shift · {getShiftNameForUser(sel, shifts)} · {formatShiftRange(sel, todayKey(), shifts)}</div>
+                    <div className="font-medium text-slate-700 mb-1">Today's schedule · {formatShiftRange(sel, todayKey())}</div>
                     {(() => {
                       const r = getUserTodayRecord(attendance, sel.id);
                       const ds = dayStatusPill(resolveDayStatus(sel, r, r?.date ?? todayKey(), holidays));
