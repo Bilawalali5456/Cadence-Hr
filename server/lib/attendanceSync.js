@@ -12,18 +12,59 @@ export function dateKeyFromDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+const SHIFT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const DEFAULT_WEEKLY_SCHEDULE = {
+  monday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  tuesday:   { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  wednesday: { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  thursday:  { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  friday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  saturday:  { off: true,  shiftStart: "09:00", shiftEnd: "14:00" },
+  sunday:    { off: true,  shiftStart: "09:00", shiftEnd: "18:00" },
+};
+
 function genAttId() {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function getUserShift(user) {
+function shiftDayKey(dateKey) {
+  const d = new Date(`${dateKey}T12:00:00`);
+  return SHIFT_DAYS[(d.getDay() + 6) % 7];
+}
+
+function normalizeWeeklySchedule(shift = {}) {
+  const base = shift?.weeklySchedule && typeof shift.weeklySchedule === "object"
+    ? shift.weeklySchedule
+    : null;
+  const fallbackStart = shift.shiftStart || "09:00";
+  const fallbackEnd = shift.shiftEnd || "18:00";
+  const weekly = {};
+  for (const day of SHIFT_DAYS) {
+    const def = DEFAULT_WEEKLY_SCHEDULE[day];
+    const src = base?.[day];
+    weekly[day] = {
+      off: src?.off ?? (base ? def.off : (day === "saturday" || day === "sunday")),
+      shiftStart: src?.shiftStart || (base ? def.shiftStart : fallbackStart),
+      shiftEnd: src?.shiftEnd || (base ? def.shiftEnd : fallbackEnd),
+    };
+  }
+  return weekly;
+}
+
+export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
   const s = (user?.shift && typeof user.shift === "object") ? user.shift : {};
+  const weeklySchedule = normalizeWeeklySchedule(s);
+  const day = shiftDayKey(dateKey);
+  const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
   return {
-    shiftStart: s.shiftStart || "09:00",
-    shiftEnd: s.shiftEnd || "18:00",
+    shiftStart: daySchedule.shiftStart || "09:00",
+    shiftEnd: daySchedule.shiftEnd || "18:00",
     graceMinutes: s.graceMinutes ?? 15,
     breakMinutes: s.breakMinutes ?? 60,
     checkoutGraceMinutes: s.checkoutGraceMinutes ?? 10,
+    off: !!daySchedule.off,
+    weeklySchedule,
+    day,
   };
 }
 
@@ -32,11 +73,6 @@ function shiftDateTime(dateKey, hhmm) {
   const d = new Date(`${dateKey}T00:00:00`);
   d.setHours(h || 0, m || 0, 0, 0);
   return d;
-}
-
-function isWeekendDateKey(dateKey) {
-  const d = new Date(`${dateKey}T12:00:00`);
-  return d.getDay() === 0 || d.getDay() === 6;
 }
 
 function methodLabel(verifyMethod) {
@@ -104,7 +140,8 @@ export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves 
 
 /** Required duty ms = shift window minus unpaid break. */
 export function requiredDutyMs(user, dateKey) {
-  const shift = getUserShift(user);
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return 0;
   const start = shiftDateTime(dateKey, shift.shiftStart);
   let end = shiftDateTime(dateKey, shift.shiftEnd);
   if (end <= start) end = new Date(end.getTime() + 86400000);
@@ -115,8 +152,8 @@ export function isLateCheckIn(checkInIso, user) {
   if (!checkInIso || !user) return false;
   const d = new Date(checkInIso);
   const dateKey = dateKeyFromDate(d);
-  if (isWeekendDateKey(dateKey)) return false;
-  const shift = getUserShift(user);
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return false;
   const start = shiftDateTime(dateKey, shift.shiftStart);
   // Late after shift start + grace (grace is part of assigned duty schedule)
   const lateCutoff = new Date(start.getTime() + shift.graceMinutes * 60000);
@@ -127,8 +164,8 @@ export function isEarlyLeave(checkOutIso, user) {
   if (!checkOutIso || !user) return false;
   const d = new Date(checkOutIso);
   const dateKey = dateKeyFromDate(d);
-  if (isWeekendDateKey(dateKey)) return false;
-  const shift = getUserShift(user);
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return false;
   const end = shiftDateTime(dateKey, shift.shiftEnd);
   return d < end;
 }
@@ -136,7 +173,7 @@ export function isEarlyLeave(checkOutIso, user) {
 export function isShortHours(checkIn, checkOut, user, options = {}) {
   if (!checkIn || !checkOut || !user) return false;
   const dateKey = dateKeyFromDate(new Date(checkIn));
-  if (isWeekendDateKey(dateKey)) return false;
+  if (getUserShift(user, dateKey).off) return false;
   // Only trust a precomputed net when it is an actual number.
   // (undefined/null must fall through — `!= null` already does, but typeof is clearer.)
   const worked = typeof options.netWorkingMs === "number"
@@ -161,6 +198,9 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
  */
 export function computeBiometricDayStatus(user, checkIn, checkOut, options = {}) {
   if (!checkIn) return "Absent";
+  const dateKey = dateKeyFromDate(new Date(checkIn));
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return "Present";
   const late = isLateCheckIn(checkIn, user);
   if (!checkOut) return late ? "Late" : "Present";
   if (late) return "Late";

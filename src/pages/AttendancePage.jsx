@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, isWeekendDate, isPublicHolidayDate, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canApproveShortLeaveRequest, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
@@ -34,17 +34,54 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
     );
   }
 
-  return <EmployeeAttendanceHistory user={me} attendance={attendance} holidays={holidays} />;
+  return <EmployeeAttendanceHistory user={me} attendance={attendance} leaveRequests={leaveRequests} holidays={holidays} />;
 }
 
-export function EmployeeAttendanceHistory({ user, attendance, holidays = [] }) {
+export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = [], holidays = [] }) {
+  const [month, setMonth] = useState(monthKey());
   const history = (attendance || [])
     .filter(r => r && r.userId === user.id && r.date)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 14);
+  const monthSummary = computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays);
+  const monthOptions = Array.from(new Set([
+    monthKey(),
+    ...((attendance || []).filter(r => r?.userId === user.id && r.date).map(r => r.date.slice(0, 7))),
+    ...((leaveRequests || []).filter(r => r?.userId === user.id && r.from).map(r => r.from.slice(0, 7))),
+    ...(user?.hired ? [user.hired.slice(0, 7)] : []),
+  ])).sort((a, b) => b.localeCompare(a));
 
   return (
     <div className="space-y-5 max-w-3xl">
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <STitle>Monthly summary</STitle>
+          <select
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          {[
+            ["Present days", monthSummary.totalPresentDays],
+            ["Absent days", monthSummary.totalAbsentDays],
+            ["Late days", monthSummary.totalLateDays],
+            ["Approved leave", monthSummary.approvedLeaveDays],
+            ["Working hours", formatDurationMs(monthSummary.totalWorkingMs)],
+            ["Required hours", formatDurationMs(monthSummary.totalRequiredMs)],
+            ["Overtime", formatDurationMs(monthSummary.overtimeMs)],
+            ["Payable days", monthSummary.payableDays],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 p-3">
+              <div className="text-xs text-slate-400">{label}</div>
+              <div className="text-lg font-semibold text-slate-800 mt-1">{value}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200"><STitle>My attendance history</STitle></div>
         <div className="overflow-x-auto">
@@ -98,6 +135,7 @@ export function EmployeeAttendanceFull(props) {
 
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
   const [period, setPeriod] = useState("daily");
+  const [month, setMonth] = useState(monthKey());
   const staffRoster = employeeRoster(users || []);
   const allStaff = staffRoster.filter(u => u && u.status === "active");
   const liveRoster = (isExecutiveRole(currentUser.role)
@@ -106,7 +144,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   ).filter(u => u && u.id);
   const visibleIds = attendanceVisibleUserIds(users || [], currentUser.role);
   const today = todayKey();
-  const nonWorkingToday = isWeekendDate(today) || isPublicHolidayDate(today, holidays);
   const pendingShort = (shortLeaveRequests || []).filter(r =>
     r && r.status === "pending" && canApproveShortLeaveRequest(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
@@ -142,6 +179,10 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && !r?.checkOut; });
   const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
   const autoToday = (attendance || []).filter(r => r && r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
+  const absentTodayCount = liveRoster.filter(u => {
+    const r = getUserTodayRecord(attendance, u.id);
+    return resolveDayStatus(u, r, today, holidays) === "Absent";
+  }).length;
 
   const reportRows = filterAttendanceByPeriod(attendance || [], period)
     .filter(r => r && r.userId && visibleIds.has(r.userId))
@@ -153,6 +194,18 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.name || "").localeCompare(b.name || ""));
 
   const periodTotalMs = reportRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r)), 0);
+  const monthOptions = Array.from(new Set([
+    monthKey(),
+    ...((attendance || []).filter(r => r?.date).map(r => r.date.slice(0, 7))),
+    ...((leaveRequests || []).filter(r => r?.from).map(r => r.from.slice(0, 7))),
+    ...((users || []).filter(u => u?.hired).map(u => u.hired.slice(0, 7))),
+  ])).sort((a, b) => b.localeCompare(a));
+  const monthlyRows = liveRoster
+    .map(u => ({
+      user: u,
+      summary: computeMonthlyAttendanceSummary(u, attendance, leaveRequests, month, holidays),
+    }))
+    .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
 
   return (
     <div className="space-y-5">
@@ -212,7 +265,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
           { label: "Auto checkouts", value: autoToday.length, icon: Clock },
-          { label: "Absent today", value: nonWorkingToday ? 0 : liveRoster.filter(u => !getUserTodayRecord(attendance, u.id)?.checkIn).length, icon: Users },
+          { label: "Absent today", value: absentTodayCount, icon: Users },
           { label: `${period} hours`, value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
@@ -224,6 +277,47 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </Card>
         ))}
       </div>
+
+      <Card className="overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
+          <STitle>Monthly attendance summary</STitle>
+          <select
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[1080px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
+                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Required hours", "Overtime", "Payable days"].map(h => (
+                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyRows.length === 0 ? (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+              ) : monthlyRows.map(({ user, summary }) => (
+                <tr key={user.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
+                  <td className="px-4 py-3">{summary.totalPresentDays}</td>
+                  <td className="px-4 py-3">{summary.totalAbsentDays}</td>
+                  <td className="px-4 py-3">{summary.totalLateDays}</td>
+                  <td className="px-4 py-3">{summary.approvedLeaveDays}</td>
+                  <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalWorkingMs)}</td>
+                  <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalRequiredMs)}</td>
+                  <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.overtimeMs)}</td>
+                  <td className="px-4 py-3">{summary.payableDays}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">

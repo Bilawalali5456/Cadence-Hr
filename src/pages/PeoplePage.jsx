@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { buildWarningNotification } from "../notifications.js";
 import { IssueWarningModal, warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
@@ -40,7 +40,7 @@ export function PeoplePage({
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
-    shiftStart: "09:00", shiftEnd: "18:00", graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10,
+    graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10, weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
   };
   const [form, setForm] = useState(blank);
 
@@ -49,11 +49,18 @@ export function PeoplePage({
     (u.name + u.email + u.dept + u.role).toLowerCase().includes(q.toLowerCase())
   ));
 
-  function openAdd()    { setForm(blank); setFerr(""); setAddOpen(true); }
+  function openAdd()    { setForm(structuredClone(blank)); setFerr(""); setAddOpen(true); }
   function openEdit(u) {
     const s = getUserShift(u);
     setEditTgt(u);
-    setForm({ ...u, cnic: getUserCnic(u), shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, graceMinutes: s.graceMinutes, breakMinutes: s.breakMinutes, checkoutGraceMinutes: s.checkoutGraceMinutes });
+    setForm({
+      ...u,
+      cnic: getUserCnic(u),
+      graceMinutes: s.graceMinutes,
+      breakMinutes: s.breakMinutes,
+      checkoutGraceMinutes: s.checkoutGraceMinutes,
+      weeklySchedule: normalizeWeeklySchedule(u.shift || {}),
+    });
     setFerr("");
     setEditOpen(true);
   }
@@ -74,10 +81,17 @@ export function PeoplePage({
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.trim().toLowerCase() === email.toLowerCase())) { setFerr("This email already exists."); return; }
     const tempPw  = genTempPw();
-    const { shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes, cnic, ...rest } = form;
+    const { graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, cnic, ...rest } = form;
     const newUser = {
       ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
-      shift: { shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes },
+      shift: {
+        shiftStart: weeklySchedule?.monday?.shiftStart || "09:00",
+        shiftEnd: weeklySchedule?.monday?.shiftEnd || "18:00",
+        graceMinutes,
+        breakMinutes,
+        checkoutGraceMinutes,
+        weeklySchedule: normalizeWeeklySchedule({ weeklySchedule }),
+      },
       id: genId(), password: tempPw, leaveBalance: DEFAULT_ANNUAL_LEAVE, skills: [], firstLogin: true, tempPassword: tempPw,
     };
     setEmailSending(true);
@@ -108,12 +122,19 @@ export function PeoplePage({
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already used by another account."); return; }
-    const { shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes, password, tempPassword, cnic, ...rest } = form;
+    const { graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, password, tempPassword, cnic, ...rest } = form;
     const updated = {
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
       cnicEnc: encryptSensitive(cnicDigits),
-      shift: { shiftStart: shiftStart || "09:00", shiftEnd: shiftEnd || "18:00", graceMinutes: graceMinutes ?? 15, breakMinutes: breakMinutes ?? 60, checkoutGraceMinutes: checkoutGraceMinutes ?? 10 },
+      shift: {
+        shiftStart: weeklySchedule?.monday?.shiftStart || "09:00",
+        shiftEnd: weeklySchedule?.monday?.shiftEnd || "18:00",
+        graceMinutes: graceMinutes ?? 15,
+        breakMinutes: breakMinutes ?? 60,
+        checkoutGraceMinutes: checkoutGraceMinutes ?? 10,
+        weeklySchedule: normalizeWeeklySchedule({ weeklySchedule }),
+      },
     };
     setUsers(p => p.map(u => u.id === editTgt.id ? { ...u, ...updated } : u));
     if (sel?.id === editTgt.id) setSel(s => ({ ...s, ...updated }));

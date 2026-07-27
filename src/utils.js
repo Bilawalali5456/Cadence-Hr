@@ -169,16 +169,81 @@ export function activePayrollRoster(users, viewerRole) {
   return activeAttendanceRoster(users, viewerRole);
 }
 
+export const SHIFT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+export const SHIFT_DAY_LABELS = {
+  monday: "Monday",
+  tuesday: "Tuesday",
+  wednesday: "Wednesday",
+  thursday: "Thursday",
+  friday: "Friday",
+  saturday: "Saturday",
+  sunday: "Sunday",
+};
+
+export const DEFAULT_WEEKLY_SCHEDULE = {
+  monday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  tuesday:   { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  wednesday: { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  thursday:  { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  friday:    { off: false, shiftStart: "09:00", shiftEnd: "18:00" },
+  saturday:  { off: true,  shiftStart: "09:00", shiftEnd: "14:00" },
+  sunday:    { off: true,  shiftStart: "09:00", shiftEnd: "18:00" },
+};
+
 export const DEFAULT_SHIFT = {
   shiftStart: "09:00",
   shiftEnd: "18:00",
   graceMinutes: 15,
   breakMinutes: 60,
   checkoutGraceMinutes: 10,
+  weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
 };
 
-export function getUserShift(user) {
-  return { ...DEFAULT_SHIFT, ...(user?.shift || {}) };
+export function shiftDayKey(dateKey = todayKey()) {
+  const d = typeof dateKey === "string"
+    ? new Date(dateKey.includes("T") ? dateKey : dateKey + "T12:00:00")
+    : new Date(dateKey);
+  return SHIFT_DAYS[(d.getDay() + 6) % 7];
+}
+
+export function normalizeWeeklySchedule(shift = {}) {
+  const base = shift?.weeklySchedule && typeof shift.weeklySchedule === "object"
+    ? shift.weeklySchedule
+    : null;
+  const fallbackStart = shift.shiftStart || DEFAULT_SHIFT.shiftStart;
+  const fallbackEnd = shift.shiftEnd || DEFAULT_SHIFT.shiftEnd;
+  const weekly = {};
+  for (const day of SHIFT_DAYS) {
+    const def = DEFAULT_WEEKLY_SCHEDULE[day];
+    const src = base?.[day];
+    weekly[day] = {
+      off: src?.off ?? (base ? def.off : (day === "saturday" || day === "sunday")),
+      shiftStart: src?.shiftStart || (base ? def.shiftStart : fallbackStart),
+      shiftEnd: src?.shiftEnd || (base ? def.shiftEnd : fallbackEnd),
+    };
+  }
+  return weekly;
+}
+
+export function getShiftSchedule(user, dateKey = todayKey()) {
+  const shift = user?.shift || {};
+  const weeklySchedule = normalizeWeeklySchedule(shift);
+  const day = shiftDayKey(dateKey);
+  const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
+  return {
+    day,
+    label: SHIFT_DAY_LABELS[day],
+    weeklySchedule,
+    off: !!daySchedule.off,
+    shiftStart: daySchedule.shiftStart || DEFAULT_SHIFT.shiftStart,
+    shiftEnd: daySchedule.shiftEnd || DEFAULT_SHIFT.shiftEnd,
+  };
+}
+
+export function getUserShift(user, dateKey = todayKey()) {
+  const shift = { ...DEFAULT_SHIFT, ...(user?.shift || {}) };
+  const daySchedule = getShiftSchedule(user, dateKey);
+  return { ...shift, ...daySchedule, weeklySchedule: daySchedule.weeklySchedule };
 }
 
 export function shiftDateTime(dateKey, hhmm) {
@@ -189,7 +254,10 @@ export function shiftDateTime(dateKey, hhmm) {
 }
 
 export function getShiftBounds(user, dateKey) {
-  const s = getUserShift(user);
+  const s = getUserShift(user, dateKey);
+  if (s.off) {
+    return { start: null, end: null, lateCutoff: null, checkoutDeadline: null, ...s };
+  }
   const start = shiftDateTime(dateKey, s.shiftStart);
   let end = shiftDateTime(dateKey, s.shiftEnd);
   if (end <= start) end = new Date(end.getTime() + 86400000);
@@ -198,8 +266,9 @@ export function getShiftBounds(user, dateKey) {
   return { start, end, lateCutoff, checkoutDeadline, ...s };
 }
 
-export function formatShiftRange(user) {
-  const s = getUserShift(user);
+export function formatShiftRange(user, dateKey = todayKey()) {
+  const s = getUserShift(user, dateKey);
+  if (s.off) return "OFF";
   const fmt = t => {
     const [h, m] = t.split(":").map(Number);
     const d = new Date();
@@ -241,8 +310,9 @@ export function calcNetWorkingMs(record) {
 
 export function isLateCheckIn(checkInIso, user, holidays = []) {
   if (!checkInIso || !user) return false;
-  if (isWeekendDate(checkInIso) || isPublicHolidayDate(checkInIso, holidays)) return false;
+  if (isPublicHolidayDate(checkInIso, holidays)) return false;
   const bounds = getShiftBounds(user, todayKey(new Date(checkInIso)));
+  if (bounds.off || !bounds.lateCutoff) return false;
   return new Date(checkInIso) > bounds.lateCutoff;
 }
 
@@ -250,7 +320,8 @@ export function computeDayStatus(user, record, holidays = []) {
   const dateKey = record?.date || todayKey();
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
-  if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
   // Always recompute from current times + breaks/short leaves.
@@ -259,7 +330,6 @@ export function computeDayStatus(user, record, holidays = []) {
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return late ? "Late" : "Present";
 
-  const bounds = getShiftBounds(user, record.date);
   const net = calcNetWorkingMs(record);
   const expectedNet = Math.max(0, bounds.end - bounds.start - getUserShift(user).breakMinutes * 60000);
   if (late) return "Late";
@@ -271,8 +341,9 @@ export function computeDayStatus(user, record, holidays = []) {
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = []) {
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
-  if (isWeekendDate(dateKey) && !record?.checkIn) return "Weekend Off";
-  if (!record) return isWeekendDate(dateKey) || pub ? (pub ? "Public Holiday" : "Weekend Off") : "Absent";
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.off && !record?.checkIn) return "Off";
+  if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
   return computeDayStatus(user, record, holidays);
 }
 
@@ -285,6 +356,7 @@ export function dayStatusPill(status) {
     "Short Hours": { tone: "amber", label: "Short Hours" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
+    Off: { tone: "blue", label: "Off" },
     "Weekend Off": { tone: "blue", label: "Weekend Off" },
     "Public Holiday": { tone: "blue", label: "Public Holiday" },
   };
@@ -303,12 +375,12 @@ export function finalizeRecord(record, user, holidays = []) {
 }
 
 export function canCheckIn(now, user, record, holidays = []) {
-  if (isWeekendDate(now)) return { ok: false, msg: "Today is a weekend off" };
+  const bounds = getShiftBounds(user, todayKey(now));
+  if (bounds.off) return { ok: false, msg: "Today is off in your assigned shift." };
   const pub = getPublicHoliday(todayKey(now), holidays);
   if (pub) return { ok: false, msg: `Public Holiday — ${pub.title}` };
   if (record?.checkIn && !record?.checkOut) return { ok: false, msg: "You are already checked in." };
   if (record?.checkOut) return { ok: false, msg: "Today's attendance is already complete." };
-  const bounds = getShiftBounds(user, todayKey(now));
   if (now < bounds.start) {
     return { ok: false, msg: `Check-in opens at ${formatTime(bounds.start.toISOString())} (shift start).` };
   }
@@ -323,6 +395,7 @@ export function canCheckOut(now, user, record) {
   if (record.checkOut) return { ok: false, msg: "You have already checked out." };
   if (record.breakStart && !record.breakEnd) return { ok: false, msg: "End your break before checking out." };
   const bounds = getShiftBounds(user, todayKey(now));
+  if (!bounds.checkoutDeadline) return { ok: false, msg: "Today is off in your assigned shift." };
   if (now > bounds.checkoutDeadline) {
     return { ok: false, msg: `Checkout window closed at ${formatTime(bounds.checkoutDeadline.toISOString())}.` };
   }
@@ -371,6 +444,7 @@ export function performBreakStart(attendance, userId, user, now = new Date()) {
   if (!existing?.checkIn || existing.checkOut) return { attendance: list, error: "Check in before starting a break." };
   if (existing.breakStart && !existing.breakEnd) return { attendance: list, error: "Break already in progress." };
   const bounds = getShiftBounds(user, key);
+  if (bounds.off || !bounds.start || !bounds.end) return { attendance: list, error: "Breaks are not allowed on off days." };
   if (now < bounds.start || now > bounds.end) return { attendance: list, error: "Breaks are only allowed during your shift." };
   const next = list.map(r =>
     r && r.userId === userId && r.date === key ? { ...r, breakStart: now.toISOString(), breakEnd: null } : r
@@ -788,15 +862,101 @@ export function monthLabel(key) {
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-export function workingDaysInMonth(key, holidays = []) {
+export function monthDateRange(key) {
   const [y, m] = key.split("-").map(Number);
-  const days = new Date(y, m, 0).getDate();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  return {
+    start: `${y}-${String(m).padStart(2, "0")}-01`,
+    end: `${y}-${String(m).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`,
+    daysInMonth,
+  };
+}
+
+export function eachDateInRange(fromKey, toKey) {
+  const start = new Date(fromKey + "T12:00:00");
+  const end = new Date(toKey + "T12:00:00");
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const days = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    days.push(todayKey(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+export function isShiftOffDay(user, dateKey) {
+  return !!getShiftBounds(user, dateKey).off;
+}
+
+export function scheduledWorkDatesForUser(user, fromKey, toKey, holidays = []) {
+  return eachDateInRange(fromKey, toKey).filter(dateKey =>
+    !getPublicHoliday(dateKey, holidays) && !isShiftOffDay(user, dateKey)
+  );
+}
+
+export function workingDaysInMonth(key, holidays = [], user = null) {
+  const { start, end } = monthDateRange(key);
+  if (user) return scheduledWorkDatesForUser(user, start, end, holidays).length;
   let count = 0;
-  for (let d = 1; d <= days; d++) {
-    const dateKey = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  for (const dateKey of eachDateInRange(start, end)) {
     if (!isNonWorkingDay(dateKey, holidays)) count++;
   }
   return count;
+}
+
+function approvedLeaveDatesForUser(leaveRequests, userId, fromKey, toKey, holidays = [], user = null) {
+  const rangeDays = new Set(eachDateInRange(fromKey, toKey));
+  const scheduled = user ? new Set(scheduledWorkDatesForUser(user, fromKey, toKey, holidays)) : null;
+  const days = new Set();
+  for (const r of (leaveRequests || []).filter(x => x && x.userId === userId && x.status === "approved" && x.from && x.to)) {
+    for (const d of enumerateWorkingDays(r.from, r.to, holidays)) {
+      if (!rangeDays.has(d)) continue;
+      if (scheduled && !scheduled.has(d)) continue;
+      days.add(d);
+    }
+  }
+  return days;
+}
+
+export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays = []) {
+  const { start, end } = monthDateRange(month);
+  const joined = user?.hired && user.hired >= start && user.hired <= end ? user.hired : start;
+  const scheduledDates = scheduledWorkDatesForUser(user, joined, end, holidays);
+  const scheduledSet = new Set(scheduledDates);
+  const leaveDates = approvedLeaveDatesForUser(leaveRequests, user?.id, joined, end, holidays, user);
+
+  const rows = (attendance || [])
+    .filter(r => r && r.userId === user?.id && r.date && r.date >= joined && r.date <= end)
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  const presentRows = rows.filter(r => r.checkIn && scheduledSet.has(r.date));
+  const presentDates = new Set(presentRows.map(r => r.date));
+  const lateDays = presentRows.filter(r => resolveDayStatus(user, r, r.date, holidays) === "Late").length;
+  const totalWorkingMs = presentRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r) || 0), 0);
+  const totalRequiredMs = scheduledDates
+    .filter(d => !leaveDates.has(d))
+    .reduce((sum, d) => {
+      const bounds = getShiftBounds(user, d);
+      if (bounds.off || !bounds.start || !bounds.end) return sum;
+      return sum + Math.max(0, bounds.end - bounds.start - getUserShift(user, d).breakMinutes * 60000);
+    }, 0);
+  const approvedLeaveDays = leaveDates.size;
+  const absentDays = scheduledDates.filter(d => !presentDates.has(d) && !leaveDates.has(d)).length;
+  const overtimeMs = Math.max(0, totalWorkingMs - totalRequiredMs);
+
+  return {
+    month,
+    joinedFrom: joined,
+    totalPresentDays: presentDates.size,
+    totalAbsentDays: absentDays,
+    totalLateDays: lateDays,
+    totalWorkingMs,
+    totalRequiredMs,
+    overtimeMs,
+    approvedLeaveDays,
+    payableDays: presentDates.size + approvedLeaveDays,
+  };
 }
 
 export function presentDaysInMonth(attendance, userId, key, holidays = []) {
