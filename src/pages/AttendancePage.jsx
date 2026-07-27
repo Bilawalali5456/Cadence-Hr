@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getShiftNameForUser, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getShiftNameForUser, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -40,18 +40,13 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
 }
 
 export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = [], holidays = [] }) {
-  const [month, setMonth] = useState(monthKey());
+  const monthOptions = employeeAttendanceMonthOptions(user);
+  const [month, setMonth] = useState(() => clampMonthKey(monthKey(), monthOptions));
   const history = (attendance || [])
-    .filter(r => r && r.userId === user.id && r.date)
+    .filter(r => r && r.userId === user.id && r.date && r.date >= ATTENDANCE_MONTH_FLOOR)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 14);
   const monthSummary = computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays);
-  const monthOptions = Array.from(new Set([
-    monthKey(),
-    ...((attendance || []).filter(r => r?.userId === user.id && r.date).map(r => r.date.slice(0, 7))),
-    ...((leaveRequests || []).filter(r => r?.userId === user.id && r.from).map(r => r.from.slice(0, 7))),
-    ...(user?.hired ? [user.hired.slice(0, 7)] : []),
-  ])).sort((a, b) => b.localeCompare(a));
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -141,7 +136,7 @@ export function EmployeeAttendanceFull(props) {
 
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
   const [period, setPeriod] = useState("daily");
-  const [month, setMonth] = useState(monthKey());
+  const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const canManageCorrections = isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role);
   const correctionAudit = isExecutiveRole(currentUser.role)
@@ -200,12 +195,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.name || "").localeCompare(b.name || ""));
 
   const periodTotalMs = reportRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r)), 0);
-  const monthOptions = Array.from(new Set([
-    monthKey(),
-    ...((attendance || []).filter(r => r?.date).map(r => r.date.slice(0, 7))),
-    ...((leaveRequests || []).filter(r => r?.from).map(r => r.from.slice(0, 7))),
-    ...((users || []).filter(u => u?.hired).map(u => u.hired.slice(0, 7))),
-  ])).sort((a, b) => b.localeCompare(a));
+  const monthOptions = attendanceMonthOptions(users);
   const monthlyRows = liveRoster
     .map(u => ({
       user: u,

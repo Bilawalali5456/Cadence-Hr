@@ -1190,6 +1190,64 @@ export function monthKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/** Earliest month with attendance UI — hides pre-2026 test data. */
+export const ATTENDANCE_MONTH_FLOOR = "2026-01";
+
+export function earliestHireMonth(users = []) {
+  let earliest = null;
+  for (const u of users) {
+    const hired = u?.hired;
+    if (!hired || hired.length < 7) continue;
+    const mk = hired.slice(0, 7);
+    if (!earliest || mk < earliest) earliest = mk;
+  }
+  return earliest;
+}
+
+export function enumerateMonthKeys(fromKey, toKey) {
+  const [fy, fm] = fromKey.split("-").map(Number);
+  const [ty, tm] = toKey.split("-").map(Number);
+  const keys = [];
+  let y = fy;
+  let m = fm;
+  while (y < ty || (y === ty && m <= tm)) {
+    keys.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return keys;
+}
+
+/** Month keys for attendance selectors: from first hire (or 2026) through current month only. */
+export function attendanceMonthOptions(users = [], now = new Date()) {
+  const end = monthKey(now);
+  const yearStart = `${now.getFullYear()}-01`;
+  const hireMonth = earliestHireMonth(users);
+  let start = ATTENDANCE_MONTH_FLOOR;
+  if (yearStart > start) start = yearStart;
+  if (hireMonth && hireMonth > start) start = hireMonth;
+  if (start > end) return [end];
+  return enumerateMonthKeys(start, end).reverse();
+}
+
+/** Month keys for a single employee's summary. */
+export function employeeAttendanceMonthOptions(user, now = new Date()) {
+  const end = monthKey(now);
+  const yearStart = `${now.getFullYear()}-01`;
+  const hireMonth = user?.hired?.slice(0, 7) || null;
+  let start = ATTENDANCE_MONTH_FLOOR;
+  if (yearStart > start) start = yearStart;
+  if (hireMonth && hireMonth > start) start = hireMonth;
+  if (start > end) return [end];
+  return enumerateMonthKeys(start, end).reverse();
+}
+
+export function clampMonthKey(key, options) {
+  if (!options?.length) return monthKey();
+  if (options.includes(key)) return key;
+  return options[0];
+}
+
 export function monthLabel(key) {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
