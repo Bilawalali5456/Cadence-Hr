@@ -114,6 +114,11 @@ const attToJs = (r) => ({
   source: r.source || "manual",
   checkInMethod: r.check_in_method || null,
   checkOutMethod: r.check_out_method || null,
+  manuallyCorrected: r.manually_corrected === true,
+  correctionLog: r.correction_log || [],
+  lastCorrectedBy: r.last_corrected_by || null,
+  lastCorrectedByRole: r.last_corrected_by_role || null,
+  lastCorrectedOn: r.last_corrected_on || null,
 });
 
 const leaveToJs = (r) => ({
@@ -395,8 +400,9 @@ app.put("/api/attendance", async (req, res) => {
         `INSERT INTO attendance (
            id, user_id, date, check_in, check_out, breaks, short_leaves, break_start, break_end,
            auto_checkout, working_ms, total_break_ms, status, late, source,
-           check_in_method, check_out_method
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+           check_in_method, check_out_method, manually_corrected, correction_log,
+           last_corrected_by, last_corrected_by_role, last_corrected_on
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
         [
           a.id, a.userId, a.date, a.checkIn || null, a.checkOut || null,
           JSON.stringify(a.breaks || []), JSON.stringify(a.shortLeaves || []),
@@ -404,6 +410,11 @@ app.put("/api/attendance", async (req, res) => {
           a.workingMs ?? null, a.totalBreakMs ?? null, a.status || null, a.late || false,
           a.source || "manual",
           a.checkInMethod || null, a.checkOutMethod || null,
+          a.manuallyCorrected === true,
+          JSON.stringify(a.correctionLog || []),
+          a.lastCorrectedBy || null,
+          a.lastCorrectedByRole || null,
+          a.lastCorrectedOn || null,
         ]
       )
     );

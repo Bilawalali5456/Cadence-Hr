@@ -205,6 +205,11 @@ ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_in_method VARCHAR(20);
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_out_method VARCHAR(20);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS manually_corrected BOOLEAN DEFAULT false;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS correction_log JSONB DEFAULT '[]';
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by_role TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_on TEXT;
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS

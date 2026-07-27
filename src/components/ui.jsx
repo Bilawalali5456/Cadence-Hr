@@ -11,6 +11,7 @@ export function Pill({ tone = "slate", children }) {
     dark:   "bg-slate-800 text-white",
     slate:  "bg-slate-100 text-slate-600",
     blue:   "bg-blue-100 text-blue-700",
+    purple: "bg-purple-100 text-purple-700",
   };
   return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${map[tone]||map.slate}`}>{children}</span>;
 }

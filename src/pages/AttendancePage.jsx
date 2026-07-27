@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn } from "lucide-react";
+import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision } from "../utils.js";
+import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, formatShiftRange, formatDurationMs, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
+import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
@@ -141,6 +142,11 @@ export function EmployeeAttendanceFull(props) {
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
   const [period, setPeriod] = useState("daily");
   const [month, setMonth] = useState(monthKey());
+  const [correctionTarget, setCorrectionTarget] = useState(null);
+  const canManageCorrections = isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role);
+  const correctionAudit = isExecutiveRole(currentUser.role)
+    ? flattenCorrectionAuditLog(attendance, users)
+    : [];
   const staffRoster = employeeRoster(users || []);
   const allStaff = staffRoster.filter(u => u && u.status === "active");
   const liveRoster = (isExecutiveRole(currentUser.role)
@@ -209,6 +215,15 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
 
   return (
     <div className="space-y-5">
+      <AttendanceCorrectionModal
+        open={!!correctionTarget}
+        onClose={() => setCorrectionTarget(null)}
+        target={correctionTarget}
+        currentUser={currentUser}
+        attendance={attendance}
+        setAttendance={setAttendance}
+        holidays={holidays}
+      />
       {isExecutiveRole(currentUser.role) && (
         <HrAdminOversightPanel
           users={users}
@@ -327,14 +342,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status"].map(h => (
-                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
+                  <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h || "Actions"}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {liveRoster.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={canManageCorrections ? 7 : 6} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
                 const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays));
@@ -369,9 +384,24 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         <Pill tone={ds.tone}>{ds.label}</Pill>
+                        {r?.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
                         {isWfhAttendance(r, u.id, today, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
+                    {canManageCorrections && (
+                      <td className="px-4 py-3">
+                        {canCorrectAttendance(currentUser, r) && (
+                          <button
+                            type="button"
+                            onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: today })}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                            title="Edit attendance"
+                          >
+                            <Pencil size={12} />Edit
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -395,14 +425,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[880px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status"].map(h => (
-                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                {["Employee", "Date", "Check-in", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
+                  <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h || "Actions"}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {reportRows.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
+                <tr><td colSpan={canManageCorrections ? 7 : 6} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
               ) : reportRows.map(r => {
                 const ds = dayStatusPill(resolveDayStatus(r.user, r, r?.date ?? todayKey(), holidays));
                 const missingOut = formatCheckOutDisplay(r);
@@ -423,9 +453,24 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         <Pill tone={ds.tone}>{ds.label}</Pill>
+                        {r.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
                         {isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
+                    {canManageCorrections && (
+                      <td className="px-4 py-3">
+                        {canCorrectAttendance(currentUser, r) && (
+                          <button
+                            type="button"
+                            onClick={() => setCorrectionTarget({ user: r.user, record: r, dateKey: r.date })}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                            title="Edit attendance"
+                          >
+                            <Pencil size={12} />Edit
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -433,6 +478,41 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </table>
         </div>
       </Card>
+
+      {correctionAudit.length > 0 && (
+        <Card className="overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200">
+            <STitle>Attendance correction audit log</STitle>
+            <p className="text-xs text-slate-500 mt-1">All manual corrections across the organization, including those made by Admin.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[960px]">
+              <thead>
+                <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
+                  {["When", "Employee", "Date", "Corrected by", "Reason", "Changes"].map(h => (
+                    <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {correctionAudit.slice(0, 50).map(entry => (
+                  <tr key={entry.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(entry.at).toLocaleString()}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{entry.employeeName}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(entry.date)}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {entry.by}
+                      <span className="text-xs text-slate-400 ml-1">({entry.byRole === "Executive" ? "Executive" : "Admin"})</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[200px]">{entry.reason}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{formatCorrectionChangeSummary(entry.changes)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

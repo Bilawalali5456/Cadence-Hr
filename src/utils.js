@@ -421,9 +421,124 @@ export function finalizeRecord(record, user, holidays = []) {
     ...record,
     dayStatus,
     status: dayStatus,
+    late: !!(record?.checkIn && isLateCheckIn(record.checkIn, user, holidays)),
     totalBreakMs: calcTotalBreakMs(record),
     workingMs: calcNetWorkingMs(record),
   };
+}
+
+export function isoFromDateAndTime(dateKey, hhmm) {
+  if (!dateKey || !hhmm) return null;
+  const [h, m] = String(hhmm).split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  const d = new Date(`${dateKey}T00:00:00`);
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
+}
+
+export function timeInputFromIso(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+export function wasCorrectedByExecutive(record) {
+  if (!record) return false;
+  if (record.lastCorrectedByRole === "Executive") return true;
+  return (record.correctionLog || []).some(e => e?.byRole === "Executive");
+}
+
+export function canCorrectAttendance(actor, record) {
+  if (!actor) return false;
+  if (!isHrAdminRole(actor.role) && !isExecutiveRole(actor.role)) return false;
+  if (isExecutiveRole(actor.role)) return true;
+  return !wasCorrectedByExecutive(record);
+}
+
+export function formatCorrectionChangeSummary(changes) {
+  if (!changes || typeof changes !== "object") return "";
+  const parts = [];
+  if (changes.checkIn) {
+    parts.push(`Check-in: ${formatTime(changes.checkIn.from) || "—"} → ${formatTime(changes.checkIn.to) || "—"}`);
+  }
+  if (changes.checkOut) {
+    parts.push(`Check-out: ${formatTime(changes.checkOut.from) || "—"} → ${formatTime(changes.checkOut.to) || "—"}`);
+  }
+  return parts.join(" · ");
+}
+
+export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason }, holidays = []) {
+  const list = attendance || [];
+  const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
+  const prevCheckIn = existing?.checkIn || null;
+  const prevCheckOut = existing?.checkOut || null;
+  const newCheckIn = checkInTime ? isoFromDateAndTime(dateKey, checkInTime) : null;
+  const newCheckOut = checkOutTime ? isoFromDateAndTime(dateKey, checkOutTime) : null;
+
+  if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };
+  if (!newCheckIn && !newCheckOut) return { attendance: list, error: "Enter at least a check-in or check-out time." };
+  if (newCheckIn && newCheckOut && new Date(newCheckOut) <= new Date(newCheckIn)) {
+    return { attendance: list, error: "Check-out must be after check-in." };
+  }
+
+  const changes = {};
+  if (prevCheckIn !== newCheckIn) changes.checkIn = { from: prevCheckIn, to: newCheckIn };
+  if (prevCheckOut !== newCheckOut) changes.checkOut = { from: prevCheckOut, to: newCheckOut };
+  if (Object.keys(changes).length === 0) return { attendance: list, error: "No changes to save." };
+
+  const logEntry = {
+    id: `corr-${Date.now()}`,
+    by: actor.name,
+    byRole: actor.role,
+    at: new Date().toISOString(),
+    reason: reason.trim(),
+    changes,
+  };
+
+  const base = existing || {
+    id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    userId,
+    date: dateKey,
+    breaks: [],
+    shortLeaves: [],
+    breakStart: null,
+    breakEnd: null,
+    autoCheckout: false,
+    source: "manual",
+    correctionLog: [],
+  };
+
+  const updated = finalizeRecord({
+    ...base,
+    checkIn: newCheckIn,
+    checkOut: newCheckOut,
+    manuallyCorrected: true,
+    correctionLog: [...(base.correctionLog || []), logEntry],
+    lastCorrectedBy: actor.name,
+    lastCorrectedByRole: actor.role,
+    lastCorrectedOn: logEntry.at,
+  }, user, holidays);
+
+  const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
+  return { attendance: next, error: null };
+}
+
+export function flattenCorrectionAuditLog(attendance, users = []) {
+  const nameById = Object.fromEntries((users || []).map(u => [u.id, u.name]));
+  const rows = [];
+  for (const r of (attendance || [])) {
+    if (!r?.correctionLog?.length) continue;
+    for (const entry of r.correctionLog) {
+      rows.push({
+        ...entry,
+        employeeId: r.userId,
+        employeeName: nameById[r.userId] || r.userId,
+        date: r.date,
+      });
+    }
+  }
+  return rows.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
 }
 
 export function canManualCheckIn(user, dateKey, leaveRequests = [], holidays = []) {
