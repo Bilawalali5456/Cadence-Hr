@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Briefcase, Search, UserPlus, Trash2, Edit2, User, Save, Phone, Mail, RefreshCw } from "lucide-react";
+import { Briefcase, Search, UserPlus, Trash2, Edit2, User, Save, Phone, Mail, RefreshCw, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
-import { apiSendCredentials } from "../api.js";
+import { apiSendCredentials, apiDeleteEmployee, purgeEmployeeClientState } from "../api.js";
 import { todayKey, genId, genTempPw } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, SelectInput, PwInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
@@ -9,7 +9,16 @@ export const EXECUTIVE_POSITIONS = [
   "CEO", "CTO", "COO", "CFO", "CMO", "Team Lead", "Director", "VP", "Other",
 ];
 
-export function ExecutivesPage({ users, setUsers }) {
+export function ExecutivesPage({
+  users, setUsers,
+  attendance, setAttendance,
+  payroll, setPayroll,
+  leaveRequests, setLeaveRequests,
+  shortLeaveRequests, setShortLeaveRequests,
+  assets, setAssets,
+  notifications, setNotifications,
+  warnings, setWarnings,
+}) {
   const [q, setQ] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -22,6 +31,8 @@ export function ExecutivesPage({ users, setUsers }) {
   const [ferr, setFerr] = useState("");
   const [emailSending, setEmailSending] = useState(false);
   const [pageOk, setPageOk] = useState("");
+  const [pageErr, setPageErr] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
   const blank = { name: "", email: "", phone: "", title: "CEO", password: "", status: "active" };
   const [form, setForm] = useState(blank);
 
@@ -98,9 +109,24 @@ export function ExecutivesPage({ users, setUsers }) {
     setUsers(p => p.map(x => x.id === u.id ? { ...x, status: x.status === "active" ? "inactive" : "active" } : x));
   }
 
-  function confirmDel() {
-    setUsers(p => p.filter(u => u.id !== delTgt.id));
-    setDelOpen(false);
+  async function confirmDel() {
+    if (delBusy) return;
+    setDelBusy(true);
+    setPageErr("");
+    try {
+      const result = await apiDeleteEmployee(delTgt.id);
+      purgeEmployeeClientState(delTgt.id, {
+        setUsers, setAttendance, setLeaveRequests, setShortLeaveRequests,
+        setPayroll, setNotifications, setWarnings, setAssets,
+      });
+      setDelOpen(false);
+      setPageOk(`${delTgt.name} and all related records were permanently removed. Database backup: ${result.backup}.`);
+      setTimeout(() => setPageOk(""), 8000);
+    } catch (e) {
+      setPageErr(e.message || "Failed to delete executive.");
+    } finally {
+      setDelBusy(false);
+    }
   }
 
   function doPasswordReset() {
@@ -137,6 +163,7 @@ export function ExecutivesPage({ users, setUsers }) {
       </div>
 
       {pageOk && <div className="mb-4"><OkBox msg={pageOk} /></div>}
+      {pageErr && <div className="mb-4"><ErrBox msg={pageErr} /></div>}
 
       <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
         <Briefcase size={16} className="mt-0.5 shrink-0" />
@@ -237,11 +264,20 @@ export function ExecutivesPage({ users, setUsers }) {
         </div>
       </Modal>
 
-      <Modal open={delOpen} onClose={() => setDelOpen(false)} title="Delete executive">
-        <p className="text-sm text-slate-600 mb-4">Permanently remove <b>{delTgt?.name}</b>? This cannot be undone.</p>
+      <Modal open={delOpen} onClose={() => !delBusy && setDelOpen(false)} title="Delete executive">
+        <div className="flex gap-3 items-start p-3 rounded-lg border mb-4" style={{ background: B.redLight, borderColor: B.redBorder }}>
+          <AlertTriangle size={18} style={{ color: B.red }} className="shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium" style={{ color: B.red }}>Delete {delTgt?.name}?</p>
+            <p className="text-xs text-red-700 mt-2 leading-relaxed">
+              Deleting this employee will permanently remove all their attendance, leave, and other records. This cannot be undone. Are you sure?
+            </p>
+            <p className="text-xs text-red-600 mt-2">A database backup will be created automatically before deletion.</p>
+          </div>
+        </div>
         <div className="flex gap-2">
-          <Btn variant="danger" onClick={confirmDel}><Trash2 size={14} />Delete</Btn>
-          <Btn variant="ghost" onClick={() => setDelOpen(false)}>Cancel</Btn>
+          <Btn variant="danger" onClick={confirmDel} disabled={delBusy}><Trash2 size={14} />{delBusy ? "Deleting…" : "Delete permanently"}</Btn>
+          <Btn variant="ghost" onClick={() => setDelOpen(false)} disabled={delBusy}>Cancel</Btn>
         </div>
       </Modal>
 

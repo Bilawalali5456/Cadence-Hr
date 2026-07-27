@@ -21,6 +21,41 @@ export async function apiSave(collection, data) {
   }
 }
 
+export async function apiDeleteEmployee(userId) {
+  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
+  return body;
+}
+
+/** Remove an employee from all in-memory collections after server cascade delete. */
+export function purgeEmployeeClientState(userId, setters = {}) {
+  const {
+    setUsers,
+    setAttendance,
+    setLeaveRequests,
+    setShortLeaveRequests,
+    setPayroll,
+    setNotifications,
+    setWarnings,
+    setAssets,
+  } = setters;
+  if (setUsers) setUsers((p) => p.filter((u) => u.id !== userId));
+  if (setAttendance) setAttendance((p) => p.filter((r) => r?.userId !== userId));
+  if (setLeaveRequests) setLeaveRequests((p) => p.filter((r) => r?.userId !== userId));
+  if (setShortLeaveRequests) setShortLeaveRequests((p) => p.filter((r) => r?.userId !== userId));
+  if (setPayroll) setPayroll((p) => p.filter((s) => s?.userId !== userId));
+  if (setNotifications) setNotifications((p) => p.filter((n) => n?.userId !== userId));
+  if (setWarnings) setWarnings((p) => p.filter((w) => w?.userId !== userId));
+  if (setAssets) {
+    setAssets((p) => p.map((a) => (
+      a?.assignedTo === userId
+        ? { ...a, assignedTo: null, status: "available" }
+        : a
+    )));
+  }
+}
+
 export async function apiFetchNotifications() {
   const res = await fetch(`${API_URL}/notifications`);
   if (!res.ok) throw new Error("API error " + res.status);

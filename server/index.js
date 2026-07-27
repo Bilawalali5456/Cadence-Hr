@@ -10,6 +10,8 @@ import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from ".
 import { registerAdmsRoutes } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
 import { startAttendanceSyncProcessor } from "./lib/attendanceSync.js";
+import { createDatabaseBackup } from "./lib/dbBackup.js";
+import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 
 dotenv.config();
 
@@ -328,6 +330,29 @@ app.put("/api/users", async (req, res) => {
   } catch (e) {
     console.error("users sync error:", e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/users/:userId", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    if (!userId) return res.status(400).json({ error: "Employee id is required." });
+
+    const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
+    const result = await deleteEmployeeCascade(pool, userId);
+    if (!result.ok) return res.status(404).json({ error: result.error });
+
+    res.json({
+      ok: true,
+      userId,
+      name: result.name,
+      backup: backup.filename,
+      backupFormat: backup.format,
+      deleted: result.counts,
+    });
+  } catch (e) {
+    console.error("delete employee error:", e.message);
+    res.status(500).json({ error: e.message || "Failed to delete employee." });
   }
 });
 

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
-import { apiSendCredentials, apiSendWarningEmail } from "../api.js";
+import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState } from "../api.js";
 import { DEFAULT_ANNUAL_LEAVE, DEFAULT_SHIFT_ID, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, getShiftNameForUser, getDefaultShiftTemplate, formatShiftRange, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
@@ -14,6 +14,7 @@ export function PeoplePage({
   payroll = [], setPayroll, leaveRequests = [], setLeaveRequests,
   shortLeaveRequests = [], setShortLeaveRequests, roles, holidays = [],
   shifts = [],
+  assets = [], setAssets,
   notifications, setNotifications, warnings = [], setWarnings,
 }) {
   const canManage = can(currentUser.role, "manage_employees", roles);
@@ -37,6 +38,7 @@ export function PeoplePage({
   const [emailSending, setEmailSending] = useState(false);
   const [pageOk, setPageOk] = useState("");
   const [pageErr, setPageErr] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
 
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
@@ -131,11 +133,25 @@ export function PeoplePage({
     setEditOpen(false);
   }
 
-  function confirmDel() {
-    if (!canDeletePerson(currentUser, delTgt, roles)) return;
-    setUsers(p => p.filter(u => u.id !== delTgt.id));
-    if (sel?.id === delTgt.id) setSel(null);
-    setDelOpen(false);
+  async function confirmDel() {
+    if (!canDeletePerson(currentUser, delTgt, roles) || delBusy) return;
+    setDelBusy(true);
+    setPageErr("");
+    try {
+      const result = await apiDeleteEmployee(delTgt.id);
+      purgeEmployeeClientState(delTgt.id, {
+        setUsers, setAttendance, setLeaveRequests, setShortLeaveRequests,
+        setPayroll, setNotifications, setWarnings, setAssets,
+      });
+      if (sel?.id === delTgt.id) setSel(null);
+      setDelOpen(false);
+      setPageOk(`${delTgt.name} and all related records were permanently removed. Database backup: ${result.backup}.`);
+      setTimeout(() => setPageOk(""), 8000);
+    } catch (e) {
+      setPageErr(e.message || "Failed to delete employee.");
+    } finally {
+      setDelBusy(false);
+    }
   }
 
   function doPasswordReset() {
@@ -377,17 +393,20 @@ export function PeoplePage({
       </Modal>
 
       {/* Delete */}
-      <Modal open={delOpen} onClose={() => setDelOpen(false)} title={isHrAdminRole(delTgt?.role) ? "Remove HR Admin" : "Delete employee"}>
+      <Modal open={delOpen} onClose={() => !delBusy && setDelOpen(false)} title={isHrAdminRole(delTgt?.role) ? "Remove HR Admin" : "Delete employee"}>
         <div className="flex gap-3 items-start p-3 rounded-lg border mb-4" style={{ background: B.redLight, borderColor: B.redBorder }}>
           <AlertTriangle size={18} style={{ color: B.red }} className="shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium" style={{ color: B.red }}>Permanently remove {delTgt?.name}?</p>
-            <p className="text-xs text-red-600 mt-1">This cannot be undone. The account and associated profile data will be removed from the system.</p>
+            <p className="text-sm font-medium" style={{ color: B.red }}>Delete {delTgt?.name}?</p>
+            <p className="text-xs text-red-700 mt-2 leading-relaxed">
+              Deleting this employee will permanently remove all their attendance, leave, and other records. This cannot be undone. Are you sure?
+            </p>
+            <p className="text-xs text-red-600 mt-2">A database backup will be created automatically before deletion.</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <Btn variant="danger" onClick={confirmDel}><Trash2 size={14} />Delete</Btn>
-          <Btn variant="ghost"  onClick={() => setDelOpen(false)}>Cancel</Btn>
+          <Btn variant="danger" onClick={confirmDel} disabled={delBusy}><Trash2 size={14} />{delBusy ? "Deleting…" : "Delete permanently"}</Btn>
+          <Btn variant="ghost" onClick={() => setDelOpen(false)} disabled={delBusy}>Cancel</Btn>
         </div>
       </Modal>
 
