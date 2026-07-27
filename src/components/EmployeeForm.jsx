@@ -1,6 +1,6 @@
 import React from "react";
 import { Clock, User, Shield, Phone, Mail, Landmark } from "lucide-react";
-import { SHIFT_DAYS, SHIFT_DAY_LABELS, formatCnicInput } from "../utils.js";
+import { SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, formatCnicInput } from "../utils.js";
 import { TextInput, SelectInput, ErrBox } from "./ui.jsx";
 
 export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
@@ -30,6 +30,8 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
         <TextInput label="Salary"    value={form.salary}  onChange={v => setForm({ ...form, salary: v })}  placeholder="e.g. 80,000 PKR" />
         <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
           options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
+        <SelectInput label="Work mode" value={form.workMode || "office"} onChange={v => setForm({ ...form, workMode: v })}
+          options={[{ value: "office", label: "Office (biometric)" }, { value: "wfh", label: "Work from Home (manual check-in)" }]} />
         <SelectInput label="Marital status" value={form.maritalStatus || ""} onChange={v => setForm({ ...form, maritalStatus: v })}
           options={[{ value: "", label: "Select…" }, { value: "Married", label: "Married" }, { value: "Unmarried", label: "Unmarried" }]} />
       </div>
@@ -64,7 +66,7 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
               </tr>
             </thead>
             <tbody>
-              {SHIFT_DAYS.map(day => {
+              {SHIFT_WEEKDAYS.map(day => {
                 const row = form.weeklySchedule?.[day] || { off: false, shiftStart: "09:00", shiftEnd: "18:00" };
                 return (
                   <tr key={day} className="border-b border-slate-100 last:border-0">
@@ -118,7 +120,17 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-slate-400 mt-2">Set separate timings for each day. Mark a day Off to exclude it from Late, Early Leave, Short Hours, and Absent calculations.</p>
+        <p className="text-xs text-slate-400 mt-2">Set separate timings for each weekday (Mon–Fri). Saturday and Sunday are always treated as off. Mark a weekday Off to exclude it from Late, Early Leave, Short Hours, and Absent calculations.</p>
+        {(form.workMode || "office") === "office" && (
+          <label className="flex items-center gap-2 mt-3 text-sm text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!form.manualCheckInEnabled}
+              onChange={e => setForm({ ...form, manualCheckInEnabled: e.target.checked })}
+            />
+            Allow manual check-in (override for office employees who cannot use the biometric device today)
+          </label>
+        )}
       </div>
       <div className="pt-2 border-t border-slate-100">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">

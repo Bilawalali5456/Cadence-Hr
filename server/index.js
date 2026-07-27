@@ -87,6 +87,8 @@ const userToJs = (r) => ({
   bankAccount: r.bank_account || "",
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
+  workMode: r.work_mode || "office",
+  manualCheckInEnabled: r.manual_check_in_enabled === true,
 });
 
 /** Public user payload — never include password or tempPassword. */
@@ -289,10 +291,10 @@ app.put("/api/users", async (req, res) => {
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
            guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-           bank_name, bank_branch, bank_account, bank_iban, shift
+           bank_name, bank_branch, bank_account, bank_iban, shift, work_mode, manual_check_in_enabled
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,$27,$28,$29
+           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
          )`,
         [
           u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
@@ -302,6 +304,8 @@ app.put("/api/users", async (req, res) => {
           u.guardianName || "", u.emergencyContactName || "", u.emergencyContactPhone || "", u.emergencyContactRelation || "",
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
           u.shift ? JSON.stringify(u.shift) : null,
+          u.workMode || "office",
+          u.manualCheckInEnabled === true,
         ]
       );
     });

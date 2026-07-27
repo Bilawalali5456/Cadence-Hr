@@ -42,8 +42,9 @@ function normalizeWeeklySchedule(shift = {}) {
   for (const day of SHIFT_DAYS) {
     const def = DEFAULT_WEEKLY_SCHEDULE[day];
     const src = base?.[day];
+    const isWeekend = day === "saturday" || day === "sunday";
     weekly[day] = {
-      off: src?.off ?? (base ? def.off : (day === "saturday" || day === "sunday")),
+      off: isWeekend ? true : (src?.off ?? (base ? def.off : false)),
       shiftStart: src?.shiftStart || (base ? def.shiftStart : fallbackStart),
       shiftEnd: src?.shiftEnd || (base ? def.shiftEnd : fallbackEnd),
     };

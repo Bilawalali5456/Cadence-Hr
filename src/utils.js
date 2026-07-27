@@ -170,6 +170,8 @@ export function activePayrollRoster(users, viewerRole) {
 }
 
 export const SHIFT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+/** Mon–Fri only — used in shift settings UI; Sat/Sun are always off. */
+export const SHIFT_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
 export const SHIFT_DAY_LABELS = {
   monday: "Monday",
   tuesday: "Tuesday",
@@ -216,8 +218,9 @@ export function normalizeWeeklySchedule(shift = {}) {
   for (const day of SHIFT_DAYS) {
     const def = DEFAULT_WEEKLY_SCHEDULE[day];
     const src = base?.[day];
+    const isWeekend = day === "saturday" || day === "sunday";
     weekly[day] = {
-      off: src?.off ?? (base ? def.off : (day === "saturday" || day === "sunday")),
+      off: isWeekend ? true : (src?.off ?? (base ? def.off : false)),
       shiftStart: src?.shiftStart || (base ? def.shiftStart : fallbackStart),
       shiftEnd: src?.shiftEnd || (base ? def.shiftEnd : fallbackEnd),
     };
@@ -374,7 +377,14 @@ export function finalizeRecord(record, user, holidays = []) {
   };
 }
 
+export function canManualCheckIn(user) {
+  return user?.workMode === "wfh" || user?.manualCheckInEnabled === true;
+}
+
 export function canCheckIn(now, user, record, holidays = []) {
+  if (!canManualCheckIn(user)) {
+    return { ok: false, msg: "Manual check-in is not enabled for your account. Use the office biometric device." };
+  }
   const bounds = getShiftBounds(user, todayKey(now));
   if (bounds.off) return { ok: false, msg: "Today is off in your assigned shift." };
   const pub = getPublicHoliday(todayKey(now), holidays);
@@ -921,13 +931,49 @@ function approvedLeaveDatesForUser(leaveRequests, userId, fromKey, toKey, holida
 
 export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays = []) {
   const { start, end } = monthDateRange(month);
-  const joined = user?.hired && user.hired >= start && user.hired <= end ? user.hired : start;
-  const scheduledDates = scheduledWorkDatesForUser(user, joined, end, holidays);
+  const today = todayKey();
+  let rangeStart = start;
+  let rangeEnd = end;
+
+  if (user?.hired) {
+    if (user.hired > end) {
+      return {
+        month,
+        joinedFrom: user.hired,
+        totalPresentDays: 0,
+        totalAbsentDays: 0,
+        totalLateDays: 0,
+        totalWorkingMs: 0,
+        totalRequiredMs: 0,
+        approvedLeaveDays: 0,
+        payableDays: 0,
+      };
+    }
+    if (user.hired > rangeStart) rangeStart = user.hired;
+  }
+
+  if (rangeEnd > today) rangeEnd = today;
+
+  if (rangeStart > rangeEnd) {
+    return {
+      month,
+      joinedFrom: rangeStart,
+      totalPresentDays: 0,
+      totalAbsentDays: 0,
+      totalLateDays: 0,
+      totalWorkingMs: 0,
+      totalRequiredMs: 0,
+      approvedLeaveDays: 0,
+      payableDays: 0,
+    };
+  }
+
+  const scheduledDates = scheduledWorkDatesForUser(user, rangeStart, rangeEnd, holidays);
   const scheduledSet = new Set(scheduledDates);
-  const leaveDates = approvedLeaveDatesForUser(leaveRequests, user?.id, joined, end, holidays, user);
+  const leaveDates = approvedLeaveDatesForUser(leaveRequests, user?.id, rangeStart, rangeEnd, holidays, user);
 
   const rows = (attendance || [])
-    .filter(r => r && r.userId === user?.id && r.date && r.date >= joined && r.date <= end)
+    .filter(r => r && r.userId === user?.id && r.date && r.date >= rangeStart && r.date <= rangeEnd)
     .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 
   const presentRows = rows.filter(r => r.checkIn && scheduledSet.has(r.date));
@@ -943,17 +989,15 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
     }, 0);
   const approvedLeaveDays = leaveDates.size;
   const absentDays = scheduledDates.filter(d => !presentDates.has(d) && !leaveDates.has(d)).length;
-  const overtimeMs = Math.max(0, totalWorkingMs - totalRequiredMs);
 
   return {
     month,
-    joinedFrom: joined,
+    joinedFrom: rangeStart,
     totalPresentDays: presentDates.size,
     totalAbsentDays: absentDays,
     totalLateDays: lateDays,
     totalWorkingMs,
     totalRequiredMs,
-    overtimeMs,
     approvedLeaveDays,
     payableDays: presentDates.size + approvedLeaveDays,
   };

@@ -41,6 +41,7 @@ export function PeoplePage({
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10, weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
+    workMode: "office", manualCheckInEnabled: false,
   };
   const [form, setForm] = useState(blank);
 
@@ -60,6 +61,8 @@ export function PeoplePage({
       breakMinutes: s.breakMinutes,
       checkoutGraceMinutes: s.checkoutGraceMinutes,
       weeklySchedule: normalizeWeeklySchedule(u.shift || {}),
+      workMode: u.workMode || "office",
+      manualCheckInEnabled: !!u.manualCheckInEnabled,
     });
     setFerr("");
     setEditOpen(true);

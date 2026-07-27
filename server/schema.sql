@@ -205,6 +205,8 @@ ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_in_method VARCHAR(20);
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_out_method VARCHAR(20);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS work_mode TEXT DEFAULT 'office';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS manual_check_in_enabled BOOLEAN DEFAULT false;
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS

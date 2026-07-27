@@ -15,10 +15,10 @@ import {
   performBreakEnd,
   displayWorkingHours,
   todayKey,
-  isWeekendDate,
   getPublicHoliday,
   formatTime,
   getUserTodayRecord,
+  canManualCheckIn,
 } from "../utils.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
 
@@ -28,9 +28,9 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const shift = getUserShift(user);
   const bounds = getShiftBounds(user, todayKey());
   const key = todayKey();
-  const weekendOff = isWeekendDate(key);
   const publicHoliday = getPublicHoliday(key, holidays);
-  const dayOff = weekendOff || publicHoliday;
+  const dayOff = bounds.off || publicHoliday;
+  const showManualActions = canManualCheckIn(user);
   const checkedIn = today?.checkIn && !today?.checkOut;
   const onBreak = today?.breakStart && !today?.breakEnd;
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
@@ -49,9 +49,9 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         <STitle right={<Pill tone={daySt.tone}>{daySt.label}</Pill>}>
           {compact ? "Today's attendance" : "Shift attendance"}
         </STitle>
-        {weekendOff ? (
+        {bounds.off ? (
           <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
-            Today is a weekend off. Saturday and Sunday are company holidays — check-in is not available.
+            Today is off in your assigned shift — check-in is not available.
           </div>
         ) : publicHoliday ? (
           <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
@@ -88,7 +88,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         </div>
         )}
 
-        {!dayOff && !today?.checkOut && (
+        {!dayOff && showManualActions && !today?.checkOut && (
           <div className="flex flex-wrap gap-2 justify-center mb-4">
             {!checkedIn && (
               <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays))}>
@@ -112,6 +112,9 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
               )
             )}
           </div>
+        )}
+        {!dayOff && !showManualActions && !today?.checkIn && (
+          <p className="text-xs text-center text-slate-400 mb-4">Use the office biometric device to check in.</p>
         )}
 
         {!dayOff && today?.shortLeaves?.filter(sl => sl.status === "approved").length > 0 && (

@@ -72,7 +72,6 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
             ["Approved leave", monthSummary.approvedLeaveDays],
             ["Working hours", formatDurationMs(monthSummary.totalWorkingMs)],
             ["Required hours", formatDurationMs(monthSummary.totalRequiredMs)],
-            ["Overtime", formatDurationMs(monthSummary.overtimeMs)],
             ["Payable days", monthSummary.payableDays],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg border border-slate-200 p-3">
@@ -293,14 +292,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[1080px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Required hours", "Overtime", "Payable days"].map(h => (
+                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Required hours", "Payable days"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {monthlyRows.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : monthlyRows.map(({ user, summary }) => (
                 <tr key={user.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
@@ -310,7 +309,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                   <td className="px-4 py-3">{summary.approvedLeaveDays}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalWorkingMs)}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalRequiredMs)}</td>
-                  <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.overtimeMs)}</td>
                   <td className="px-4 py-3">{summary.payableDays}</td>
                 </tr>
               ))}
