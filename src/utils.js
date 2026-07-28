@@ -558,25 +558,39 @@ export function isLateCheckIn(checkInIso, user, holidays = []) {
 }
 
 export function computeDayStatus(user, record, holidays = [], now = new Date()) {
-  const dateKey = record?.date || todayKey();
+  const currentTime = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+  const dateKey = record?.date || todayKey(currentTime);
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  if (bounds.end && now < bounds.end) return "Working";
+  // Before shift end, employee is still working — ignore provisional check-out scans
+  const shift = getUserShift(user, dateKey);
+  let employeeShiftEndTime = bounds.end;
+  if (!shift.off && shift.shiftEnd) {
+    const startIso = karachiDateToIso(dateKey, shift.shiftStart);
+    const endIso = karachiDateToIso(dateKey, shift.shiftEnd);
+    if (endIso) {
+      employeeShiftEndTime = new Date(endIso);
+      if (startIso && employeeShiftEndTime <= new Date(startIso)) {
+        employeeShiftEndTime = new Date(employeeShiftEndTime.getTime() + 86400000);
+      }
+    }
+  }
+  if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
 
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) {
-    return shouldFinalizeAttendance(user, dateKey, now) ? "Missing Checkout" : (late ? "Late" : "Present");
+    return shouldFinalizeAttendance(user, dateKey, currentTime) ? "Missing Checkout" : (late ? "Late" : "Present");
   }
 
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (late) return "Late";
-  if (bounds.end && now < bounds.end) return "Working";
-  if (new Date(record.checkOut) < bounds.end) return "Early Leave";
+  if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
+  if (employeeShiftEndTime && new Date(record.checkOut) < employeeShiftEndTime) return "Early Leave";
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
 }
@@ -594,8 +608,20 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
 /** Effective checkout for display — null during active shift even if DB has premature check_out. */
 export function effectiveCheckOut(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return null;
-  const bounds = getShiftBounds(user, dateKey);
-  if (bounds.end && now < bounds.end) return null;
+  const currentTime = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+  const shift = getUserShift(user, dateKey);
+  let employeeShiftEndTime = getShiftBounds(user, dateKey).end;
+  if (!shift.off && shift.shiftEnd) {
+    const startIso = karachiDateToIso(dateKey, shift.shiftStart);
+    const endIso = karachiDateToIso(dateKey, shift.shiftEnd);
+    if (endIso) {
+      employeeShiftEndTime = new Date(endIso);
+      if (startIso && employeeShiftEndTime <= new Date(startIso)) {
+        employeeShiftEndTime = new Date(employeeShiftEndTime.getTime() + 86400000);
+      }
+    }
+  }
+  if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return null;
   return record.checkOut || null;
 }
 
@@ -1005,8 +1031,7 @@ export function displayWorkingHours(record, user, now = new Date()) {
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
-  const bounds = getShiftBounds(user, dateKey);
-  if (bounds.end && now < bounds.end) return "—";
+  if (computeDayStatus(user, record, [], now) === "Working") return "—";
   if (effectiveCheckOut(record, user, dateKey, now)) return null;
   return "Missing";
 }
