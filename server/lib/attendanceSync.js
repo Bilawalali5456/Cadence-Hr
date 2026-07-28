@@ -1,3 +1,5 @@
+import { karachiDateKey, parseZktTime } from "./admsHelpers.js";
+
 /**
  * Biometric attendance calculation:
  * - First scan of day = Check-in
@@ -9,7 +11,7 @@
  */
 
 export function dateKeyFromDate(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return karachiDateKey(d);
 }
 
 const SHIFT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -237,21 +239,21 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
  */
 export function aggregateDayScans(logs) {
   const sorted = [...(logs || [])].sort(
-    (a, b) => new Date(a.punch_time) - new Date(b.punch_time)
+    (a, b) => parseZktTime(a.punch_time_local || a.punch_time) - parseZktTime(b.punch_time_local || b.punch_time)
   );
   if (!sorted.length) {
     return { checkIn: null, checkOut: null, checkInMethod: null, checkOutMethod: null, scanCount: 0 };
   }
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
-  const checkIn = new Date(first.punch_time).toISOString();
+  const checkIn = parseZktTime(first.punch_time_local || first.punch_time)?.toISOString();
   const checkInMethod = methodLabel(first.verify_method);
   if (sorted.length === 1) {
     return { checkIn, checkOut: null, checkInMethod, checkOutMethod: null, scanCount: 1 };
   }
   return {
     checkIn,
-    checkOut: new Date(last.punch_time).toISOString(),
+    checkOut: parseZktTime(last.punch_time_local || last.punch_time)?.toISOString(),
     checkInMethod,
     checkOutMethod: methodLabel(last.verify_method),
     scanCount: sorted.length,
@@ -264,7 +266,7 @@ export function aggregateDayScans(logs) {
  */
 export async function syncAttendanceFromLogs(pool) {
   const { rows: pending } = await pool.query(
-    `SELECT DISTINCT employee_id, punch_time::date AS day
+    `SELECT DISTINCT employee_id, TO_CHAR(punch_time, 'YYYY-MM-DD') AS day
      FROM attendance_logs
      WHERE synced_to_attendance = false AND is_duplicate = false AND employee_id IS NOT NULL`
   );
@@ -278,12 +280,13 @@ export async function syncAttendanceFromLogs(pool) {
 
   for (const row of pending) {
     const employeeId = row.employee_id;
-    const dateKey = dateKeyFromDate(new Date(row.day));
+    const dateKey = String(row.day || "").slice(0, 10);
     const user = userById.get(employeeId);
     if (!user) continue;
 
     const { rows: dayLogs } = await pool.query(
-      `SELECT * FROM attendance_logs
+      `SELECT attendance_logs.*, TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
+       FROM attendance_logs
        WHERE employee_id = $1
          AND is_duplicate = false
          AND punch_time::date = $2::date

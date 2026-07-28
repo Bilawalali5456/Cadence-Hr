@@ -221,6 +221,7 @@ export function activePayrollRoster(users, viewerRole) {
 export const SHIFT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 /** Mon–Fri only — used in shift settings UI; Sat/Sun are always off. */
 export const SHIFT_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+export const APP_TIMEZONE = "Asia/Karachi";
 export const SHIFT_DAY_LABELS = {
   monday: "Monday",
   tuesday: "Tuesday",
@@ -313,6 +314,39 @@ export function shiftDayKey(dateKey = todayKey()) {
     ? new Date(dateKey.includes("T") ? dateKey : dateKey + "T12:00:00")
     : new Date(dateKey);
   return SHIFT_DAYS[(d.getDay() + 6) % 7];
+}
+
+function karachiParts(input) {
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+    second: get("second"),
+  };
+}
+
+function karachiDateToIso(dateKey, hhmm) {
+  if (!dateKey || !hhmm) return null;
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  const [hour, minute] = String(hhmm).split(":").map(Number);
+  if ([year, month, day, hour, minute].some(Number.isNaN)) return null;
+  // Pakistan Standard Time is UTC+5 year-round.
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute, 0, 0)).toISOString();
 }
 
 export function normalizeWeeklySchedule(shift = {}) {
@@ -544,18 +578,14 @@ export function finalizeRecord(record, user, holidays = []) {
 
 export function isoFromDateAndTime(dateKey, hhmm) {
   if (!dateKey || !hhmm) return null;
-  const [h, m] = String(hhmm).split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  const d = new Date(`${dateKey}T00:00:00`);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
+  return karachiDateToIso(dateKey, hhmm);
 }
 
 export function timeInputFromIso(iso) {
   if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const parts = karachiParts(iso);
+  if (!parts) return "";
+  return `${parts.hour}:${parts.minute}`;
 }
 
 export function wasCorrectedByExecutive(record) {
@@ -887,10 +917,9 @@ export function formatCheckOutDisplay(record) {
 }
 
 export function todayKey(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  const parts = karachiParts(d);
+  if (!parts) return "";
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 export const DEFAULT_ANNUAL_LEAVE = 24;
@@ -1004,12 +1033,23 @@ export function computeLeavePaySplit(type, days, availableBalance) {
 
 export function formatTime(iso) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: APP_TIMEZONE,
+  });
 }
 
 export function formatDate(key) {
   if (!key) return "—";
-  return new Date(key + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return new Date(key + "T12:00:00").toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: APP_TIMEZONE,
+  });
 }
 
 export function hoursWorked(checkIn, checkOut) {

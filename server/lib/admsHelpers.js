@@ -20,6 +20,8 @@ export const VERIFY_METHODS = {
   15: "face",
 };
 
+export const PAKISTAN_UTC_OFFSET_HOURS = 5;
+
 export function admsOk() {
   return "OK";
 }
@@ -78,8 +80,47 @@ export function parseZktTime(raw) {
   const s = String(raw || "").trim();
   if (!s) return null;
   const normalized = s.includes("T") ? s : s.replace(" ", "T");
-  const d = new Date(normalized);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(normalized)) {
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const m = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) {
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const [, y, mo, da, h, mi, se = "00"] = m;
+  return new Date(Date.UTC(
+    Number(y),
+    Number(mo) - 1,
+    Number(da),
+    Number(h) - PAKISTAN_UTC_OFFSET_HOURS,
+    Number(mi),
+    Number(se),
+    0,
+  ));
+}
+
+export function karachiTimestampText(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
+export function karachiDateKey(value) {
+  const text = karachiTimestampText(value);
+  return text ? text.slice(0, 10) : "";
 }
 
 export function dateKeyFromDate(d) {
@@ -108,6 +149,7 @@ export function parseAttLogLine(line) {
   return {
     deviceUserId,
     punchTime,
+    punchTimeText: tsRaw.includes("T") ? tsRaw.replace("T", " ") : tsRaw,
     statusCode,
     punchType: PUNCH_TYPES[statusCode] || "check_in",
     verifyMethod: VERIFY_METHODS[verifyCode] || "unknown",

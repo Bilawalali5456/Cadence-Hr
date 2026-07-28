@@ -1,3 +1,5 @@
+import { parseZktTime } from "../lib/admsHelpers.js";
+
 /**
  * Biometric / ZKTeco ADMS admin API (JSON for HRMS frontend)
  */
@@ -74,7 +76,8 @@ export function registerAttendanceApi(app, pool) {
       }
 
       const { rows } = await pool.query(
-        `SELECT al.*, u.name AS portal_name, deu.name AS enrolled_name
+        `SELECT al.*, TO_CHAR(al.punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local,
+                u.name AS portal_name, deu.name AS enrolled_name
          FROM attendance_logs al
          LEFT JOIN users u ON u.id = al.employee_id
          LEFT JOIN device_enrolled_users deu
@@ -89,7 +92,7 @@ export function registerAttendanceApi(app, pool) {
       res.json(rows.map(r => ({
         id: r.id,
         pin: String(r.device_user_id),
-        scanTime: r.punch_time,
+        scanTime: parseZktTime(r.punch_time_local || r.punch_time)?.toISOString() || null,
         punchType: r.punch_type,
         verifyMethod: r.verify_method,
         employeeId: r.employee_id || "",

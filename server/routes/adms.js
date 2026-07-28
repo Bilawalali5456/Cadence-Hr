@@ -80,7 +80,7 @@ async function insertAttendanceLog(pool, serial, parsed) {
   const dup = await pool.query(
     `SELECT id, employee_id FROM attendance_logs
      WHERE device_serial_number = $1 AND device_user_id = $2 AND punch_time = $3 LIMIT 1`,
-    [serial, parsed.deviceUserId, parsed.punchTime]
+    [serial, parsed.deviceUserId, parsed.punchTimeText]
   );
 
   if (dup.rows.length) {
@@ -93,13 +93,13 @@ async function insertAttendanceLog(pool, serial, parsed) {
        verify_method, raw_data, is_duplicate, synced_to_attendance
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false)`,
     [
-      employeeId, parsed.deviceUserId, serial, parsed.punchTime,
+      employeeId, parsed.deviceUserId, serial, parsed.punchTimeText,
       parsed.punchType, parsed.verifyMethod, parsed.rawData,
     ]
   );
 
   if (!employeeId) {
-    logAdms("UNMAPPED_PUNCH", `SN=${serial} user=${parsed.deviceUserId} time=${parsed.punchTime.toISOString()}`);
+    logAdms("UNMAPPED_PUNCH", `SN=${serial} user=${parsed.deviceUserId} time=${parsed.punchTimeText}`);
   }
 
   return { inserted: true, duplicate: false, employeeId };
