@@ -104,18 +104,11 @@ export function parseZktTime(raw) {
 export function karachiTimestampText(value) {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Karachi",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(d);
-  const get = (type) => parts.find((p) => p.type === type)?.value;
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+  // Pakistan Standard Time is UTC+5 year-round; format manually to avoid
+  // locale/hour-cycle edge cases that can emit 24:xx:xx at midnight.
+  const pkt = new Date(d.getTime() + PAKISTAN_UTC_OFFSET_HOURS * 3600000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${pkt.getUTCFullYear()}-${p(pkt.getUTCMonth() + 1)}-${p(pkt.getUTCDate())} ${p(pkt.getUTCHours())}:${p(pkt.getUTCMinutes())}:${p(pkt.getUTCSeconds())}`;
 }
 
 export function karachiDateKey(value) {
