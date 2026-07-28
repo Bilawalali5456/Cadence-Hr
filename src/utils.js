@@ -411,6 +411,28 @@ export function getShiftBounds(user, dateKey) {
   return { start, end, lateCutoff, checkoutDeadline, ...s };
 }
 
+export function hasShiftEnded(user, dateKey, now = new Date()) {
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.off || !bounds.end) return true;
+  return now >= bounds.end;
+}
+
+/** Karachi calendar day has passed (midnight cutoff). */
+export function isAttendanceDayClosed(dateKey, now = new Date()) {
+  return todayKey(now) > String(dateKey || "").slice(0, 10);
+}
+
+export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
+  if (isAttendanceDayClosed(dateKey, now)) return true;
+  return hasShiftEnded(user, dateKey, now);
+}
+
+export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
+  if (!record?.checkIn || record.checkOut) return false;
+  if (record.manuallyCorrected) return false;
+  return !shouldFinalizeAttendance(user, dateKey, now);
+}
+
 export function formatShiftRange(user, dateKey = todayKey()) {
   const s = getUserShift(user, dateKey);
   if (s.off) return "OFF";
@@ -520,7 +542,7 @@ export function isLateCheckIn(checkInIso, user, holidays = []) {
   return new Date(checkInIso) > bounds.lateCutoff;
 }
 
-export function computeDayStatus(user, record, holidays = []) {
+export function computeDayStatus(user, record, holidays = [], now = new Date()) {
   const dateKey = record?.date || todayKey();
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
@@ -528,8 +550,12 @@ export function computeDayStatus(user, record, holidays = []) {
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
+  if (isAttendanceInProgress(user, record, dateKey, now)) return "Working";
+
   const late = isLateCheckIn(record.checkIn, user, holidays);
-  if (!record.checkOut) return late ? "Late" : "Present";
+  if (!record.checkOut) {
+    return shouldFinalizeAttendance(user, dateKey, now) ? "Missing Checkout" : (late ? "Late" : "Present");
+  }
 
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
@@ -539,22 +565,24 @@ export function computeDayStatus(user, record, holidays = []) {
   return "Present";
 }
 
-export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = []) {
+export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  return computeDayStatus(user, record, holidays);
+  return computeDayStatus(user, record, holidays, now);
 }
 
 export function dayStatusPill(status) {
   const map = {
     Present: { tone: "green", label: "Present" },
+    Working: { tone: "green", label: "Working" },
     "On Time": { tone: "green", label: "Present" },
     Late: { tone: "amber", label: "Late" },
     "Early Leave": { tone: "amber", label: "Early Leave" },
     "Short Hours": { tone: "amber", label: "Short Hours" },
+    "Missing Checkout": { tone: "amber", label: "Missing Checkout" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
     Off: { tone: "blue", label: "Off" },
@@ -903,17 +931,36 @@ export function applyAutoCheckouts(attendance, users) {
 }
 
 export function displayWorkingHours(record, user, now = new Date()) {
+  const dateKey = record?.date || todayKey();
+  if (record?.checkIn && isAttendanceInProgress(user, record, dateKey, now)) {
+    return formatDurationMs(calcLiveWorkingMs(record, now));
+  }
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
   if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));
   if (record?.checkIn && !record?.checkOut) return formatDurationMs(calcLiveWorkingMs(record, now));
   return "—";
 }
 
-/** Check-out cell: show Missing when only one scan (check-in only). */
-export function formatCheckOutDisplay(record) {
+/**
+ * Check-out column display mode.
+ * Returns "—" | "Missing" | "Last scan" | null (show finalized check-out time).
+ */
+export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
-  if (!record.checkOut) return "Missing";
-  return null; // caller formats time
+  if (record.checkOut) return null;
+  if (isAttendanceInProgress(user, record, dateKey, now)) {
+    if (record.lastScan && record.lastScan !== record.checkIn) return "Last scan";
+    return "—";
+  }
+  return "Missing";
+}
+
+export function formatCheckOutTime(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
+  const mode = formatCheckOutDisplay(record, user, dateKey, now);
+  if (mode === "Last scan") return formatTime(record.lastScan);
+  if (mode === "Missing") return null;
+  if (mode === "—") return "—";
+  return formatTime(record.checkOut);
 }
 
 export function todayKey(d = new Date()) {

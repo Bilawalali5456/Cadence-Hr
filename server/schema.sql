@@ -227,6 +227,8 @@ ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS pay_tag TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_in_method VARCHAR(20);
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_out_method VARCHAR(20);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_scan TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_scan_method VARCHAR(20);
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS manually_corrected BOOLEAN DEFAULT false;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS correction_log JSONB DEFAULT '[]';
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by TEXT;

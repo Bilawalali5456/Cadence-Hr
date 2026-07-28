@@ -2,13 +2,38 @@ import { karachiDateKey, parseZktTime } from "./admsHelpers.js";
 
 /**
  * Biometric attendance calculation:
- * - First scan of day = Check-in
- * - Last scan of day  = Check-out (if more than one scan)
- * - Middle scans ignored for attendance
- * - Single scan = Check-in only (Check-out Missing)
- * - Working hours = Check-out − Check-in
- * - Status vs users.shift: Present / Late / Early Leave / Short Hours / Absent
+ * - First scan of day = Check-in (finalized immediately)
+ * - During active shift: latest scan = provisional last_scan (NOT check-out)
+ * - After shift end or midnight: last scan = Check-out (if ≥2 scans)
+ * - Single scan after day closed = Missing Checkout
+ * - Working hours during shift = live from check-in to now
  */
+
+export function hasShiftEnded(user, dateKey, now = new Date()) {
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return true;
+  const end = shiftDateTime(dateKey, shift.shiftEnd);
+  let shiftEnd = end;
+  const start = shiftDateTime(dateKey, shift.shiftStart);
+  if (shiftEnd <= start) shiftEnd = new Date(shiftEnd.getTime() + 86400000);
+  return now >= shiftEnd;
+}
+
+/** Karachi calendar day has passed for this attendance date (midnight cutoff). */
+export function isAttendanceDayClosed(dateKey, now = new Date()) {
+  return dateKeyFromDate(now) > String(dateKey || "").slice(0, 10);
+}
+
+export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
+  if (isAttendanceDayClosed(dateKey, now)) return true;
+  return hasShiftEnded(user, dateKey, now);
+}
+
+export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
+  if (!record?.checkIn || record.checkOut) return false;
+  if (record.manuallyCorrected) return false;
+  return !shouldFinalizeAttendance(user, dateKey, now);
+}
 
 export function dateKeyFromDate(d) {
   return karachiDateKey(d);
@@ -217,17 +242,22 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
 }
 
 /**
- * Status priority: Absent → Late → Early Leave → Short Hours → Present
- * Check-in only (no check-out): Late or Present (checkout shown as Missing in UI)
- * Pass breaks/shortLeaves so sync does not ignore portal adjustments.
+ * Status priority after finalization: Absent → Missing Checkout → Late → Early Leave → Short Hours → Present
+ * During active shift with check-in: Working
  */
 export function computeBiometricDayStatus(user, checkIn, checkOut, options = {}) {
-  if (!checkIn) return "Absent";
-  const dateKey = dateKeyFromDate(new Date(checkIn));
+  const dateKey = options.dateKey || (checkIn ? dateKeyFromDate(new Date(checkIn)) : dateKeyFromDate(new Date()));
+  const now = options.now || new Date();
   const shift = getUserShift(user, dateKey);
-  if (shift.off) return "Present";
+  if (shift.off) return checkIn ? "Present" : "Absent";
+  if (!checkIn) return "Absent";
+
+  if (isAttendanceInProgress(user, { checkIn, checkOut, source: options.source || "biometric" }, dateKey, now)) {
+    return "Working";
+  }
+
   const late = isLateCheckIn(checkIn, user);
-  if (!checkOut) return late ? "Late" : "Present";
+  if (!checkOut) return shouldFinalizeAttendance(user, dateKey, now) ? "Missing Checkout" : (late ? "Late" : "Present");
   if (late) return "Late";
   if (isEarlyLeave(checkOut, user)) return "Early Leave";
   if (isShortHours(checkIn, checkOut, user, options)) return "Short Hours";
@@ -235,28 +265,54 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
 }
 
 /**
- * First scan = check-in, last scan = check-out (if ≥2). Middle scans ignored.
+ * First scan = check-in. Last scan becomes check-out only after shift end or midnight.
  */
-export function aggregateDayScans(logs) {
+export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
   const sorted = [...(logs || [])].sort(
     (a, b) => parseZktTime(a.punch_time_local || a.punch_time) - parseZktTime(b.punch_time_local || b.punch_time)
   );
   if (!sorted.length) {
-    return { checkIn: null, checkOut: null, checkInMethod: null, checkOutMethod: null, scanCount: 0 };
+    return {
+      checkIn: null, checkOut: null, lastScan: null,
+      checkInMethod: null, checkOutMethod: null, lastScanMethod: null, scanCount: 0,
+    };
   }
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
   const checkIn = parseZktTime(first.punch_time_local || first.punch_time)?.toISOString();
   const checkInMethod = methodLabel(first.verify_method);
-  if (sorted.length === 1) {
-    return { checkIn, checkOut: null, checkInMethod, checkOutMethod: null, scanCount: 1 };
+  const lastIso = parseZktTime(last.punch_time_local || last.punch_time)?.toISOString();
+  const lastScanMethod = methodLabel(last.verify_method);
+  const scanCount = sorted.length;
+  const finalized = shouldFinalizeAttendance(user, dateKey, now);
+
+  if (scanCount === 1) {
+    return {
+      checkIn, checkOut: null, lastScan: null,
+      checkInMethod, checkOutMethod: null, lastScanMethod: null, scanCount,
+    };
   }
+
+  if (!finalized) {
+    return {
+      checkIn,
+      checkOut: null,
+      lastScan: lastIso,
+      checkInMethod,
+      checkOutMethod: null,
+      lastScanMethod,
+      scanCount,
+    };
+  }
+
   return {
     checkIn,
-    checkOut: parseZktTime(last.punch_time_local || last.punch_time)?.toISOString(),
+    checkOut: lastIso,
+    lastScan: lastIso,
     checkInMethod,
-    checkOutMethod: methodLabel(last.verify_method),
-    scanCount: sorted.length,
+    checkOutMethod: lastScanMethod,
+    lastScanMethod,
+    scanCount,
   };
 }
 
@@ -295,30 +351,47 @@ export async function syncAttendanceFromLogs(pool) {
     );
     if (!dayLogs.length) continue;
 
-    const agg = aggregateDayScans(dayLogs);
+    const agg = aggregateDayScans(dayLogs, user, dateKey, new Date());
     if (!agg.checkIn) continue;
+
+    const now = new Date();
+    const timeOptsBase = { dateKey, now, source: "biometric" };
 
     const existing = await pool.query(
       `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
       [employeeId, dateKey]
     );
 
-    if (existing.rows.length === 0) {
-      const late = isLateCheckIn(agg.checkIn, user);
-      const workingMs = computeNetWorkingMs(agg.checkIn, agg.checkOut);
-      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut, {
+    function computeRowMetrics(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd) {
+      const timeOpts = { breaks, shortLeaves, breakStart, breakEnd, ...timeOptsBase };
+      const inProgress = isAttendanceInProgress(user, { checkIn, checkOut, source: "biometric" }, dateKey, now);
+      let workingMs = null;
+      if (inProgress && checkIn) {
+        workingMs = computeNetWorkingMs(checkIn, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+      } else if (checkIn && checkOut) {
+        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+      }
+      const status = computeBiometricDayStatus(user, checkIn, checkOut, {
+        ...timeOpts,
         netWorkingMs: workingMs,
       });
+      const late = isLateCheckIn(checkIn, user);
+      const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
+      return { workingMs, status, late, totalBreakMs };
+    }
+
+    if (existing.rows.length === 0) {
+      const { workingMs, status, late } = computeRowMetrics(agg.checkIn, agg.checkOut, [], [], null, null);
 
       await pool.query(
         `INSERT INTO attendance (
-           id, user_id, date, check_in, check_out, breaks, short_leaves,
+           id, user_id, date, check_in, check_out, last_scan, breaks, short_leaves,
            auto_checkout, working_ms, total_break_ms, status, late, source,
-           check_in_method, check_out_method
-         ) VALUES ($1,$2,$3,$4,$5,'[]','[]',false,$6,0,$7,$8,'biometric',$9,$10)`,
+           check_in_method, check_out_method, last_scan_method
+         ) VALUES ($1,$2,$3,$4,$5,$6,'[]','[]',false,$7,0,$8,$9,'biometric',$10,$11,$12)`,
         [
-          genAttId(), employeeId, dateKey, agg.checkIn, agg.checkOut,
-          workingMs, status, late, agg.checkInMethod, agg.checkOutMethod,
+          genAttId(), employeeId, dateKey, agg.checkIn, agg.checkOut, agg.lastScan,
+          workingMs, status, late, agg.checkInMethod, agg.checkOutMethod, agg.lastScanMethod,
         ]
       );
       rowsUpdated += 1;
@@ -329,56 +402,54 @@ export async function syncAttendanceFromLogs(pool) {
       const shortLeaves = parseJsonArray(prev.short_leaves);
       const breakStart = prev.break_start || null;
       const breakEnd = prev.break_end || null;
-      const timeOpts = { breaks, shortLeaves, breakStart, breakEnd };
 
       let newCheckIn = prev.check_in;
       let newCheckOut = prev.check_out;
+      let newLastScan = prev.last_scan || null;
       let newInMethod = prev.check_in_method || null;
       let newOutMethod = prev.check_out_method || null;
+      let newLastScanMethod = prev.last_scan_method || null;
       let newSource = source;
 
       if (source === "biometric" || !prev.check_in) {
-        // Biometric (or empty) row: full first/last rebuild from device scans
         newCheckIn = agg.checkIn;
         newCheckOut = agg.checkOut;
+        newLastScan = agg.lastScan;
         newInMethod = agg.checkInMethod;
         newOutMethod = agg.checkOutMethod;
+        newLastScanMethod = agg.lastScanMethod;
         newSource = "biometric";
-      } else {
-        // Manual portal row: fill gaps / extend check-out only
+      } else if (source === "manual" && !prev.check_out) {
         if (!newCheckIn) {
           newCheckIn = agg.checkIn;
           newInMethod = agg.checkInMethod;
         }
-        if (!newCheckOut && agg.checkOut) {
-          newCheckOut = agg.checkOut;
-          newOutMethod = agg.checkOutMethod;
-        } else if (agg.checkOut && new Date(agg.checkOut) > new Date(newCheckOut || 0)) {
+        if (agg.lastScan) {
+          newLastScan = agg.lastScan;
+          newLastScanMethod = agg.lastScanMethod;
+        }
+        if (shouldFinalizeAttendance(user, dateKey, now) && agg.checkOut) {
           newCheckOut = agg.checkOut;
           newOutMethod = agg.checkOutMethod;
         }
         newSource = "manual";
+      } else {
+        newSource = "manual";
       }
 
-      // Preserve portal breaks/short leaves; recompute status + net hours from them
-      const finalLate = isLateCheckIn(newCheckIn, user);
-      const finalWorkingMs = computeNetWorkingMs(
+      const { workingMs, status, late, totalBreakMs } = computeRowMetrics(
         newCheckIn, newCheckOut, breaks, shortLeaves, breakStart, breakEnd
       );
-      const finalStatus = computeBiometricDayStatus(user, newCheckIn, newCheckOut, {
-        ...timeOpts,
-        netWorkingMs: finalWorkingMs,
-      });
-      const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
 
       await pool.query(
         `UPDATE attendance SET
-           check_in = $1, check_out = $2, working_ms = $3, total_break_ms = $4,
-           status = $5, late = $6, source = $7, check_in_method = $8, check_out_method = $9
-         WHERE id = $10`,
+           check_in = $1, check_out = $2, last_scan = $3, working_ms = $4, total_break_ms = $5,
+           status = $6, late = $7, source = $8, check_in_method = $9, check_out_method = $10,
+           last_scan_method = $11
+         WHERE id = $12`,
         [
-          newCheckIn, newCheckOut, finalWorkingMs, totalBreakMs,
-          finalStatus, finalLate, newSource, newInMethod, newOutMethod, prev.id,
+          newCheckIn, newCheckOut, newLastScan, workingMs, totalBreakMs,
+          status, late, newSource, newInMethod, newOutMethod, newLastScanMethod, prev.id,
         ]
       );
       rowsUpdated += 1;
@@ -393,7 +464,104 @@ export async function syncAttendanceFromLogs(pool) {
     logsProcessed += rowCount || 0;
   }
 
-  return { logsProcessed, rowsUpdated };
+  return { logsProcessed, rowsUpdated: rowsUpdated + await finalizeOpenAttendance(pool) };
+}
+
+/** Finalize or repair open attendance when shift ends, at midnight, or fix premature check-outs. */
+export async function finalizeOpenAttendance(pool) {
+  const now = new Date();
+  const { rows: users } = await pool.query(`SELECT id, shift FROM users WHERE status = 'active'`);
+  const userById = new Map(users.map(u => [u.id, enrichUserShift(u)]));
+
+  const { rows: openRows } = await pool.query(
+    `SELECT * FROM attendance
+     WHERE check_in IS NOT NULL
+       AND (
+         check_out IS NULL
+         OR status = 'Working'
+         OR status = 'Early Leave'
+         OR last_scan IS NOT NULL
+       )`
+  );
+
+  let rowsUpdated = 0;
+  for (const prev of openRows) {
+    const user = userById.get(prev.user_id);
+    if (!user) continue;
+    const dateKey = String(prev.date || "").slice(0, 10);
+    const breaks = parseJsonArray(prev.breaks);
+    const shortLeaves = parseJsonArray(prev.short_leaves);
+    const breakStart = prev.break_start || null;
+    const breakEnd = prev.break_end || null;
+    const record = {
+      checkIn: prev.check_in,
+      checkOut: prev.check_out,
+      lastScan: prev.last_scan,
+      source: prev.source || "manual",
+    };
+    const inProgress = isAttendanceInProgress(user, record, dateKey, now);
+    const finalized = shouldFinalizeAttendance(user, dateKey, now);
+
+    if (inProgress && prev.source === "biometric" && prev.check_out && prev.check_out !== prev.check_in) {
+      const workingMs = computeNetWorkingMs(prev.check_in, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+      await pool.query(
+        `UPDATE attendance SET
+           check_out = NULL, check_out_method = NULL,
+           last_scan = $1, last_scan_method = COALESCE($2, last_scan_method),
+           status = 'Working', working_ms = $3, late = $4
+         WHERE id = $5`,
+        [
+          prev.check_out, prev.check_out_method, workingMs,
+          isLateCheckIn(prev.check_in, user), prev.id,
+        ]
+      );
+      rowsUpdated += 1;
+      continue;
+    }
+
+    if (!finalized) continue;
+
+    if (prev.source === "biometric") {
+      const { rows: dayLogs } = await pool.query(
+        `SELECT attendance_logs.*, TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
+         FROM attendance_logs
+         WHERE employee_id = $1 AND is_duplicate = false AND punch_time::date = $2::date
+         ORDER BY punch_time ASC`,
+        [prev.user_id, dateKey]
+      );
+      const agg = aggregateDayScans(dayLogs, user, dateKey, now);
+      if (!agg.checkIn) continue;
+      const workingMs = agg.checkOut
+        ? computeNetWorkingMs(agg.checkIn, agg.checkOut, breaks, shortLeaves, breakStart, breakEnd)
+        : null;
+      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut, {
+        breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
+        netWorkingMs: workingMs, source: "biometric",
+      });
+      await pool.query(
+        `UPDATE attendance SET
+           check_in = $1, check_out = $2, last_scan = $3,
+           working_ms = $4, status = $5, late = $6,
+           check_in_method = $7, check_out_method = $8, last_scan_method = $9
+         WHERE id = $10`,
+        [
+          agg.checkIn, agg.checkOut, agg.lastScan, workingMs, status,
+          isLateCheckIn(agg.checkIn, user),
+          agg.checkInMethod, agg.checkOutMethod, agg.lastScanMethod, prev.id,
+        ]
+      );
+      rowsUpdated += 1;
+    } else if (!prev.check_out) {
+      const status = "Missing Checkout";
+      await pool.query(
+        `UPDATE attendance SET status = $1, working_ms = NULL WHERE id = $2`,
+        [status, prev.id]
+      );
+      rowsUpdated += 1;
+    }
+  }
+
+  return rowsUpdated;
 }
 
 export function startAttendanceSyncProcessor(pool) {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
@@ -6,6 +6,28 @@ import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
+
+function CheckOutCell({ record, user, dateKey, now = new Date() }) {
+  const mode = formatCheckOutDisplay(record, user, dateKey, now);
+  if (mode === "—") return "—";
+  if (mode === "Missing") return <span className="text-amber-600 font-medium">Missing</span>;
+  if (mode === "Last scan") {
+    return (
+      <>
+        {formatTime(record?.lastScan)}
+        {record?.lastScanMethod ? <span className="text-[10px] text-slate-400 ml-1">{record.lastScanMethod}</span> : null}
+        <Pill tone="green">Last scan</Pill>
+      </>
+    );
+  }
+  return (
+    <>
+      {formatTime(record?.checkOut)}
+      {record?.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{record.checkOutMethod}</span> : null}
+      {record?.autoCheckout && <Pill tone="amber">Auto</Pill>}
+    </>
+  );
+}
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
@@ -93,8 +115,8 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
               {history.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
-                const ds = dayStatusPill(resolveDayStatus(user, r, r?.date ?? todayKey(), holidays));
-                const missingOut = formatCheckOutDisplay(r);
+                const dateKey = r?.date ?? todayKey();
+                const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays));
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -103,13 +125,7 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
                       {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {missingOut === "Missing"
-                        ? <span className="text-amber-600 font-medium">Missing</span>
-                        : <>
-                            {formatTime(r.checkOut)}
-                            {r.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkOutMethod}</span> : null}
-                            {r.autoCheckout && <Pill tone="amber">Auto</Pill>}
-                          </>}
+                      <CheckOutCell record={r} user={user} dateKey={dateKey} />
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, user)}</td>
                     <td className="px-4 py-3">
@@ -138,6 +154,11 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [period, setPeriod] = useState("daily");
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
   const canManageCorrections = isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role);
   const correctionAudit = isExecutiveRole(currentUser.role)
     ? flattenCorrectionAuditLog(attendance, users)
@@ -344,8 +365,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               ) : liveRoster.map(u => {
                 const r = getUserTodayRecord(attendance, u.id);
                 const shiftCfg = getUserShift(u, today);
-                const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays));
-                const missingOut = formatCheckOutDisplay(r);
+                const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays, now));
                 const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
@@ -376,15 +396,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {missingOut === "Missing"
-                        ? <span className="text-amber-600 font-medium">Missing</span>
-                        : <>
-                            {formatTime(r?.checkOut)}
-                            {r?.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkOutMethod}</span> : null}
-                            {r?.autoCheckout && <Pill tone="amber">Auto</Pill>}
-                          </>}
+                      <CheckOutCell record={r} user={u} dateKey={today} now={now} />
                     </td>
-                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u)}</td>
+                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u, now)}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
@@ -441,8 +455,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               ) : reportRows.map(r => {
                 const dateKey = r?.date ?? todayKey();
                 const shiftCfg = getUserShift(r.user, dateKey);
-                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays));
-                const missingOut = formatCheckOutDisplay(r);
+                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays, dateKey === today ? now : undefined));
                 const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
@@ -464,9 +477,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {missingOut === "Missing"
-                        ? <span className="text-amber-600 font-medium">Missing</span>
-                        : formatTime(r.checkOut)}
+                      <CheckOutCell record={r} user={r.user} dateKey={dateKey} />
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user)}</td>
                     <td className="px-4 py-3">

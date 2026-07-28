@@ -39,9 +39,14 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
   const checkedIn = today?.checkIn && !today?.checkOut;
   const onBreak = isOnBreak(today);
-  const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays));
+  const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
-  const showBreakButton = checkedIn && !dayOff;
+  const showBreakButton = today?.checkIn && !today?.checkOut && !dayOff;
+  const checkoutMode = today?.checkIn && !today?.checkOut && today?.lastScan && today.lastScan !== today.checkIn
+    ? "lastScan"
+    : today?.checkOut
+      ? "final"
+      : "none";
 
   useEffect(() => {
     if (!checkedIn) return undefined;
@@ -122,11 +127,18 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
             )}
           </div>
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
-            <div className="text-xs text-blue-600">Check out</div>
+            <div className="text-xs text-blue-600">{checkoutMode === "lastScan" ? "Last scan" : "Check out"}</div>
             <div className="font-semibold text-blue-800 tabular-nums mt-1">
-              {formatTime(today?.checkOut)}
-              {today?.autoCheckout && <span className="block text-[10px] text-blue-500 mt-0.5">Auto</span>}
+              {checkoutMode === "lastScan"
+                ? formatTime(today?.lastScan)
+                : formatTime(today?.checkOut)}
+              {checkoutMode === "final" && today?.autoCheckout && (
+                <span className="block text-[10px] text-blue-500 mt-0.5">Auto</span>
+              )}
             </div>
+            {checkoutMode === "lastScan" && today?.lastScanMethod && (
+              <div className="text-[10px] text-blue-500 mt-0.5">{today.lastScanMethod}</div>
+            )}
           </div>
           <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-center">
             <div className="text-xs text-slate-500">Working hours</div>
