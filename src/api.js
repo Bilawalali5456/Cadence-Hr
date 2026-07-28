@@ -2,7 +2,8 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
-/** In-memory session cache — updated synchronously on login so API calls work before useEffect runs. */
+/** In-memory token — set synchronously on login before any React effects or API calls. */
+let activeSessionToken = null;
 let sessionCache = null;
 
 function readSessionFromStorage() {
@@ -14,9 +15,19 @@ function readSessionFromStorage() {
   }
 }
 
+/** Hydrate in-memory token from localStorage on initial page load. */
+(function hydrateSessionFromStorage() {
+  const stored = readSessionFromStorage();
+  if (stored?.sessionToken) {
+    activeSessionToken = stored.sessionToken;
+    sessionCache = stored;
+  }
+})();
+
 /** Persist session token immediately (call synchronously in handleLogin before any API/sync effects). */
 export function persistSession(session) {
   if (session?.userId && session?.sessionToken) {
+    activeSessionToken = session.sessionToken;
     sessionCache = {
       userId: session.userId,
       sessionToken: session.sessionToken,
@@ -24,6 +35,7 @@ export function persistSession(session) {
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionCache));
   } else {
+    activeSessionToken = null;
     sessionCache = null;
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }
@@ -31,10 +43,10 @@ export function persistSession(session) {
 
 /** Auth headers from stored session token (never send forgeable X-User-Id). */
 export function authHeaders(extra = {}) {
-  const session = loadSession();
+  const token = activeSessionToken || loadSession()?.sessionToken;
   const headers = { ...extra };
-  if (session?.sessionToken) {
-    headers.Authorization = `Bearer ${session.sessionToken}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }
@@ -51,14 +63,16 @@ export async function apiBootstrap() {
 
 export async function apiSave(collection, data) {
   try {
+    const headers = authHeaders({ "Content-Type": "application/json" });
+    const hadAuth = !!headers.Authorization;
     const res = await fetch(`${API_URL}/${collection}`, {
       method: "PUT",
-      headers: authHeaders({ "Content-Type": "application/json" }),
+      headers,
       body: JSON.stringify(data),
     });
     if (res.status === 401) {
-      clearSession();
-      return { ok: false, sessionExpired: true };
+      if (hadAuth) clearSession();
+      return { ok: false, sessionExpired: hadAuth };
     }
     if (!res.ok) {
       console.error(`Failed to sync ${collection}:`, res.status);
@@ -82,6 +96,7 @@ export async function apiLogout() {
 }
 
 export function clearSession() {
+  activeSessionToken = null;
   sessionCache = null;
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
@@ -195,7 +210,17 @@ export async function apiLogin(email, password) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Login failed");
-  return data;
+
+  const sessionToken = data.sessionToken || data.token;
+  if (data.ok && data.user?.id && sessionToken) {
+    persistSession({
+      userId: data.user.id,
+      sessionToken,
+      role: data.user.role,
+    });
+  }
+
+  return { ...data, sessionToken };
 }
 
 export async function apiChangePassword({ userId, currentPassword, newPassword }) {
@@ -210,10 +235,16 @@ export async function apiChangePassword({ userId, currentPassword, newPassword }
 }
 
 export function loadSession() {
-  if (sessionCache?.sessionToken) return sessionCache;
+  if (activeSessionToken && sessionCache?.sessionToken) return sessionCache;
   const stored = readSessionFromStorage();
-  sessionCache = stored?.sessionToken ? stored : null;
-  return sessionCache;
+  if (stored?.sessionToken) {
+    activeSessionToken = stored.sessionToken;
+    sessionCache = stored;
+    return stored;
+  }
+  activeSessionToken = null;
+  sessionCache = null;
+  return null;
 }
 
 export function loadHolidays() {

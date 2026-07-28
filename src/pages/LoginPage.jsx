@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ChevronRight, Eye, EyeOff, Lock, Mail, ArrowLeft } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
 import { LOGIN_ROLES, loginRoleMatchesSelection } from "../utils.js";
-import { apiLogin } from "../api.js";
+import { apiLogin, persistSession } from "../api.js";
 import { TextInput, ErrBox } from "../components/ui.jsx";
 
 export function LoginPage({ onLogin }) {
@@ -44,6 +44,11 @@ export function LoginPage({ onLogin }) {
         setErr("Sign-in succeeded but no session token was returned. Restart the backend server and try again.");
         return;
       }
+      persistSession({
+        userId: u.id,
+        sessionToken: data.sessionToken,
+        role: u.role,
+      });
       const ok = onLogin(u, pw, data.sessionToken);
       if (ok === false) {
         setErr("Could not establish your session. Please try again.");
