@@ -12,7 +12,7 @@ import { registerAttendanceApi } from "./routes/attendance.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
-import { parseAttLogLine } from "./lib/admsHelpers.js";
+import { karachiTimestampText, parseAttLogLine } from "./lib/admsHelpers.js";
 
 dotenv.config();
 
@@ -847,7 +847,7 @@ async function applyBiometricTimezoneFix() {
   const touchedLogIds = [];
   for (const row of rows) {
     const parsed = parseAttLogLine(row.raw_data);
-    const desired = parsed?.punchTimeText;
+    const desired = parsed?.punchTime ? karachiTimestampText(parsed.punchTime) : "";
     if (!desired) continue;
     const current = String(row.punch_time_text || "").trim();
     if (current === desired) continue;
