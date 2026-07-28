@@ -15,7 +15,7 @@ import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
   revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
-  HR_ADMIN_ROLES,
+  HR_ADMIN_ROLES, setSessionCookie, clearSessionCookie,
 } from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
@@ -435,6 +435,7 @@ app.post("/api/login", async (req, res) => {
     }
 
     const session = await createSession(pool, row.id);
+    setSessionCookie(res, session.token);
     res.json({
       ok: true,
       user: userToSafeJs(row),
@@ -451,11 +452,30 @@ app.post("/api/logout", async (req, res) => {
   try {
     const token = extractSessionToken(req);
     if (token) await revokeSession(pool, token);
+    clearSessionCookie(res);
     res.json({ ok: true });
   } catch (e) {
     console.error("logout error:", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+/** Debug: does the server see auth headers/cookie? (no secrets returned) */
+app.get("/api/auth/ping", async (req, res) => {
+  const token = extractSessionToken(req);
+  let sessionOk = false;
+  if (token) {
+    const user = await resolveAuthenticatedUser(pool, req);
+    sessionOk = !!user;
+  }
+  res.json({
+    ok: true,
+    hasAuthorizationHeader: !!req.headers.authorization,
+    hasXSessionToken: !!req.headers["x-session-token"],
+    hasSessionCookie: String(req.headers.cookie || "").includes("adforce_session"),
+    tokenSeen: !!token,
+    sessionValid: sessionOk,
+  });
 });
 
 app.post("/api/change-password", requireAuth, async (req, res) => {
@@ -496,6 +516,7 @@ app.post("/api/change-password", requireAuth, async (req, res) => {
     await revokeAllUserSessions(pool, userId);
     const session = await createSession(pool, userId);
     const { rows: updated } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
+    setSessionCookie(res, session.token);
     res.json({
       ok: true,
       user: userToSafeJs(updated[0]),

@@ -18,6 +18,15 @@ function authHeaders() {
   }
 }
 
+/** Same-origin fetch that always sends cookies (session cookie backup). */
+function apiFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    credentials: "include",
+    headers: { ...(options.headers || {}) },
+  });
+}
+
 /** Save login session token immediately (before React state updates). */
 export function persistSessionToken(userId, token) {
   if (!userId || !token) return;
@@ -25,14 +34,14 @@ export function persistSessionToken(userId, token) {
 }
 
 export async function apiBootstrap() {
-  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
+  const res = await apiFetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
 
 export async function apiSave(collection, data) {
   try {
-    const res = await fetch(`${API_URL}/${collection}`, {
+    const res = await apiFetch(`${API_URL}/${collection}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
@@ -44,7 +53,7 @@ export async function apiSave(collection, data) {
 }
 
 export async function apiDeleteEmployee(userId) {
-  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, {
+  const res = await apiFetch(`${API_URL}/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -82,13 +91,13 @@ export function purgeEmployeeClientState(userId, setters = {}) {
 }
 
 export async function apiFetchNotifications() {
-  const res = await fetch(`${API_URL}/notifications`, { headers: authHeaders() });
+  const res = await apiFetch(`${API_URL}/notifications`, { headers: authHeaders() });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
 
 export async function apiMarkNotificationRead(id) {
-  const res = await fetch(`${API_URL}/notifications/read`, {
+  const res = await apiFetch(`${API_URL}/notifications/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ id }),
@@ -98,7 +107,7 @@ export async function apiMarkNotificationRead(id) {
 }
 
 export async function apiMarkAllNotificationsRead(userId) {
-  const res = await fetch(`${API_URL}/notifications/read-all`, {
+  const res = await apiFetch(`${API_URL}/notifications/read-all`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ userId }),
@@ -108,7 +117,7 @@ export async function apiMarkAllNotificationsRead(userId) {
 }
 
 export async function apiSendNotificationEmail({ to, name, subject, body, link }) {
-  const res = await fetch(`${API_URL}/send-notification-email`, {
+  const res = await apiFetch(`${API_URL}/send-notification-email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, subject, body, link }),
@@ -119,7 +128,7 @@ export async function apiSendNotificationEmail({ to, name, subject, body, link }
 }
 
 export async function apiSendCredentials({ to, name, email, password, role, isReset = false }) {
-  const res = await fetch(`${API_URL}/send-credentials`, {
+  const res = await apiFetch(`${API_URL}/send-credentials`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, email, password, role, isReset }),
@@ -134,7 +143,7 @@ export async function apiSendCredentials({ to, name, email, password, role, isRe
 }
 
 export async function apiSendWarningEmail({ to, name, warningType, reason, date }) {
-  const res = await fetch(`${API_URL}/send-warning-email`, {
+  const res = await apiFetch(`${API_URL}/send-warning-email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, warningType, reason, date }),
@@ -145,9 +154,10 @@ export async function apiSendWarningEmail({ to, name, warningType, reason, date 
 }
 
 export async function apiLogin(email, password) {
-  const res = await fetch(`${API_URL}/login`, {
+  const res = await apiFetch(`${API_URL}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json().catch(() => ({}));
@@ -160,7 +170,7 @@ export async function apiLogin(email, password) {
 }
 
 export async function apiChangePassword({ userId, currentPassword, newPassword }) {
-  const res = await fetch(`${API_URL}/change-password`, {
+  const res = await apiFetch(`${API_URL}/change-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ userId, currentPassword, newPassword }),
@@ -241,7 +251,7 @@ function biometricHeaders() {
 }
 
 export async function apiBiometricStatus(userId) {
-  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders() });
+  const res = await apiFetch(`${API_URL}/biometric/status`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load device status");
   return res.json();
 }
@@ -251,19 +261,19 @@ export async function apiBiometricLogs(userId, date, method = "all") {
   if (date) params.set("date", date);
   if (method && method !== "all") params.set("method", method);
   const q = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders() });
+  const res = await apiFetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric logs");
   return res.json();
 }
 
 export async function apiBiometricUsers(userId) {
-  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders() });
+  const res = await apiFetch(`${API_URL}/biometric/users`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric users");
   return res.json();
 }
 
 export async function apiBiometricMap(userId, pin, employeeId) {
-  const res = await fetch(`${API_URL}/biometric/map`, {
+  const res = await apiFetch(`${API_URL}/biometric/map`, {
     method: "POST",
     headers: biometricHeaders(),
     body: JSON.stringify({ pin, employee_id: employeeId }),
@@ -275,7 +285,7 @@ export async function apiBiometricMap(userId, pin, employeeId) {
 
 export async function apiBiometricUnmap(userId, pin, deviceSerial) {
   const q = deviceSerial ? `?device_serial_number=${encodeURIComponent(deviceSerial)}` : "";
-  const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}${q}`, {
+  const res = await apiFetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}${q}`, {
     method: "DELETE",
     headers: biometricHeaders(),
   });
@@ -284,7 +294,7 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
 }
 
 export async function apiBiometricClearLogs(userId) {
-  const res = await fetch(`${API_URL}/biometric/raw-logs`, {
+  const res = await apiFetch(`${API_URL}/biometric/raw-logs`, {
     method: "DELETE",
     headers: biometricHeaders(),
   });
@@ -293,7 +303,7 @@ export async function apiBiometricClearLogs(userId) {
 }
 
 export async function apiBiometricProcess(userId) {
-  const res = await fetch(`${API_URL}/biometric/process`, {
+  const res = await apiFetch(`${API_URL}/biometric/process`, {
     method: "POST",
     headers: biometricHeaders(),
   });
@@ -302,7 +312,7 @@ export async function apiBiometricProcess(userId) {
 }
 
 export async function apiRefreshAttendance() {
-  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
+  const res = await apiFetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to refresh attendance");
   const d = await res.json();
   return sanitizeAttendance(d.attendance);
