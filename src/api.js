@@ -195,7 +195,17 @@ export async function apiLogin(email, password) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Login failed");
-  return data;
+
+  const sessionToken = data.sessionToken || data.token;
+  if (data.ok && data.user?.id && sessionToken) {
+    persistSession({
+      userId: data.user.id,
+      sessionToken,
+      role: data.user.role,
+    });
+  }
+
+  return { ...data, sessionToken };
 }
 
 export async function apiChangePassword({ userId, currentPassword, newPassword }) {

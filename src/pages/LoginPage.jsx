@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
 import { isValidPortalRole } from "../utils.js";
-import { apiLogin } from "../api.js";
+import { apiLogin, persistSession } from "../api.js";
 import { TextInput, ErrBox } from "../components/ui.jsx";
 
 export function LoginPage({ onLogin }) {
@@ -39,6 +39,12 @@ export function LoginPage({ onLogin }) {
         setErr("Sign-in succeeded but no session token was returned. Restart the backend server and try again.");
         return;
       }
+      // Save token before redirect / onLogin — must be in localStorage before any API call
+      persistSession({
+        userId: u.id,
+        sessionToken: data.sessionToken,
+        role: u.role,
+      });
       const ok = onLogin(u, pw, data.sessionToken);
       if (ok === false) {
         setErr("Could not establish your session. Please try again.");
