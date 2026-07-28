@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
@@ -73,7 +73,15 @@ export default function App() {
   const [warnings,      setWarnings]      = useState([]);
   const [roles,         setRoles]         = useState([]);
   const [company,       setCompany]       = useState(DEFAULT_COMPANY);
-  const [session,       setSession]       = useState(loadSession);
+  const [session,       setSession]       = useState(() => {
+    const s = loadSession();
+    // Old sessions without a token look "logged in" but every API returns 401
+    if (s && !s.token) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+    return s;
+  });
   const [route,         setRoute]         = useState("home");
   const [roleMenu,      setRoleMenu]      = useState(false);
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
@@ -186,7 +194,7 @@ export default function App() {
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
     };
     // Persist token immediately so authHeaders() sees it before React effects run
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: nextSession.userId, token: nextSession.token }));
+    persistSessionToken(nextSession.userId, nextSession.token);
     setSession(nextSession);
     // Merge login user into local users list (password fields never included)
     setUsers(us => {
@@ -245,7 +253,7 @@ export default function App() {
     );
   }
 
-  if (!session || !currentUser) return <LoginPage onLogin={handleLogin} />;
+  if (!session?.token || !currentUser) return <LoginPage onLogin={handleLogin} />;
   if (currentUser.firstLogin) {
     return (
       <ForcePasswordChange

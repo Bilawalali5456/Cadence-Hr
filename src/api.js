@@ -2,13 +2,26 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
+/** Auth headers for API calls. Sends Bearer + X-Session-Token (nginx often strips Authorization). */
 function authHeaders() {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     const session = raw ? JSON.parse(raw) : null;
     const token = session?.token;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch { return {}; }
+    if (!token) return {};
+    return {
+      Authorization: `Bearer ${token}`,
+      "X-Session-Token": token,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Save login session token immediately (before React state updates). */
+export function persistSessionToken(userId, token) {
+  if (!userId || !token) return;
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId, token }));
 }
 
 export async function apiBootstrap() {
@@ -139,6 +152,10 @@ export async function apiLogin(email, password) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Login failed");
+  // Persist token immediately so the next API call is authenticated
+  if (data.ok && data.user?.id && data.sessionToken) {
+    persistSessionToken(data.user.id, data.sessionToken);
+  }
   return data;
 }
 
