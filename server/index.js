@@ -831,8 +831,14 @@ async function applyBiometricTimezoneFix() {
   const backup = await createDatabaseBackup(pool, migrationKey);
   console.log(`✓ Timezone-fix backup created: ${backup.filename}`);
 
+  // punch_time is TIMESTAMP WITHOUT TIME ZONE and stores the device's Pakistan
+  // wall-clock text as-is (e.g. "2026-07-28 13:00:15"). Do NOT write punchTime
+  // (UTC Date) here — node-pg would persist the UTC clock face (08:00), and
+  // syncAttendanceFromLogs would then parseZktTime() it as local again (−5h),
+  // shifting display from 1:00 PM → 8:00 AM.
   const { rows } = await pool.query(
-    `SELECT id, employee_id, raw_data, punch_time
+    `SELECT id, employee_id, raw_data,
+            TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_text
      FROM attendance_logs
      WHERE raw_data IS NOT NULL AND raw_data <> ''`
   );
@@ -843,11 +849,9 @@ async function applyBiometricTimezoneFix() {
     const parsed = parseAttLogLine(row.raw_data);
     const desired = parsed?.punchTimeText;
     if (!desired) continue;
-    const current = row.punch_time instanceof Date
-      ? `${row.punch_time.getUTCFullYear()}-${String(row.punch_time.getUTCMonth() + 1).padStart(2, "0")}-${String(row.punch_time.getUTCDate()).padStart(2, "0")} ${String(row.punch_time.getUTCHours()).padStart(2, "0")}:${String(row.punch_time.getUTCMinutes()).padStart(2, "0")}:${String(row.punch_time.getUTCSeconds()).padStart(2, "0")}`
-      : String(row.punch_time || "").slice(0, 19).replace("T", " ");
+    const current = String(row.punch_time_text || "").trim();
     if (current === desired) continue;
-    await pool.query("UPDATE attendance_logs SET punch_time = $1, synced_to_attendance = false, updated_at = NOW() WHERE id = $2", [desired, row.id]);
+    await pool.query("UPDATE attendance_logs SET punch_time = $1::timestamp, synced_to_attendance = false, updated_at = NOW() WHERE id = $2", [desired, row.id]);
     touchedLogIds.push(row.id);
     logsFixed += 1;
   }
