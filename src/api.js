@@ -21,8 +21,9 @@ export async function apiSave(collection, data) {
   }
 }
 
-export async function apiDeleteEmployee(userId) {
-  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+export async function apiDeleteEmployee(userId, actorUserId) {
+  const headers = actorUserId ? { "X-User-Id": actorUserId } : {};
+  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, { method: "DELETE", headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
   return body;

@@ -146,7 +146,7 @@ export async function manualUnmapPin(pool, { pin, deviceSerial, actor, source = 
     const existing = await getPinMapping(pool, "", deviceUserId);
     serial = existing?.device_serial_number;
   }
-  if (!serial) return { removed: 0 };
+  if (!serial) return { removed: 0, serial: null, previousEmployeeId: null };
 
   const { rows: before } = await pool.query(
     `SELECT employee_id FROM device_user_mapping
@@ -154,7 +154,7 @@ export async function manualUnmapPin(pool, { pin, deviceSerial, actor, source = 
     [serial, deviceUserId]
   );
   const previousEmployeeId = before[0]?.employee_id || null;
-  if (!previousEmployeeId) return { removed: 0 };
+  if (!previousEmployeeId) return { removed: 0, serial, previousEmployeeId: null };
 
   const { rowCount } = await pool.query(
     `DELETE FROM device_user_mapping

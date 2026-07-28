@@ -341,8 +341,18 @@ app.delete("/api/users/:userId", async (req, res) => {
     const userId = String(req.params.userId || "").trim();
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
 
+    let actor = null;
+    const actorUserId = req.headers["x-user-id"];
+    if (actorUserId) {
+      const { rows } = await pool.query(
+        "SELECT id, name, role FROM users WHERE id = $1",
+        [actorUserId]
+      );
+      actor = rows[0] || null;
+    }
+
     const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
-    const result = await deleteEmployeeCascade(pool, userId);
+    const result = await deleteEmployeeCascade(pool, userId, actor);
     if (!result.ok) return res.status(404).json({ error: result.error });
 
     res.json({

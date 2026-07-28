@@ -43,7 +43,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
-  const showBreakButton = today?.checkIn && !today?.checkOut && !dayOff;
+  const showBreakButton = checkedIn && !dayOff;
 
   useEffect(() => {
     if (!checkedIn) return undefined;
@@ -135,12 +135,12 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-center">
             <div className="text-xs text-slate-500">Working hours</div>
             <div className="font-semibold tabular-nums mt-1" style={{ color: B.dark }}>{displayWorkingHours(today, user, now)}</div>
-            {checkedIn && !today?.checkOut && <div className="text-[10px] text-slate-400 mt-0.5">Excludes break</div>}
+            {checkedIn && <div className="text-[10px] text-slate-400 mt-0.5">Excludes break</div>}
           </div>
         </div>
         )}
 
-        {!dayOff && showManualCheckIn && !today?.checkOut && (
+        {!dayOff && showManualCheckIn && (checkedIn || !today?.checkIn) && (
           <div className="flex flex-wrap gap-2 justify-center mb-3">
             {!checkedIn && (
               <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays, leaveRequests))}>

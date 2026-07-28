@@ -250,12 +250,21 @@ export function registerAttendanceApi(app, pool) {
         );
         serial = rows[0]?.serial_number;
       }
-      await manualUnmapPin(pool, {
+
+      const result = await manualUnmapPin(pool, {
         pin: req.params.pin,
-        deviceSerial: serial,
+        deviceSerial: serial || null,
         actor: req.authUser,
         source: "manual_unmap",
       });
+
+      if (!result.serial) {
+        return res.status(400).json({ error: "No device registered yet" });
+      }
+      if (result.removed === 0) {
+        return res.status(404).json({ error: "PIN mapping not found" });
+      }
+
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

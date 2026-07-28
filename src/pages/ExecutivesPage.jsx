@@ -119,7 +119,7 @@ export function ExecutivesPage({
     setDelBusy(true);
     setPageErr("");
     try {
-      const result = await apiDeleteEmployee(delTgt.id);
+      const result = await apiDeleteEmployee(delTgt.id, currentUser.id);
       purgeEmployeeClientState(delTgt.id, {
         setUsers, setAttendance, setLeaveRequests, setShortLeaveRequests,
         setPayroll, setNotifications, setWarnings, setAssets,
