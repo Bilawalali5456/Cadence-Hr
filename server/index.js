@@ -9,9 +9,10 @@ import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
 import { registerAdmsRoutes } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
-import { startAttendanceSyncProcessor } from "./lib/attendanceSync.js";
+import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
+import { parseAttLogLine } from "./lib/admsHelpers.js";
 
 dotenv.config();
 
@@ -822,10 +823,65 @@ async function migratePlaintextPasswords() {
   }
 }
 
+async function applyBiometricTimezoneFix() {
+  const migrationKey = "biometric_timezone_fix_v2";
+  const already = await pool.query("SELECT value FROM app_meta WHERE key = $1 LIMIT 1", [migrationKey]);
+  if (already.rows.length) return;
+
+  const backup = await createDatabaseBackup(pool, migrationKey);
+  console.log(`✓ Timezone-fix backup created: ${backup.filename}`);
+
+  const { rows } = await pool.query(
+    `SELECT id, employee_id, raw_data, punch_time
+     FROM attendance_logs
+     WHERE raw_data IS NOT NULL AND raw_data <> ''`
+  );
+
+  let logsFixed = 0;
+  const touchedLogIds = [];
+  for (const row of rows) {
+    const parsed = parseAttLogLine(row.raw_data);
+    const desired = parsed?.punchTimeText;
+    if (!desired) continue;
+    const current = row.punch_time instanceof Date
+      ? `${row.punch_time.getUTCFullYear()}-${String(row.punch_time.getUTCMonth() + 1).padStart(2, "0")}-${String(row.punch_time.getUTCDate()).padStart(2, "0")} ${String(row.punch_time.getUTCHours()).padStart(2, "0")}:${String(row.punch_time.getUTCMinutes()).padStart(2, "0")}:${String(row.punch_time.getUTCSeconds()).padStart(2, "0")}`
+      : String(row.punch_time || "").slice(0, 19).replace("T", " ");
+    if (current === desired) continue;
+    await pool.query("UPDATE attendance_logs SET punch_time = $1, synced_to_attendance = false, updated_at = NOW() WHERE id = $2", [desired, row.id]);
+    touchedLogIds.push(row.id);
+    logsFixed += 1;
+  }
+
+  const { rowCount: biometricRowsFlagged } = await pool.query(
+    `UPDATE attendance_logs
+     SET synced_to_attendance = false, updated_at = NOW()
+     WHERE employee_id IS NOT NULL`
+  );
+
+  const syncResult = await syncAttendanceFromLogs(pool);
+
+  await pool.query(
+    `INSERT INTO app_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [migrationKey, JSON.stringify({
+      appliedAt: new Date().toISOString(),
+      backup: backup.filename,
+      logsFixed,
+      touchedLogIds: touchedLogIds.length,
+      biometricRowsFlagged,
+      syncResult,
+    })]
+  );
+
+  console.log(`✓ Biometric timezone fix applied (${logsFixed} attendance log timestamps corrected)`);
+}
+
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
   .then(() => migratePlaintextPasswords())
+  .then(() => applyBiometricTimezoneFix())
   .then(() => {
     startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {

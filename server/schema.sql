@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS users (
   shift                       JSONB
 );
 
+CREATE TABLE IF NOT EXISTS app_meta (
+  key           TEXT PRIMARY KEY,
+  value         TEXT,
+  updated_at    TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS attendance (
   id              TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL,
