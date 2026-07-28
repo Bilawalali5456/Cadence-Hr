@@ -126,7 +126,14 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
             <div className="text-xs text-blue-600">Check out</div>
             <div className="font-semibold text-blue-800 tabular-nums mt-1">
-              {!hasShiftEnded(user, key, now) ? "—" : formatTime(today?.checkOut)}
+              {!hasShiftEnded(user, key, now)
+                ? (today?.lastScan && today.lastScan !== today?.checkIn
+                  ? formatTime(today.lastScan)
+                  : "—")
+                : formatTime(today?.checkOut)}
+              {!hasShiftEnded(user, key, now) && today?.checkIn && (
+                <span className="block text-[10px] text-blue-500 mt-0.5">In progress</span>
+              )}
               {hasShiftEnded(user, key, now) && today?.autoCheckout && (
                 <span className="block text-[10px] text-blue-500 mt-0.5">Auto</span>
               )}

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
@@ -367,16 +367,23 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="divide-y divide-slate-100">
             {todayRoster.map(u => {
               const r = getUserTodayRecord(attendance, u.id);
-              const ds = dayStatusPill(resolveDayStatus(u, r, r?.date ?? todayKey(), holidays));
+              const dateKey = r?.date ?? todayKey();
+              const status = resolveDayStatus(u, r, dateKey, holidays);
+              const ds = dayStatusPill(status);
+              const outIso = effectiveCheckOut(r, u, dateKey);
+              const inLabel = r?.checkIn ? `In ${formatTime(r.checkIn)}` : "Not checked in";
+              let outLabel = "";
+              if (status === "Working") outLabel = " · Working";
+              else if (outIso) outLabel = ` · Out ${formatTime(outIso)}`;
+              else if (r?.lastScan && r.lastScan !== r.checkIn) outLabel = ` · Last scan ${formatTime(r.lastScan)}`;
               return (
                 <div key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar name={u.name} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-slate-800">{u.name}</div>
                     <div className="text-xs text-slate-400">
-                      {formatShiftRange(u)} · {r?.checkIn ? `In ${formatTime(r.checkIn)}` : "Not checked in"}
-                      {r?.checkOut ? ` · Out ${formatTime(r.checkOut)}` : ""}
-                      {r?.autoCheckout ? " (auto)" : ""}
+                      {formatShiftRange(u)} · {inLabel}{outLabel}
+                      {r?.autoCheckout && outIso ? " (auto)" : ""}
                     </div>
                   </div>
                   <Pill tone={ds.tone}>{ds.label}</Pill>

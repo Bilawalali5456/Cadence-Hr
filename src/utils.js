@@ -967,19 +967,10 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
     const bounds = getShiftBounds(user, dateKey);
     if (bounds.off || !bounds.end) return r;
 
-    // Clear premature biometric check-out while shift is still active
-    if (r.checkOut && !hasShiftEnded(user, dateKey, now) && (r.source === "biometric" || !r.manuallyCorrected)) {
-      changed = true;
-      const lastScan = r.checkOut !== r.checkIn ? r.checkOut : (r.lastScan || null);
-      return finalizeRecord({
-        ...r,
-        checkOut: null,
-        checkOutMethod: null,
-        autoCheckout: false,
-        lastScan: lastScan || r.lastScan || null,
-        lastScanMethod: r.checkOut !== r.checkIn ? (r.checkOutMethod || r.lastScanMethod) : r.lastScanMethod,
-      }, user, holidays);
-    }
+    // Do NOT clear checkOut in persisted state during an active shift.
+    // Premature biometric check-outs are hidden at display time via
+    // effectiveCheckOut / computeDayStatus / formatCheckOutDisplay.
+    // Mutating here caused PUT /api/attendance to overwrite real scans with null.
 
     if (r.checkOut) return r;
 

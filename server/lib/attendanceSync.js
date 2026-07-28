@@ -472,9 +472,20 @@ export async function syncAttendanceFromLogs(pool) {
         newLastScanMethod = agg.lastScanMethod;
         newSource = "biometric";
         const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
-        newCheckOut = agg.checkOut || resolved.checkOut;
-        newOutMethod = agg.checkOut ? agg.checkOutMethod : resolved.checkOutMethod;
-        newAutoCheckout = resolved.autoCheckout;
+        if (shouldFinalizeAttendance(user, dateKey, now)) {
+          newCheckOut = agg.checkOut || resolved.checkOut;
+          newOutMethod = agg.checkOut ? agg.checkOutMethod : resolved.checkOutMethod;
+          newAutoCheckout = resolved.autoCheckout;
+        } else {
+          // Mid-shift: keep existing check_out (don't wipe to null) and track last scan
+          newCheckOut = prev.check_out || null;
+          newOutMethod = prev.check_out_method || null;
+          newAutoCheckout = false;
+          if (agg.lastScan) {
+            newLastScan = agg.lastScan;
+            newLastScanMethod = agg.lastScanMethod;
+          }
+        }
       } else if (source === "manual" && !prev.check_out) {
         if (!newCheckIn) {
           newCheckIn = agg.checkIn;
@@ -560,10 +571,12 @@ export async function finalizeOpenAttendance(pool) {
     const finalized = shouldFinalizeAttendance(user, dateKey, now);
 
     if (inProgress && prev.source === "biometric" && prev.check_out && prev.check_out !== prev.check_in) {
+      // Keep check_out in DB — status "Working" + last_scan is enough for UI.
+      // Clearing check_out here made dashboards show null after every sync tick.
       const workingMs = computeNetWorkingMs(prev.check_in, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
       await pool.query(
         `UPDATE attendance SET
-           check_out = NULL, check_out_method = NULL, auto_checkout = false,
+           auto_checkout = false,
            last_scan = $1, last_scan_method = COALESCE($2, last_scan_method),
            status = 'Working', working_ms = $3, late = $4
          WHERE id = $5`,
