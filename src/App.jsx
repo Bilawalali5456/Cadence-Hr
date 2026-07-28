@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiLogout, apiFetchNotifications, loadSession, persistSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
-import { dashboardPathForRole, isLoginPath, redirectToLogin, redirectToRoleDashboard } from "./authRouting.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -74,29 +73,11 @@ export default function App() {
   const [warnings,      setWarnings]      = useState([]);
   const [roles,         setRoles]         = useState([]);
   const [company,       setCompany]       = useState(DEFAULT_COMPANY);
-  const [session,       setSession]       = useState(() => {
-    const s = loadSession();
-    if (s && !s.sessionToken) return null;
-    return s;
-  });
+  const [session,       setSession]       = useState(loadSession);
   const [route,         setRoute]         = useState("home");
   const [roleMenu,      setRoleMenu]      = useState(false);
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
   const loadedRef = useRef(false);
-  const sessionUserRef = useRef(null);
-
-  const currentUser = session
-    ? users.find(u => u.id === session.userId) || sessionUserRef.current
-    : null;
-
-  /* ── Keep URL aligned with auth state ── */
-  useEffect(() => {
-    function onPopState() {
-      window.dispatchEvent(new Event("app-path-change"));
-    }
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
 
   /* ── Load everything from PostgreSQL on startup ── */
   useEffect(() => {
@@ -118,64 +99,20 @@ export default function App() {
         loadedRef.current = true;
         setDbStatus("ready");
       })
-      .catch(async (e) => {
-        if (String(e.message || "").includes("Session expired")) {
-          sessionUserRef.current = null;
-          setSession(null);
-          redirectToLogin({ replace: true });
-          try {
-            const d = await apiBootstrap();
-            setUsers(d.users || []);
-            setAttendance(sanitizeAttendance(d.attendance));
-            setLeaveRequests(sanitizeLeaveRequests(d.leave));
-            setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
-            setAnnouncements(sanitizeAnnouncements(d.announcements));
-            setPayroll(d.payroll || []);
-            setPolicies(d.policies || []);
-            setAssets(d.assets || []);
-            setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
-            setNotifications(sanitizeNotifications(d.notifications));
-            setWarnings(sanitizeWarnings(d.warnings));
-            setRoles(d.roles || []);
-            setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
-            loadedRef.current = true;
-            setDbStatus("ready");
-            return;
-          } catch (retryErr) {
-            console.error("Bootstrap retry failed:", retryErr);
-          }
-        }
+      .catch(e => {
         console.error("Database connection failed:", e);
         setDbStatus("error");
       });
   }, []);
 
   /* ── Sync each collection to PostgreSQL when it changes ── */
-  const syncActor = session?.userId ? users.find(u => u.id === session.userId) : null;
-  const isHrAdminSync = syncActor && (syncActor.role === "HR Admin" || syncActor.role === "Executive");
-
-  async function syncCollection(collection, data) {
-    try {
-      const result = await apiSave(collection, data);
-      if (result?.sessionExpired) {
-        sessionUserRef.current = null;
-        setSession(null);
-        redirectToLogin({ replace: true });
-      }
-      return result;
-    } catch (e) {
-      console.error(`Sync failed for ${collection}:`, e);
-      return { ok: false };
-    }
-  }
-
   /* ── Sync users; strip plain passwords from memory after save so they are not re-sent ── */
   useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    if (!loadedRef.current) return;
     let cancelled = false;
     (async () => {
-      const result = await syncCollection("users", users);
-      if (cancelled || result?.sessionExpired) return;
+      await apiSave("users", users);
+      if (cancelled) return;
       const hasPlain = users.some(u => {
         const p = u?.password;
         return p && !String(p).startsWith("$2a$") && !String(p).startsWith("$2b$");
@@ -189,62 +126,18 @@ export default function App() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [users, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("attendance", attendance);
-  }, [attendance, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken) return;
-    void syncCollection("leave", leaveRequests);
-  }, [leaveRequests, session?.sessionToken]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken) return;
-    void syncCollection("short-leave", shortLeaveRequests);
-  }, [shortLeaveRequests, session?.sessionToken]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("announcements", announcements);
-  }, [announcements, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("payroll", payroll);
-  }, [payroll, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("policies", policies);
-  }, [policies, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken) return;
-    void syncCollection("assets", assets);
-  }, [assets, session?.sessionToken]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("holidays", holidays);
-  }, [holidays, session?.sessionToken, isHrAdminSync]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken) return;
-    void syncCollection("notifications", notifications);
-  }, [notifications, session?.sessionToken]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken) return;
-    void syncCollection("warnings", warnings);
-  }, [warnings, session?.sessionToken]);
-
-  useEffect(() => {
-    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    void syncCollection("company", company);
-  }, [company, session?.sessionToken, isHrAdminSync]);
+  }, [users]);
+  useEffect(() => { if (loadedRef.current) apiSave("attendance", attendance); }, [attendance]);
+  useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
+  useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
+  useEffect(() => { if (loadedRef.current) apiSave("announcements", announcements); }, [announcements]);
+  useEffect(() => { if (loadedRef.current) apiSave("payroll", payroll); }, [payroll]);
+  useEffect(() => { if (loadedRef.current) apiSave("policies", policies); }, [policies]);
+  useEffect(() => { if (loadedRef.current) apiSave("assets", assets); }, [assets]);
+  useEffect(() => { if (loadedRef.current) apiSave("holidays", holidays); }, [holidays]);
+  useEffect(() => { if (loadedRef.current) apiSave("notifications", notifications); }, [notifications]);
+  useEffect(() => { if (loadedRef.current) apiSave("warnings", warnings); }, [warnings]);
+  useEffect(() => { if (loadedRef.current) apiSave("company", company); }, [company]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
@@ -273,56 +166,25 @@ export default function App() {
 
   /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
-    if (session?.userId && session?.sessionToken) {
-      persistSession({
-        userId: session.userId,
-        sessionToken: session.sessionToken,
-        role: session.role || currentUser?.role || sessionUserRef.current?.role,
-      });
-    } else if (!session) {
-      persistSession(null);
+    if (session) {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: session.userId }));
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
     }
-  }, [session, currentUser?.role]);
+  }, [session]);
 
   useEffect(() => {
     if (loadedRef.current) localStorage.setItem(HOLIDAYS_STORAGE_KEY, JSON.stringify(sanitizeHolidays(holidays)));
   }, [holidays]);
 
-  /* Restore cached user from bootstrap data on page reload */
-  useEffect(() => {
-    if (!session?.userId || sessionUserRef.current) return;
-    const u = users.find(x => x.id === session.userId);
-    if (u) sessionUserRef.current = u;
-  }, [users, session?.userId]);
+  const currentUser = session ? users.find(u => u.id === session.userId) : null;
 
-  /* Clear stale session when bootstrap finished but user record is gone */
-  useEffect(() => {
-    if (dbStatus !== "ready" || !session?.userId) return;
-    if (users.length > 0 && !users.some(u => u.id === session.userId)) {
-      console.warn("[auth] Session user not found in database — clearing session");
-      sessionUserRef.current = null;
-      persistSession(null);
-      setSession(null);
-      redirectToLogin({ replace: true });
-    }
-  }, [dbStatus, session?.userId, users]);
-
-  function handleLogin(u, loginPassword, sessionToken) {
-    if (!sessionToken) {
-      console.error("[auth] Login succeeded but no sessionToken in response");
-      return false;
-    }
-    sessionUserRef.current = u;
-    const nextSession = {
+  function handleLogin(u, loginPassword) {
+    setSession({
       userId: u.id,
-      sessionToken,
-      role: u.role,
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
-    };
-    // Write token synchronously before setState — sync effects run before session useEffect
-    persistSession(nextSession);
-    setSession(nextSession);
-    // Merge login user into local users list immediately so route guard resolves currentUser
+    });
+    // Merge login user into local users list (password fields never included)
     setUsers(us => {
       const { password, tempPassword, ...safe } = u;
       const idx = us.findIndex(x => x.id === u.id);
@@ -334,63 +196,12 @@ export default function App() {
       return [...us, safe];
     });
     setRoute("home");
-    redirectToRoleDashboard(u.role, { replace: true });
-    apiBootstrap().then(d => {
-      setAttendance(sanitizeAttendance(d.attendance));
-      setLeaveRequests(sanitizeLeaveRequests(d.leave));
-      setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
-    }).catch(e => console.error("Post-login bootstrap failed:", e));
-    return true;
   }
-  async function handleLogout() {
-    try { await apiLogout(); } catch { /* clear local session regardless */ }
-    sessionUserRef.current = null;
-    setSession(null);
-    setRoute("home");
-    setRoleMenu(false);
-    redirectToLogin({ replace: true });
+  function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
+  function handleFirstLoginDone() {
+    setSession(s => (s ? { userId: s.userId } : null));
+    setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
   }
-  function handleFirstLoginDone(updatedUser) {
-    const uid = updatedUser?.id || session?.userId;
-    const nextToken = updatedUser?.sessionToken || session?.sessionToken;
-    const role = updatedUser?.role || session?.role || sessionUserRef.current?.role;
-    if (uid && nextToken) {
-      persistSession({ userId: uid, sessionToken: nextToken, role });
-    }
-    if (updatedUser) sessionUserRef.current = { ...sessionUserRef.current, ...updatedUser, firstLogin: false };
-    setSession(s => (s ? {
-      userId: s.userId,
-      sessionToken: nextToken,
-      role,
-    } : null));
-    if (!uid) return;
-    setUsers(us => us.map(u => u.id === uid
-      ? { ...u, ...updatedUser, firstLogin: false, tempPassword: undefined, password: undefined }
-      : u));
-    if (role) redirectToRoleDashboard(role, { replace: true });
-  }
-
-  /* Authenticated users on /login → role dashboard; ensure dashboard URL matches role */
-  useEffect(() => {
-    if (dbStatus !== "ready" || !session?.sessionToken || !currentUser) return;
-    const path = window.location.pathname;
-    if (isLoginPath(path)) {
-      redirectToRoleDashboard(currentUser.role, { replace: true });
-      return;
-    }
-    const expected = dashboardPathForRole(currentUser.role);
-    if (path !== expected && path.startsWith("/") && !path.startsWith("/api")) {
-      redirectToRoleDashboard(currentUser.role, { replace: true });
-    }
-  }, [dbStatus, session?.sessionToken, currentUser?.id, currentUser?.role]);
-
-  /* Unauthenticated visitors on dashboard URLs → /login */
-  useEffect(() => {
-    if (dbStatus !== "ready" || session?.sessionToken) return;
-    if (!isLoginPath(window.location.pathname)) {
-      redirectToLogin({ replace: true });
-    }
-  }, [dbStatus, session?.sessionToken]);
 
   /* ── Database status screens ── */
   if (dbStatus === "loading") {
@@ -430,25 +241,19 @@ export default function App() {
     );
   }
 
-  if (!session || !currentUser) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
+  if (!session || !currentUser) return <LoginPage onLogin={handleLogin} />;
   if (currentUser.firstLogin) {
     return (
       <ForcePasswordChange
         userId={currentUser.id}
         currentPassword={session.pendingTempPassword || ""}
-      onDone={(updatedUser) => handleFirstLoginDone(updatedUser)}
+        onDone={handleFirstLoginDone}
       />
     );
   }
 
   const role = currentUser.role;
   const nav  = NAV.filter(n => {
-    if (n.id === "attendance" && role === "Manager") return false;
-    if (n.id === "attendance") {
-      return can(role, "view_attendance_reports", roles) || can(role, "view_attendance", roles);
-    }
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return isStaffRole(role);
     if (!n.permission) return true;
