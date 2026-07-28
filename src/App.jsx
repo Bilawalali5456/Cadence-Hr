@@ -167,7 +167,7 @@ export default function App() {
   /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
     if (session) {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: session.userId }));
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: session.userId, token: session.token }));
     } else {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
@@ -180,13 +180,17 @@ export default function App() {
   const currentUser = session ? users.find(u => u.id === session.userId) : null;
 
   function handleLogin(u, loginPassword) {
-    setSession({
+    const nextSession = {
       userId: u.id,
+      token: u.sessionToken,
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
-    });
+    };
+    // Persist token immediately so authHeaders() sees it before React effects run
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: nextSession.userId, token: nextSession.token }));
+    setSession(nextSession);
     // Merge login user into local users list (password fields never included)
     setUsers(us => {
-      const { password, tempPassword, ...safe } = u;
+      const { password, tempPassword, sessionToken, ...safe } = u;
       const idx = us.findIndex(x => x.id === u.id);
       if (idx >= 0) {
         const next = [...us];
@@ -199,7 +203,7 @@ export default function App() {
   }
   function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
   function handleFirstLoginDone() {
-    setSession(s => (s ? { userId: s.userId } : null));
+    setSession(s => (s ? { userId: s.userId, token: s.token } : null));
     setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
   }
 

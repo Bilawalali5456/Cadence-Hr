@@ -2,8 +2,17 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
+function authHeaders() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    const session = raw ? JSON.parse(raw) : null;
+    const token = session?.token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch { return {}; }
+}
+
 export async function apiBootstrap() {
-  const res = await fetch(`${API_URL}/bootstrap`);
+  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
@@ -12,7 +21,7 @@ export async function apiSave(collection, data) {
   try {
     const res = await fetch(`${API_URL}/${collection}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
     });
     if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
@@ -22,7 +31,10 @@ export async function apiSave(collection, data) {
 }
 
 export async function apiDeleteEmployee(userId) {
-  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
   return body;
@@ -57,7 +69,7 @@ export function purgeEmployeeClientState(userId, setters = {}) {
 }
 
 export async function apiFetchNotifications() {
-  const res = await fetch(`${API_URL}/notifications`);
+  const res = await fetch(`${API_URL}/notifications`, { headers: authHeaders() });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
@@ -65,7 +77,7 @@ export async function apiFetchNotifications() {
 export async function apiMarkNotificationRead(id) {
   const res = await fetch(`${API_URL}/notifications/read`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ id }),
   });
   if (!res.ok) throw new Error("Failed to mark notification read");
@@ -75,7 +87,7 @@ export async function apiMarkNotificationRead(id) {
 export async function apiMarkAllNotificationsRead(userId) {
   const res = await fetch(`${API_URL}/notifications/read-all`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ userId }),
   });
   if (!res.ok) throw new Error("Failed to mark all notifications read");
@@ -85,7 +97,7 @@ export async function apiMarkAllNotificationsRead(userId) {
 export async function apiSendNotificationEmail({ to, name, subject, body, link }) {
   const res = await fetch(`${API_URL}/send-notification-email`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, subject, body, link }),
   });
   const data = await res.json().catch(() => ({}));
@@ -96,7 +108,7 @@ export async function apiSendNotificationEmail({ to, name, subject, body, link }
 export async function apiSendCredentials({ to, name, email, password, role, isReset = false }) {
   const res = await fetch(`${API_URL}/send-credentials`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, email, password, role, isReset }),
   });
   const data = await res.json().catch(() => ({}));
@@ -111,7 +123,7 @@ export async function apiSendCredentials({ to, name, email, password, role, isRe
 export async function apiSendWarningEmail({ to, name, warningType, reason, date }) {
   const res = await fetch(`${API_URL}/send-warning-email`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ to, name, warningType, reason, date }),
   });
   const data = await res.json().catch(() => ({}));
@@ -133,7 +145,7 @@ export async function apiLogin(email, password) {
 export async function apiChangePassword({ userId, currentPassword, newPassword }) {
   const res = await fetch(`${API_URL}/change-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ userId, currentPassword, newPassword }),
   });
   const data = await res.json().catch(() => ({}));
@@ -207,12 +219,12 @@ export function sanitizeWarnings(list) {
     }));
 }
 
-function biometricHeaders(userId) {
-  return { "Content-Type": "application/json", "X-User-Id": userId };
+function biometricHeaders() {
+  return { "Content-Type": "application/json", ...authHeaders() };
 }
 
 export async function apiBiometricStatus(userId) {
-  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders(userId) });
+  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load device status");
   return res.json();
 }
@@ -222,13 +234,13 @@ export async function apiBiometricLogs(userId, date, method = "all") {
   if (date) params.set("date", date);
   if (method && method !== "all") params.set("method", method);
   const q = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders(userId) });
+  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric logs");
   return res.json();
 }
 
 export async function apiBiometricUsers(userId) {
-  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders(userId) });
+  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric users");
   return res.json();
 }
@@ -236,7 +248,7 @@ export async function apiBiometricUsers(userId) {
 export async function apiBiometricMap(userId, pin, employeeId) {
   const res = await fetch(`${API_URL}/biometric/map`, {
     method: "POST",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
     body: JSON.stringify({ pin, employee_id: employeeId }),
   });
   const data = await res.json().catch(() => ({}));
@@ -248,7 +260,7 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
   const q = deviceSerial ? `?device_serial_number=${encodeURIComponent(deviceSerial)}` : "";
   const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}${q}`, {
     method: "DELETE",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to remove mapping");
   return res.json();
@@ -257,7 +269,7 @@ export async function apiBiometricUnmap(userId, pin, deviceSerial) {
 export async function apiBiometricClearLogs(userId) {
   const res = await fetch(`${API_URL}/biometric/raw-logs`, {
     method: "DELETE",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to clear logs");
   return res.json();
@@ -266,14 +278,14 @@ export async function apiBiometricClearLogs(userId) {
 export async function apiBiometricProcess(userId) {
   const res = await fetch(`${API_URL}/biometric/process`, {
     method: "POST",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to process logs");
   return res.json();
 }
 
 export async function apiRefreshAttendance() {
-  const res = await fetch(`${API_URL}/bootstrap`);
+  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to refresh attendance");
   const d = await res.json();
   return sanitizeAttendance(d.attendance);
