@@ -39,7 +39,10 @@ export function LoginPage({ onLogin }) {
         setErr("Sign-in succeeded but no session token was returned. Restart the backend server and try again.");
         return;
       }
-      onLogin(u, pw, data.sessionToken);
+      const ok = onLogin(u, pw, data.sessionToken);
+      if (ok === false) {
+        setErr("Could not establish your session. Please try again.");
+      }
     } catch (e) {
       setErr(e.message || "Incorrect email or password.");
     } finally {

@@ -17,7 +17,11 @@ function readSessionFromStorage() {
 /** Persist session token immediately (call synchronously in handleLogin before any API/sync effects). */
 export function persistSession(session) {
   if (session?.userId && session?.sessionToken) {
-    sessionCache = { userId: session.userId, sessionToken: session.sessionToken };
+    sessionCache = {
+      userId: session.userId,
+      sessionToken: session.sessionToken,
+      role: session.role || session.user?.role || null,
+    };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionCache));
   } else {
     sessionCache = null;
