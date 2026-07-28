@@ -8,26 +8,14 @@ import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 import {
   manualMapPin, manualUnmapPin,
 } from "../lib/pinMapping.js";
-import { resolveAuthenticatedUser } from "../lib/auth.js";
+import { createRequireHrAdmin } from "../lib/auth.js";
 
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function requireHrAdmin(pool) {
-  return async (req, res, next) => {
-    try {
-      const user = await resolveAuthenticatedUser(pool, req);
-      if (!user) return res.status(401).json({ error: "Authentication required" });
-      if (!["HR Admin", "Executive"].includes(user.role)) {
-        return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
-      }
-      req.authUser = user;
-      next();
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  };
+  return createRequireHrAdmin(pool);
 }
 
 export function registerAttendanceApi(app, pool) {

@@ -29,8 +29,13 @@ export async function apiSave(collection, data) {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(data),
     });
+    if (res.status === 401) {
+      clearSession();
+      throw new Error("Session expired");
+    }
     if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
   } catch (e) {
+    if (String(e.message || "").includes("Session expired")) throw e;
     console.error(`Failed to sync ${collection}:`, e);
   }
 }

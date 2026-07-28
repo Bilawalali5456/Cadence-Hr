@@ -134,9 +134,12 @@ export default function App() {
   }, []);
 
   /* ── Sync each collection to PostgreSQL when it changes ── */
+  const syncActor = session?.userId ? users.find(u => u.id === session.userId) : null;
+  const isHrAdminSync = syncActor && (syncActor.role === "HR Admin" || syncActor.role === "Executive");
+
   /* ── Sync users; strip plain passwords from memory after save so they are not re-sent ── */
   useEffect(() => {
-    if (!loadedRef.current) return;
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
     let cancelled = false;
     (async () => {
       await apiSave("users", users);
@@ -154,24 +157,51 @@ export default function App() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [users]);
+  }, [users, session?.sessionToken, isHrAdminSync]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("attendance", attendance);
+  }, [attendance, session?.sessionToken, isHrAdminSync]);
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    const actor = users.find(u => u.id === session.userId);
-    const canSyncAll = actor && (actor.role === "HR Admin" || actor.role === "Executive");
-    if (!canSyncAll) return;
-    apiSave("attendance", attendance);
-  }, [attendance, session?.sessionToken, session?.userId, users]);
-  useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
-  useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
-  useEffect(() => { if (loadedRef.current) apiSave("announcements", announcements); }, [announcements]);
-  useEffect(() => { if (loadedRef.current) apiSave("payroll", payroll); }, [payroll]);
-  useEffect(() => { if (loadedRef.current) apiSave("policies", policies); }, [policies]);
-  useEffect(() => { if (loadedRef.current) apiSave("assets", assets); }, [assets]);
-  useEffect(() => { if (loadedRef.current) apiSave("holidays", holidays); }, [holidays]);
-  useEffect(() => { if (loadedRef.current) apiSave("notifications", notifications); }, [notifications]);
-  useEffect(() => { if (loadedRef.current) apiSave("warnings", warnings); }, [warnings]);
-  useEffect(() => { if (loadedRef.current) apiSave("company", company); }, [company]);
+    apiSave("leave", leaveRequests);
+  }, [leaveRequests, session?.sessionToken]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken) return;
+    apiSave("short-leave", shortLeaveRequests);
+  }, [shortLeaveRequests, session?.sessionToken]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("announcements", announcements);
+  }, [announcements, session?.sessionToken, isHrAdminSync]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("payroll", payroll);
+  }, [payroll, session?.sessionToken, isHrAdminSync]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("policies", policies);
+  }, [policies, session?.sessionToken, isHrAdminSync]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken) return;
+    apiSave("assets", assets);
+  }, [assets, session?.sessionToken]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("holidays", holidays);
+  }, [holidays, session?.sessionToken, isHrAdminSync]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken) return;
+    apiSave("notifications", notifications);
+  }, [notifications, session?.sessionToken]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken) return;
+    apiSave("warnings", warnings);
+  }, [warnings, session?.sessionToken]);
+  useEffect(() => {
+    if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
+    apiSave("company", company);
+  }, [company, session?.sessionToken, isHrAdminSync]);
 
   useEffect(() => {
     if (!loadedRef.current) return;

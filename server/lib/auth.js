@@ -61,3 +61,40 @@ export async function resolveAuthenticatedUser(pool, req) {
 export async function cleanupExpiredSessions(pool) {
   await pool.query("DELETE FROM user_sessions WHERE expires_at <= NOW()");
 }
+
+export const HR_ADMIN_ROLES = ["HR Admin", "Executive"];
+
+/** Require a valid Bearer session token. Sets req.authUser. */
+export function createRequireAuth(pool) {
+  return async function requireAuth(req, res, next) {
+    try {
+      const user = await resolveAuthenticatedUser(pool, req);
+      if (!user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      req.authUser = user;
+      next();
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+}
+
+/** Require HR Admin or Executive role. Sets req.authUser. */
+export function createRequireHrAdmin(pool) {
+  return async function requireHrAdmin(req, res, next) {
+    try {
+      const user = await resolveAuthenticatedUser(pool, req);
+      if (!user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      if (!HR_ADMIN_ROLES.includes(user.role)) {
+        return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
+      }
+      req.authUser = user;
+      next();
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+}

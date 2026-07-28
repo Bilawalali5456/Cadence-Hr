@@ -14,7 +14,8 @@ import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
-  revokeAllUserSessions, cleanupExpiredSessions,
+  revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
+  HR_ADMIN_ROLES,
 } from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine } from "./lib/admsHelpers.js";
 
@@ -22,6 +23,8 @@ dotenv.config();
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const requireAuth = createRequireAuth(pool);
+const requireHrAdmin = createRequireHrAdmin(pool);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -75,24 +78,11 @@ function resolveFirstLoginForSave(u, existingFirstLogin) {
 }
 
 function canViewAllAttendance(role) {
-  return role === "HR Admin" || role === "Executive";
+  return HR_ADMIN_ROLES.includes(role);
 }
 
 async function resolveRequestUser(req) {
   return resolveAuthenticatedUser(pool, req);
-}
-
-async function requireAttendanceAdmin(req, res, next) {
-  try {
-    const actor = await resolveRequestUser(req);
-    if (!actor || !canViewAllAttendance(actor.role)) {
-      return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
-    }
-    req.authUser = actor;
-    next();
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 }
 
 /* ─── Row mappers: snake_case (DB) ↔ camelCase (frontend) ─── */
@@ -351,7 +341,7 @@ async function replaceAll(table, rows, insertFn) {
   }
 }
 
-app.put("/api/users", async (req, res) => {
+app.put("/api/users", requireHrAdmin, async (req, res) => {
   try {
     const { rows: existingRows } = await pool.query("SELECT id, password, first_login FROM users");
     const existingPasswords = Object.fromEntries(existingRows.map((r) => [r.id, r.password]));
@@ -389,19 +379,12 @@ app.put("/api/users", async (req, res) => {
   }
 });
 
-app.delete("/api/users/:userId", async (req, res) => {
+app.delete("/api/users/:userId", requireHrAdmin, async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
 
-    let actor = null;
-    const token = extractSessionToken(req);
-    if (token) {
-      actor = await resolveAuthenticatedUser(pool, req);
-      if (!actor) {
-        return res.status(401).json({ error: "Session expired or invalid" });
-      }
-    }
+    const actor = req.authUser;
 
     const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
     const result = await deleteEmployeeCascade(pool, userId, actor);
@@ -475,11 +458,14 @@ app.post("/api/logout", async (req, res) => {
   }
 });
 
-app.post("/api/change-password", async (req, res) => {
+app.post("/api/change-password", requireAuth, async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body || {};
     if (!userId || !currentPassword || !newPassword) {
       return res.status(400).json({ ok: false, error: "userId, currentPassword, and newPassword are required" });
+    }
+    if (req.authUser.id !== userId) {
+      return res.status(403).json({ ok: false, error: "Cannot change another user's password" });
     }
     if (String(newPassword).length < 8) {
       return res.status(400).json({ ok: false, error: "Password must be at least 8 characters." });
@@ -522,7 +508,7 @@ app.post("/api/change-password", async (req, res) => {
   }
 });
 
-app.put("/api/attendance", requireAttendanceAdmin, async (req, res) => {
+app.put("/api/attendance", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("attendance", req.body, (c, a) =>
       c.query(
@@ -556,7 +542,7 @@ app.put("/api/attendance", requireAttendanceAdmin, async (req, res) => {
   }
 });
 
-app.put("/api/leave", async (req, res) => {
+app.put("/api/leave", requireAuth, async (req, res) => {
   try {
     await replaceAll("leave_requests", req.body, (c, l) =>
       c.query(
@@ -575,7 +561,7 @@ app.put("/api/leave", async (req, res) => {
   }
 });
 
-app.put("/api/short-leave", async (req, res) => {
+app.put("/api/short-leave", requireAuth, async (req, res) => {
   try {
     await replaceAll("short_leave_requests", req.body, (c, l) =>
       c.query(
@@ -596,7 +582,7 @@ app.put("/api/short-leave", async (req, res) => {
   }
 });
 
-app.put("/api/announcements", async (req, res) => {
+app.put("/api/announcements", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("announcements", req.body, (c, a) =>
       c.query(
@@ -611,7 +597,7 @@ app.put("/api/announcements", async (req, res) => {
   }
 });
 
-app.put("/api/payroll", async (req, res) => {
+app.put("/api/payroll", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("payroll", req.body, (c, s) =>
       c.query(
@@ -626,7 +612,7 @@ app.put("/api/payroll", async (req, res) => {
   }
 });
 
-app.put("/api/company", async (req, res) => {
+app.put("/api/company", requireHrAdmin, async (req, res) => {
   try {
     const c = req.body;
     await pool.query(
@@ -642,7 +628,7 @@ app.put("/api/company", async (req, res) => {
   }
 });
 
-app.put("/api/policies", async (req, res) => {
+app.put("/api/policies", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("policies", req.body, (c, p) =>
       c.query(
@@ -661,7 +647,7 @@ app.put("/api/policies", async (req, res) => {
   }
 });
 
-app.put("/api/assets", async (req, res) => {
+app.put("/api/assets", requireAuth, async (req, res) => {
   try {
     await replaceAll("assets", req.body, (c, a) =>
       c.query(
@@ -696,7 +682,7 @@ app.get("/api/notifications", async (_req, res) => {
   }
 });
 
-app.put("/api/notifications", async (req, res) => {
+app.put("/api/notifications", requireAuth, async (req, res) => {
   try {
     await replaceAll("notifications", req.body, (c, n) =>
       c.query(
@@ -739,7 +725,7 @@ app.post("/api/notifications/read-all", async (req, res) => {
   }
 });
 
-app.put("/api/holidays", async (req, res) => {
+app.put("/api/holidays", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("holidays", req.body, (c, h) =>
       c.query(
@@ -754,7 +740,7 @@ app.put("/api/holidays", async (req, res) => {
   }
 });
 
-app.put("/api/shifts", async (req, res) => {
+app.put("/api/shifts", requireHrAdmin, async (req, res) => {
   try {
     await replaceAll("shifts", req.body, (c, s) =>
       c.query(
@@ -778,7 +764,7 @@ app.put("/api/shifts", async (req, res) => {
   }
 });
 
-app.put("/api/warnings", async (req, res) => {
+app.put("/api/warnings", requireAuth, async (req, res) => {
   try {
     await replaceAll("warnings", req.body, (c, w) =>
       c.query(
