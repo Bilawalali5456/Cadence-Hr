@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
+import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -22,14 +22,11 @@ function CheckOutCell({ record, user, dateKey, now = new Date() }) {
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
-  const showReports = can(currentUser.role, "view_attendance_reports", roles);
   const isAdminView =
     isHrAdminRole(currentUser.role) ||
-    isExecutiveRole(currentUser.role) ||
-    currentUser.role === "Manager" ||
-    showReports;
+    isExecutiveRole(currentUser.role);
 
-  // HR Admin / Executive / Manager: org reports only (check-in lives on Home)
+  // HR Admin / Executive: org-wide attendance reports (check-in lives on Home)
   if (isAdminView) {
     return (
       <AdminAttendanceView

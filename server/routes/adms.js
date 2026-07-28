@@ -10,6 +10,7 @@ import {
   logRawRequest, logAdms, logPostCdataVerbose, logAdmsResponseBytes,
 } from "../lib/admsHelpers.js";
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
+import { resolveMappedEmployeeId } from "../lib/pinMapping.js";
 
 function serialFromQuery(req, fallback = "unknown") {
   const raw = req.query.SN || req.query.sn || fallback;
@@ -66,12 +67,7 @@ async function upsertDevice(pool, serial, req) {
 }
 
 async function resolveEmployeeId(pool, deviceSerial, deviceUserId) {
-  const { rows } = await pool.query(
-    `SELECT employee_id FROM device_user_mapping
-     WHERE device_serial_number = $1 AND device_user_id = $2 LIMIT 1`,
-    [deviceSerial, deviceUserId]
-  );
-  return rows[0]?.employee_id || null;
+  return resolveMappedEmployeeId(pool, deviceSerial, deviceUserId);
 }
 
 async function insertAttendanceLog(pool, serial, parsed) {

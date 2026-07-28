@@ -439,9 +439,11 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 }
 
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
-  if (!record?.checkIn || record.checkOut) return false;
+  if (!record?.checkIn) return false;
   if (record.manuallyCorrected) return false;
+  // During active shift, ignore premature check-out from biometric sync
   if (!hasShiftEnded(user, dateKey, now) && !isAttendanceDayClosed(dateKey, now)) return true;
+  if (record.checkOut) return false;
   if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
   return false;
 }
@@ -923,12 +925,28 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
   const now = new Date();
   let changed = false;
   const next = (attendance || []).map(r => {
-    if (!r?.checkIn || r.checkOut || r.manuallyCorrected) return r;
+    if (!r?.checkIn || r.manuallyCorrected) return r;
     const dateKey = r.date || todayKey(now);
     const user = users.find(u => u.id === r.userId);
     if (!user) return r;
     const bounds = getShiftBounds(user, dateKey);
     if (bounds.off || !bounds.end) return r;
+
+    // Clear premature biometric check-out while shift is still active
+    if (r.checkOut && !hasShiftEnded(user, dateKey, now) && (r.source === "biometric" || !r.manuallyCorrected)) {
+      changed = true;
+      const lastScan = r.checkOut !== r.checkIn ? r.checkOut : (r.lastScan || null);
+      return finalizeRecord({
+        ...r,
+        checkOut: null,
+        checkOutMethod: null,
+        autoCheckout: false,
+        lastScan: lastScan || r.lastScan || null,
+        lastScanMethod: r.checkOut !== r.checkIn ? (r.checkOutMethod || r.lastScanMethod) : r.lastScanMethod,
+      }, user, holidays);
+    }
+
+    if (r.checkOut) return r;
 
     // During active shift — never finalize checkout here
     if (isAttendanceInProgress(user, r, dateKey, now) && !hasShiftEnded(user, dateKey, now)) return r;

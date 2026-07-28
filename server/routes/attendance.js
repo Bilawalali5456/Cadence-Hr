@@ -5,6 +5,9 @@ import { parseZktTime } from "../lib/admsHelpers.js";
  */
 
 import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
+import {
+  manualMapPin, manualUnmapPin,
+} from "../lib/pinMapping.js";
 
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -107,23 +110,33 @@ export function registerAttendanceApi(app, pool) {
     try {
       const { rows: enrolled } = await pool.query(
         `SELECT deu.device_user_id AS pin, deu.name, deu.device_serial_number,
-                dm.employee_id, u.name AS portal_name, u.email AS portal_email
+                pin_map.employee_id, u.name AS portal_name, u.email AS portal_email
          FROM device_enrolled_users deu
-         LEFT JOIN device_user_mapping dm
-           ON dm.device_serial_number = deu.device_serial_number
-          AND dm.device_user_id = deu.device_user_id
-         LEFT JOIN users u ON u.id = dm.employee_id
+         LEFT JOIN LATERAL (
+           SELECT dm.employee_id
+           FROM device_user_mapping dm
+           WHERE dm.device_user_id = deu.device_user_id
+           ORDER BY CASE WHEN dm.device_serial_number = deu.device_serial_number THEN 0 ELSE 1 END,
+                    dm.updated_at DESC NULLS LAST, dm.id DESC
+           LIMIT 1
+         ) pin_map ON true
+         LEFT JOIN users u ON u.id = pin_map.employee_id
          ORDER BY deu.device_user_id`
       );
 
       const { rows: fromLogs } = await pool.query(
         `SELECT DISTINCT al.device_user_id AS pin, al.device_serial_number,
-                dm.employee_id, u.name AS portal_name, u.email AS portal_email
+                pin_map.employee_id, u.name AS portal_name, u.email AS portal_email
          FROM attendance_logs al
-         LEFT JOIN device_user_mapping dm
-           ON dm.device_serial_number = al.device_serial_number
-          AND dm.device_user_id = al.device_user_id
-         LEFT JOIN users u ON u.id = dm.employee_id
+         LEFT JOIN LATERAL (
+           SELECT dm.employee_id
+           FROM device_user_mapping dm
+           WHERE dm.device_user_id = al.device_user_id
+           ORDER BY CASE WHEN dm.device_serial_number = al.device_serial_number THEN 0 ELSE 1 END,
+                    dm.updated_at DESC NULLS LAST, dm.id DESC
+           LIMIT 1
+         ) pin_map ON true
+         LEFT JOIN users u ON u.id = pin_map.employee_id
          WHERE NOT EXISTS (
            SELECT 1 FROM device_enrolled_users deu
            WHERE deu.device_serial_number = al.device_serial_number
@@ -203,19 +216,21 @@ export function registerAttendanceApi(app, pool) {
       }
       if (!serial) return res.status(400).json({ error: "No device registered yet" });
 
-      await pool.query(
-        `INSERT INTO device_user_mapping (device_user_id, employee_id, device_serial_number, updated_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (device_serial_number, device_user_id) DO UPDATE SET
-           employee_id = EXCLUDED.employee_id, updated_at = NOW()`,
-        [parseInt(pin, 10), employeeId, serial]
-      );
+      const { serials } = await manualMapPin(pool, {
+        pin,
+        employeeId,
+        deviceSerial: serial,
+        actor: req.authUser,
+        source: "manual_map",
+      });
 
-      await pool.query(
-        `UPDATE attendance_logs SET employee_id = $1, updated_at = NOW()
-         WHERE device_serial_number = $2 AND device_user_id = $3`,
-        [employeeId, serial, parseInt(pin, 10)]
-      );
+      for (const s of serials) {
+        await pool.query(
+          `UPDATE attendance_logs SET employee_id = $1, updated_at = NOW()
+           WHERE device_serial_number = $2 AND device_user_id = $3`,
+          [employeeId, s, parseInt(pin, 10)]
+        );
+      }
 
       await syncAttendanceFromLogs(pool);
       res.json({ ok: true });
@@ -235,12 +250,12 @@ export function registerAttendanceApi(app, pool) {
         );
         serial = rows[0]?.serial_number;
       }
-      if (!serial) return res.status(400).json({ error: "No device registered yet" });
-      await pool.query(
-        `DELETE FROM device_user_mapping
-         WHERE device_serial_number = $1 AND device_user_id = $2`,
-        [String(serial), parseInt(req.params.pin, 10)]
-      );
+      await manualUnmapPin(pool, {
+        pin: req.params.pin,
+        deviceSerial: serial,
+        actor: req.authUser,
+        source: "manual_unmap",
+      });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

@@ -10,6 +10,7 @@ import {
   formatBreakTimer,
   isOnBreak,
   isBreakExceeded,
+  isAttendanceInProgress,
   resolveDayStatus,
   dayStatusPill,
   hasShiftEnded,
@@ -38,7 +39,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const publicHoliday = getPublicHoliday(key, holidays);
   const dayOff = bounds.off || publicHoliday;
   const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
-  const checkedIn = today?.checkIn && !today?.checkOut;
+  const checkedIn = today?.checkIn && isAttendanceInProgress(user, today, key, now);
   const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);

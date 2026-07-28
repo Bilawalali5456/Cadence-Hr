@@ -51,10 +51,10 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 }
 
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
-  if (!record?.checkIn || record.checkOut) return false;
+  if (!record?.checkIn) return false;
   if (record.manuallyCorrected) return false;
   if (!hasShiftEnded(user, dateKey, now) && !isAttendanceDayClosed(dateKey, now)) return true;
-  // Shift ended but only one scan — keep "Working" until auto-checkout at shift end + 30 min
+  if (record.checkOut) return false;
   if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
   return false;
 }

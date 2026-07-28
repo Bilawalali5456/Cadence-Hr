@@ -204,7 +204,7 @@ INSERT INTO roles (id, name, permissions) VALUES
   "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
 ]'::jsonb),
 ('Manager', 'Manager', '[
-  "view_dashboard","view_attendance","view_attendance_reports",
+  "view_dashboard",
   "approve_short_leave","approve_leave","view_leave",
   "view_policies","view_assets","view_announcements","view_payroll"
 ]'::jsonb),
@@ -377,6 +377,25 @@ CREATE INDEX IF NOT EXISTS idx_attendance_logs_employee ON attendance_logs (empl
 CREATE INDEX IF NOT EXISTS idx_attendance_logs_punch_time ON attendance_logs (punch_time);
 CREATE INDEX IF NOT EXISTS idx_attendance_logs_unsynced ON attendance_logs (synced_to_attendance) WHERE synced_to_attendance = false AND is_duplicate = false;
 CREATE INDEX IF NOT EXISTS idx_device_user_mapping_employee ON device_user_mapping (employee_id);
+
+-- Audit trail for every PIN mapping change (manual map/unmap or employee deletion only)
+CREATE TABLE IF NOT EXISTS device_user_mapping_audit (
+  id SERIAL PRIMARY KEY,
+  action VARCHAR(32) NOT NULL,
+  device_user_id INTEGER NOT NULL,
+  device_serial_number VARCHAR(50),
+  employee_id TEXT,
+  previous_employee_id TEXT,
+  actor_user_id TEXT,
+  actor_name VARCHAR(200),
+  actor_role VARCHAR(64),
+  source VARCHAR(64) NOT NULL DEFAULT 'system',
+  details JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pin_mapping_audit_pin ON device_user_mapping_audit (device_user_id);
+CREATE INDEX IF NOT EXISTS idx_pin_mapping_audit_at ON device_user_mapping_audit (created_at DESC);
 
 -- Enrolled users pulled from device (PIN + name) for mapping UI
 CREATE TABLE IF NOT EXISTS device_enrolled_users (

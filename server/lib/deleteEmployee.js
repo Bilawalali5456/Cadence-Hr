@@ -4,7 +4,9 @@
  * Breaks and correction logs live on attendance rows.
  * WFH requests are leave_requests with type = 'WFH'.
  */
-export async function deleteEmployeeCascade(pool, userId) {
+import { deleteMappingsForEmployee } from "./pinMapping.js";
+
+export async function deleteEmployeeCascade(pool, userId, actor = null) {
   if (!userId) return { ok: false, error: "Employee id is required." };
 
   const client = await pool.connect();
@@ -30,10 +32,10 @@ export async function deleteEmployeeCascade(pool, userId) {
       [userId]
     )).rowCount;
 
-    counts.deviceUserMapping = (await client.query(
-      "DELETE FROM device_user_mapping WHERE employee_id = $1",
-      [userId]
-    )).rowCount;
+    counts.deviceUserMapping = await deleteMappingsForEmployee(client, userId, {
+      actor,
+      employeeName: existing[0].name,
+    });
 
     counts.biometricUserMap = (await client.query(
       "DELETE FROM biometric_user_map WHERE employee_id = $1",
