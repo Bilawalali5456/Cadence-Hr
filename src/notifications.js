@@ -38,12 +38,18 @@ export function unreadCountForUser(notifications, userId) {
   return notificationsForUser(notifications, userId).filter(n => !n.read).length;
 }
 
+export function activeEmployeesAndManagers(users) {
+  return (users || []).filter(u =>
+    u && u.status === "active" && (u.role === "Employee" || u.role === "Manager")
+  );
+}
+
 export function activeEmployees(users) {
   return (users || []).filter(u => u && u.status === "active" && isStaffRole(u.role));
 }
 
 export function buildAnnouncementNotifications(users, announcementTitle) {
-  return activeEmployees(users).map(u =>
+  return activeEmployeesAndManagers(users).map(u =>
     createNotification({
       userId: u.id,
       title: "New Announcement",
@@ -94,7 +100,7 @@ export function buildWarningNotification(userId, type, reason) {
 }
 
 export async function sendAnnouncementEmails(users, { title, body }) {
-  const recipients = activeEmployees(users);
+  const recipients = activeEmployeesAndManagers(users);
   const subject = `Adforce HR — ${title}`;
   const portalLink = "https://hr.adforcesolutions.com";
   await Promise.allSettled(recipients.map(u => {

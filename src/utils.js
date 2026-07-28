@@ -1,3 +1,4 @@
+import { Users, Briefcase, Check, User, Shield } from "lucide-react";
 import { B } from "./brand.jsx";
 
 export const DEFAULT_COMPANY = { officeStart: "09:00", graceMinutes: 15, currency: "PKR" };
@@ -13,11 +14,7 @@ export function can(roleName, permission, roles = []) {
 }
 
 export function isStaffRole(role) {
-  return role === "Employee";
-}
-
-export function isValidPortalRole(role) {
-  return role === "Employee" || role === "HR Admin" || role === "Executive";
+  return role === "Employee" || role === "Manager";
 }
 
 export function isHrAdminRole(role) {
@@ -76,7 +73,7 @@ export function canApproveShortLeaveRequest(approver, req, users, roles) {
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_short_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role);
+  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
 }
 
 export function canApproveLeaveRequest(approver, req, users, roles) {
@@ -84,7 +81,7 @@ export function canApproveLeaveRequest(approver, req, users, roles) {
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role);
+  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
 }
 
 /** Executive super-authority: reverse or change any leave decision after HR/others have acted. */
@@ -92,10 +89,10 @@ export function canOverrideLeaveDecision(actor) {
   return !!actor && isExecutiveRole(actor.role);
 }
 
-/** Authority tier for approval hierarchy: Executive (2) > Admin (1). */
+/** Authority tier for approval hierarchy: Executive (2) > Admin/Manager (1). */
 export function approvalAuthorityTier(role) {
   if (isExecutiveRole(role)) return 2;
-  if (isHrAdminRole(role)) return 1;
+  if (isHrAdminRole(role) || role === "Manager") return 1;
   return 0;
 }
 
@@ -174,7 +171,7 @@ export function canDeleteLeaveRecord(actor, req, users, roles) {
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRole(requester?.role)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_leave", roles)) return false;
-  return isHrAdminRole(actor.role);
+  return isHrAdminRole(actor.role) || actor.role === "Manager";
 }
 
 export function canDeleteShortLeaveRecord(actor, req, users, roles) {
@@ -184,7 +181,7 @@ export function canDeleteShortLeaveRecord(actor, req, users, roles) {
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRequest(req, users)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_short_leave", roles)) return false;
-  return isHrAdminRole(actor.role);
+  return isHrAdminRole(actor.role) || actor.role === "Manager";
 }
 
 export function sortHrAdminFirst(users) {
@@ -1277,6 +1274,44 @@ export function getUserCnic(user) {
 
 export function cnicDigitsForUser(user) {
   return normalizeCnic(decryptSensitive(user?.cnicEnc));
+}
+
+export const LOGIN_ROLES = [
+  {
+    id: "HR Admin",
+    label: "HR Admin",
+    icon: Shield,
+    color: B.red,
+    description: "Manage employees, payroll, attendance & settings",
+  },
+  {
+    id: "Employee",
+    label: "Employee",
+    icon: User,
+    color: B.dark,
+    description: "Check in, view payslips, request leave",
+  },
+  {
+    id: "Manager",
+    label: "Manager",
+    icon: Users,
+    color: B.darkMid,
+    description: "Approve leave, oversee team attendance & requests",
+  },
+  {
+    id: "Executive",
+    label: "Executive",
+    icon: Briefcase,
+    color: "#0f4c75",
+    description: "Company overview, reports & analytics",
+  },
+];
+
+export function loginRoleMatchesSelection(selectedRole, actualRole) {
+  if (selectedRole === actualRole) return true;
+  // Managers use the employee portal; Employee card still accepts Manager accounts.
+  if (selectedRole === "Employee" && actualRole === "Manager") return true;
+  return false;
 }
 
 export function monthKey(d = new Date()) {

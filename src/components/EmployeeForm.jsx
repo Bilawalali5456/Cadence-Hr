@@ -63,7 +63,7 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
           </div>
         ) : (
           <SelectInput label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })}
-            options={[{ value: "Employee", label: "Employee" }]} />
+            options={[{ value: "Employee", label: "Employee" }, { value: "Manager", label: "Manager" }]} />
         )}
         <SelectInput label="Employment type" value={form.type} onChange={v => setForm({ ...form, type: v })}
           options={[{ value: "Full-time", label: "Full-time" }, { value: "Part-time", label: "Part-time" }, { value: "Contractor", label: "Contractor" }]} />

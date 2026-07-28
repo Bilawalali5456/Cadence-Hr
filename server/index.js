@@ -15,7 +15,7 @@ import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
   revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
-  HR_ADMIN_ROLES, PORTAL_ROLES, isValidPortalRole,
+  HR_ADMIN_ROLES,
 } from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine } from "./lib/admsHelpers.js";
 
@@ -432,13 +432,6 @@ app.post("/api/login", async (req, res) => {
 
     if (!match) {
       return res.json({ ok: false, error: "Invalid credentials" });
-    }
-
-    if (row.status === "inactive") {
-      return res.json({ ok: false, error: "This account is inactive. Contact your administrator." });
-    }
-    if (!isValidPortalRole(row.role)) {
-      return res.json({ ok: false, error: "This account role is not supported. Contact your HR administrator." });
     }
 
     const session = await createSession(pool, row.id);

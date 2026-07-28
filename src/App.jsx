@@ -445,6 +445,7 @@ export default function App() {
 
   const role = currentUser.role;
   const nav  = NAV.filter(n => {
+    if (n.id === "attendance" && role === "Manager") return false;
     if (n.id === "attendance") {
       return can(role, "view_attendance_reports", roles) || can(role, "view_attendance", roles);
     }
