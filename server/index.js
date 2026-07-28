@@ -342,15 +342,24 @@ async function replaceAll(table, rows, insertFn) {
 }
 
 app.put("/api/users", requireHrAdmin, async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { rows: existingRows } = await pool.query("SELECT id, password, first_login FROM users");
+    const body = Array.isArray(req.body) ? req.body : [];
+    const { rows: existingRows } = await client.query("SELECT id, password, first_login FROM users");
     const existingPasswords = Object.fromEntries(existingRows.map((r) => [r.id, r.password]));
     const existingFirstLogin = Object.fromEntries(existingRows.map((r) => [r.id, r.first_login]));
 
-    await replaceAll("users", req.body, (c, u) => {
+    // IMPORTANT: do NOT DELETE FROM users (full wipe). That cascades into user_sessions
+    // and immediately invalidates the caller's Bearer token after every sync.
+    await client.query("BEGIN");
+
+    const keepIds = [];
+    for (const u of body) {
+      if (!u?.id) continue;
+      keepIds.push(u.id);
       const password = resolvePasswordForSave(u.password, existingPasswords[u.id]);
       const firstLogin = resolveFirstLoginForSave(u, existingFirstLogin);
-      return c.query(
+      await client.query(
         `INSERT INTO users (
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
@@ -359,7 +368,37 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
            $21,$22,$23,$24,$25,$26,$27,$28,$29,$30
-         )`,
+         )
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           password = EXCLUDED.password,
+           role = EXCLUDED.role,
+           title = EXCLUDED.title,
+           dept = EXCLUDED.dept,
+           team = EXCLUDED.team,
+           type = EXCLUDED.type,
+           hired = EXCLUDED.hired,
+           salary = EXCLUDED.salary,
+           phone = EXCLUDED.phone,
+           status = EXCLUDED.status,
+           leave_balance = EXCLUDED.leave_balance,
+           sick_balance = EXCLUDED.sick_balance,
+           skills = EXCLUDED.skills,
+           first_login = EXCLUDED.first_login,
+           temp_password = EXCLUDED.temp_password,
+           cnic_enc = EXCLUDED.cnic_enc,
+           marital_status = EXCLUDED.marital_status,
+           guardian_name = EXCLUDED.guardian_name,
+           emergency_contact_name = EXCLUDED.emergency_contact_name,
+           emergency_contact_phone = EXCLUDED.emergency_contact_phone,
+           emergency_contact_relation = EXCLUDED.emergency_contact_relation,
+           bank_name = EXCLUDED.bank_name,
+           bank_branch = EXCLUDED.bank_branch,
+           bank_account = EXCLUDED.bank_account,
+           bank_iban = EXCLUDED.bank_iban,
+           shift = EXCLUDED.shift,
+           shift_id = EXCLUDED.shift_id`,
         [
           u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
@@ -371,11 +410,22 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
           u.shiftId || null,
         ]
       );
-    });
+    }
+
+    // Remove users that were deleted in the UI (their sessions cascade away — correct).
+    // Never run a blanket DELETE FROM users.
+    if (keepIds.length > 0) {
+      await client.query("DELETE FROM users WHERE NOT (id = ANY($1::text[]))", [keepIds]);
+    }
+
+    await client.query("COMMIT");
     res.json({ ok: true });
   } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
     console.error("users sync error:", e.message);
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
