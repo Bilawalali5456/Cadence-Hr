@@ -64,6 +64,13 @@ export async function cleanupExpiredSessions(pool) {
 
 export const HR_ADMIN_ROLES = ["HR Admin", "Executive"];
 
+/** Roles allowed to sign in to the portal. */
+export const PORTAL_ROLES = ["Employee", "HR Admin", "Executive"];
+
+export function isValidPortalRole(role) {
+  return PORTAL_ROLES.includes(role);
+}
+
 /** Require a valid Bearer session token. Sets req.authUser. */
 export function createRequireAuth(pool) {
   return async function requireAuth(req, res, next) {

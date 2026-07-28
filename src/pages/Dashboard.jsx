@@ -152,7 +152,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   const [warnTgt, setWarnTgt] = useState(null);
   const [warnDefaultReason, setWarnDefaultReason] = useState("");
 
-  if ((role === "Employee" || role === "Manager") && !opsDashboard) {
+  if (role === "Employee" && !opsDashboard) {
     return (
       <div className="space-y-5 max-w-3xl">
         <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>

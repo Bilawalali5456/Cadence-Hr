@@ -215,16 +215,15 @@ INSERT INTO roles (id, name, permissions) VALUES
   "view_policies","manage_policies","view_assets","view_all_assets","manage_assets",
   "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
 ]'::jsonb),
-('Manager', 'Manager', '[
-  "view_dashboard",
-  "approve_short_leave","approve_leave","view_leave",
-  "view_policies","view_assets","view_announcements","view_payroll"
-]'::jsonb),
 ('Employee', 'Employee', '[
   "view_dashboard","view_attendance","view_leave",
   "view_policies","view_assets","view_announcements","view_payroll"
 ]'::jsonb)
 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, permissions = EXCLUDED.permissions;
+
+-- Retire Manager role: reassign users and remove role definition
+UPDATE users SET role = 'Employee' WHERE role = 'Manager';
+DELETE FROM roles WHERE id = 'Manager';
 
 -- Seed default admin (only if users table is empty)
 INSERT INTO users (id, name, email, password, role, title, dept, team, type, hired, status, leave_balance, sick_balance, first_login, shift)
