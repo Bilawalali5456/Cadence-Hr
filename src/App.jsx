@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiLogout, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
+import { HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiLogout, apiFetchNotifications, loadSession, persistSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
@@ -253,12 +253,9 @@ export default function App() {
   /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
     if (session?.userId && session?.sessionToken) {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-        userId: session.userId,
-        sessionToken: session.sessionToken,
-      }));
+      persistSession({ userId: session.userId, sessionToken: session.sessionToken });
     } else if (!session) {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      persistSession(null);
     }
   }, [session]);
 
@@ -269,17 +266,18 @@ export default function App() {
   const currentUser = session ? users.find(u => u.id === session.userId) : null;
 
   function handleLogin(u, loginPassword, sessionToken) {
+    if (!sessionToken) {
+      console.error("[auth] Login succeeded but no sessionToken in response");
+      return;
+    }
+    // Write token synchronously before setState — sync effects run before session useEffect
+    persistSession({ userId: u.id, sessionToken });
     setSession({
       userId: u.id,
       sessionToken,
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
     });
-    apiBootstrap().then(d => {
-      setAttendance(sanitizeAttendance(d.attendance));
-      setLeaveRequests(sanitizeLeaveRequests(d.leave));
-      setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
-    }).catch(e => console.error("Post-login bootstrap failed:", e));
-    // Merge login user into local users list (password fields never included)
+    // Merge login user into local users list immediately so route guard resolves currentUser
     setUsers(us => {
       const { password, tempPassword, ...safe } = u;
       const idx = us.findIndex(x => x.id === u.id);
@@ -291,6 +289,11 @@ export default function App() {
       return [...us, safe];
     });
     setRoute("home");
+    apiBootstrap().then(d => {
+      setAttendance(sanitizeAttendance(d.attendance));
+      setLeaveRequests(sanitizeLeaveRequests(d.leave));
+      setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
+    }).catch(e => console.error("Post-login bootstrap failed:", e));
   }
   async function handleLogout() {
     try { await apiLogout(); } catch { /* clear local session regardless */ }
@@ -300,9 +303,13 @@ export default function App() {
   }
   function handleFirstLoginDone(updatedUser) {
     const uid = updatedUser?.id || session?.userId;
+    const nextToken = updatedUser?.sessionToken || session?.sessionToken;
+    if (uid && nextToken) {
+      persistSession({ userId: uid, sessionToken: nextToken });
+    }
     setSession(s => (s ? {
       userId: s.userId,
-      sessionToken: updatedUser?.sessionToken || s.sessionToken,
+      sessionToken: nextToken,
     } : null));
     if (!uid) return;
     setUsers(us => us.map(u => u.id === uid

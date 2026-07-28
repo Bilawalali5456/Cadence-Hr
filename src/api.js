@@ -2,6 +2,29 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
+/** In-memory session cache — updated synchronously on login so API calls work before useEffect runs. */
+let sessionCache = null;
+
+function readSessionFromStorage() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist session token immediately (call synchronously in handleLogin before any API/sync effects). */
+export function persistSession(session) {
+  if (session?.userId && session?.sessionToken) {
+    sessionCache = { userId: session.userId, sessionToken: session.sessionToken };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionCache));
+  } else {
+    sessionCache = null;
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  }
+}
+
 /** Auth headers from stored session token (never send forgeable X-User-Id). */
 export function authHeaders(extra = {}) {
   const session = loadSession();
@@ -55,6 +78,7 @@ export async function apiLogout() {
 }
 
 export function clearSession() {
+  sessionCache = null;
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
@@ -182,12 +206,10 @@ export async function apiChangePassword({ userId, currentPassword, newPassword }
 }
 
 export function loadSession() {
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  if (sessionCache?.sessionToken) return sessionCache;
+  const stored = readSessionFromStorage();
+  sessionCache = stored?.sessionToken ? stored : null;
+  return sessionCache;
 }
 
 export function loadHolidays() {

@@ -35,6 +35,10 @@ export function LoginPage({ onLogin }) {
         setErr("This account role is not supported. Contact your HR administrator.");
         return;
       }
+      if (!data.sessionToken) {
+        setErr("Sign-in succeeded but no session token was returned. Restart the backend server and try again.");
+        return;
+      }
       onLogin(u, pw, data.sessionToken);
     } catch (e) {
       setErr(e.message || "Incorrect email or password.");
