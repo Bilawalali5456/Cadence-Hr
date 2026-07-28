@@ -137,13 +137,24 @@ export default function App() {
   const syncActor = session?.userId ? users.find(u => u.id === session.userId) : null;
   const isHrAdminSync = syncActor && (syncActor.role === "HR Admin" || syncActor.role === "Executive");
 
+  async function syncCollection(collection, data) {
+    try {
+      const result = await apiSave(collection, data);
+      if (result?.sessionExpired) setSession(null);
+      return result;
+    } catch (e) {
+      console.error(`Sync failed for ${collection}:`, e);
+      return { ok: false };
+    }
+  }
+
   /* ── Sync users; strip plain passwords from memory after save so they are not re-sent ── */
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
     let cancelled = false;
     (async () => {
-      await apiSave("users", users);
-      if (cancelled) return;
+      const result = await syncCollection("users", users);
+      if (cancelled || result?.sessionExpired) return;
       const hasPlain = users.some(u => {
         const p = u?.password;
         return p && !String(p).startsWith("$2a$") && !String(p).startsWith("$2b$");
@@ -158,49 +169,60 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [users, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("attendance", attendance);
+    void syncCollection("attendance", attendance);
   }, [attendance, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    apiSave("leave", leaveRequests);
+    void syncCollection("leave", leaveRequests);
   }, [leaveRequests, session?.sessionToken]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    apiSave("short-leave", shortLeaveRequests);
+    void syncCollection("short-leave", shortLeaveRequests);
   }, [shortLeaveRequests, session?.sessionToken]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("announcements", announcements);
+    void syncCollection("announcements", announcements);
   }, [announcements, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("payroll", payroll);
+    void syncCollection("payroll", payroll);
   }, [payroll, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("policies", policies);
+    void syncCollection("policies", policies);
   }, [policies, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    apiSave("assets", assets);
+    void syncCollection("assets", assets);
   }, [assets, session?.sessionToken]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("holidays", holidays);
+    void syncCollection("holidays", holidays);
   }, [holidays, session?.sessionToken, isHrAdminSync]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    apiSave("notifications", notifications);
+    void syncCollection("notifications", notifications);
   }, [notifications, session?.sessionToken]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken) return;
-    apiSave("warnings", warnings);
+    void syncCollection("warnings", warnings);
   }, [warnings, session?.sessionToken]);
+
   useEffect(() => {
     if (!loadedRef.current || !session?.sessionToken || !isHrAdminSync) return;
-    apiSave("company", company);
+    void syncCollection("company", company);
   }, [company, session?.sessionToken, isHrAdminSync]);
 
   useEffect(() => {

@@ -31,12 +31,16 @@ export async function apiSave(collection, data) {
     });
     if (res.status === 401) {
       clearSession();
-      throw new Error("Session expired");
+      return { ok: false, sessionExpired: true };
     }
-    if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
+    if (!res.ok) {
+      console.error(`Failed to sync ${collection}:`, res.status);
+      return { ok: false };
+    }
+    return { ok: true };
   } catch (e) {
-    if (String(e.message || "").includes("Session expired")) throw e;
     console.error(`Failed to sync ${collection}:`, e);
+    return { ok: false };
   }
 }
 
