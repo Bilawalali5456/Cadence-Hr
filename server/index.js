@@ -59,6 +59,41 @@ function resolvePasswordForSave(incomingPassword, existingHash) {
   return bcryptjs.hashSync(String(incomingPassword), 10);
 }
 
+/** Once first_login is cleared in DB, only allow re-flagging when admin issues a new temp password. */
+function resolveFirstLoginForSave(u, existingFirstLogin) {
+  if (existingFirstLogin[u.id] === false) {
+    const plain = u.password || u.tempPassword;
+    const isNewTemp = plain && !isBcryptHash(String(plain));
+    if (u.firstLogin === true && isNewTemp) return true;
+    return false;
+  }
+  return !!u.firstLogin;
+}
+
+function canViewAllAttendance(role) {
+  return role === "HR Admin" || role === "Executive";
+}
+
+async function resolveRequestUser(req) {
+  const userId = req.headers["x-user-id"];
+  if (!userId) return null;
+  const { rows } = await pool.query("SELECT id, role, name FROM users WHERE id = $1", [userId]);
+  return rows[0] || null;
+}
+
+async function requireAttendanceAdmin(req, res, next) {
+  try {
+    const actor = await resolveRequestUser(req);
+    if (!actor || !canViewAllAttendance(actor.role)) {
+      return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
+    }
+    req.authUser = actor;
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
 /* ─── Row mappers: snake_case (DB) ↔ camelCase (frontend) ─── */
 
 const userToJs = (r) => ({
@@ -242,11 +277,18 @@ const warningToJs = (r) => ({
 });
 
 /* ─── GET /api/bootstrap — everything in one call ─── */
-app.get("/api/bootstrap", async (_req, res) => {
+app.get("/api/bootstrap", async (req, res) => {
   try {
+    const actor = await resolveRequestUser(req);
+    const attendanceQuery = !actor
+      ? Promise.resolve({ rows: [] })
+      : canViewAllAttendance(actor.role)
+        ? pool.query("SELECT * FROM attendance ORDER BY date DESC")
+        : pool.query("SELECT * FROM attendance WHERE user_id = $1 ORDER BY date DESC", [actor.id]);
+
     const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, shifts, notifications, warnings] = await Promise.all([
       pool.query("SELECT * FROM users ORDER BY name"),
-      pool.query("SELECT * FROM attendance ORDER BY date DESC"),
+      attendanceQuery,
       pool.query("SELECT * FROM leave_requests ORDER BY id"),
       pool.query("SELECT * FROM short_leave_requests ORDER BY id DESC"),
       pool.query("SELECT * FROM announcements ORDER BY id DESC"),
@@ -302,11 +344,13 @@ async function replaceAll(table, rows, insertFn) {
 
 app.put("/api/users", async (req, res) => {
   try {
-    const { rows: existingRows } = await pool.query("SELECT id, password FROM users");
+    const { rows: existingRows } = await pool.query("SELECT id, password, first_login FROM users");
     const existingPasswords = Object.fromEntries(existingRows.map((r) => [r.id, r.password]));
+    const existingFirstLogin = Object.fromEntries(existingRows.map((r) => [r.id, r.first_login]));
 
     await replaceAll("users", req.body, (c, u) => {
       const password = resolvePasswordForSave(u.password, existingPasswords[u.id]);
+      const firstLogin = resolveFirstLoginForSave(u, existingFirstLogin);
       return c.query(
         `INSERT INTO users (
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
@@ -321,7 +365,7 @@ app.put("/api/users", async (req, res) => {
           u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
           u.leaveBalance ?? 24, 0, JSON.stringify(u.skills || []),
-          u.firstLogin || false, null, u.cnicEnc || null, u.maritalStatus || "",
+          firstLogin, null, u.cnicEnc || null, u.maritalStatus || "",
           u.guardianName || "", u.emergencyContactName || "", u.emergencyContactPhone || "", u.emergencyContactRelation || "",
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
           u.shift ? JSON.stringify(u.shift) : null,
@@ -438,14 +482,15 @@ app.post("/api/change-password", async (req, res) => {
       "UPDATE users SET password = $1, first_login = false, temp_password = NULL WHERE id = $2",
       [hashed, userId]
     );
-    res.json({ ok: true });
+    const { rows: updated } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
+    res.json({ ok: true, user: userToSafeJs(updated[0]) });
   } catch (e) {
     console.error("change-password error:", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.put("/api/attendance", async (req, res) => {
+app.put("/api/attendance", requireAttendanceAdmin, async (req, res) => {
   try {
     await replaceAll("attendance", req.body, (c, a) =>
       c.query(

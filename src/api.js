@@ -2,17 +2,20 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
-export async function apiBootstrap() {
-  const res = await fetch(`${API_URL}/bootstrap`);
+export async function apiBootstrap(userId) {
+  const headers = userId ? { "X-User-Id": userId } : {};
+  const res = await fetch(`${API_URL}/bootstrap`, { headers });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
 
-export async function apiSave(collection, data) {
+export async function apiSave(collection, data, actorUserId) {
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (actorUserId) headers["X-User-Id"] = actorUserId;
     const res = await fetch(`${API_URL}/${collection}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(data),
     });
     if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);

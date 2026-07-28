@@ -587,7 +587,16 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
+  // Always compute live status — ignore stored DB status during active shift
   return computeDayStatus(user, record, holidays, now);
+}
+
+/** Effective checkout for display — null during active shift even if DB has premature check_out. */
+export function effectiveCheckOut(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
+  if (!record?.checkIn) return null;
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.end && now < bounds.end) return null;
+  return record.checkOut || null;
 }
 
 export function dayStatusPill(status) {
@@ -998,7 +1007,7 @@ export function formatCheckOutDisplay(record, user, dateKey = record?.date || to
   if (!record?.checkIn) return "—";
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.end && now < bounds.end) return "—";
-  if (record.checkOut) return null;
+  if (effectiveCheckOut(record, user, dateKey, now)) return null;
   return "Missing";
 }
 

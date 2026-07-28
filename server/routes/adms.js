@@ -130,15 +130,14 @@ async function processOperLogBody(pool, serial, body) {
     const user = parseOperLogUserLine(line);
     if (!user) continue;
     try {
-      await pool.query(
+      // Only add new enrolled PINs — never modify existing rows (mapped or unmapped).
+      const { rowCount } = await pool.query(
         `INSERT INTO device_enrolled_users (device_serial_number, device_user_id, name, updated_at)
          VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (device_serial_number, device_user_id) DO UPDATE SET
-           name = COALESCE(NULLIF(EXCLUDED.name, ''), device_enrolled_users.name),
-           updated_at = NOW()`,
+         ON CONFLICT (device_serial_number, device_user_id) DO NOTHING`,
         [serial, user.pin, user.name || ""]
       );
-      saved += 1;
+      if (rowCount > 0) saved += 1;
     } catch (e) {
       console.error("[adms] OPERLOG user save error:", e.message);
     }

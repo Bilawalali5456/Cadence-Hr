@@ -81,7 +81,8 @@ export default function App() {
 
   /* ── Load everything from PostgreSQL on startup ── */
   useEffect(() => {
-    apiBootstrap()
+    const uid = loadSession()?.userId;
+    apiBootstrap(uid)
       .then(d => {
         setUsers(d.users || []);
         setAttendance(sanitizeAttendance(d.attendance));
@@ -111,7 +112,7 @@ export default function App() {
     if (!loadedRef.current) return;
     let cancelled = false;
     (async () => {
-      await apiSave("users", users);
+      await apiSave("users", users, session?.userId);
       if (cancelled) return;
       const hasPlain = users.some(u => {
         const p = u?.password;
@@ -126,8 +127,15 @@ export default function App() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [users]);
-  useEffect(() => { if (loadedRef.current) apiSave("attendance", attendance); }, [attendance]);
+  }, [users, session?.userId]);
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    if (!session?.userId) return;
+    const actor = users.find(u => u.id === session.userId);
+    const canSyncAll = actor && (actor.role === "HR Admin" || actor.role === "Executive");
+    if (!canSyncAll) return;
+    apiSave("attendance", attendance, session.userId);
+  }, [attendance, session?.userId, users]);
   useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
   useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
   useEffect(() => { if (loadedRef.current) apiSave("announcements", announcements); }, [announcements]);
@@ -184,6 +192,11 @@ export default function App() {
       userId: u.id,
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
     });
+    apiBootstrap(u.id).then(d => {
+      setAttendance(sanitizeAttendance(d.attendance));
+      setLeaveRequests(sanitizeLeaveRequests(d.leave));
+      setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
+    }).catch(e => console.error("Post-login bootstrap failed:", e));
     // Merge login user into local users list (password fields never included)
     setUsers(us => {
       const { password, tempPassword, ...safe } = u;
@@ -198,9 +211,13 @@ export default function App() {
     setRoute("home");
   }
   function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
-  function handleFirstLoginDone() {
+  function handleFirstLoginDone(updatedUser) {
+    const uid = updatedUser?.id || session?.userId;
     setSession(s => (s ? { userId: s.userId } : null));
-    setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
+    if (!uid) return;
+    setUsers(us => us.map(u => u.id === uid
+      ? { ...u, ...updatedUser, firstLogin: false, tempPassword: undefined, password: undefined }
+      : u));
   }
 
   /* ── Database status screens ── */
@@ -247,13 +264,17 @@ export default function App() {
       <ForcePasswordChange
         userId={currentUser.id}
         currentPassword={session.pendingTempPassword || ""}
-        onDone={handleFirstLoginDone}
+      onDone={(updatedUser) => handleFirstLoginDone(updatedUser)}
       />
     );
   }
 
   const role = currentUser.role;
   const nav  = NAV.filter(n => {
+    if (n.id === "attendance" && role === "Manager") return false;
+    if (n.id === "attendance") {
+      return can(role, "view_attendance_reports", roles) || can(role, "view_attendance", roles);
+    }
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return isStaffRole(role);
     if (!n.permission) return true;
