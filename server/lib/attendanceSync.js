@@ -275,13 +275,12 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
   if (shift.off) return checkIn ? "Present" : "Absent";
   if (!checkIn) return "Absent";
 
-  if (isAttendanceInProgress(user, { checkIn, checkOut, source: options.source || "biometric" }, dateKey, now)) {
-    return "Working";
-  }
+  if (!hasShiftEnded(user, dateKey, now)) return "Working";
 
   const late = isLateCheckIn(checkIn, user);
   if (!checkOut) return shouldFinalizeAttendance(user, dateKey, now) ? "Missing Checkout" : (late ? "Late" : "Present");
   if (late) return "Late";
+  if (!hasShiftEnded(user, dateKey, now)) return "Working";
   if (isEarlyLeave(checkOut, user)) return "Early Leave";
   if (isShortHours(checkIn, checkOut, user, options)) return "Short Hours";
   return "Present";

@@ -11,15 +11,6 @@ function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
   if (mode === "—") return "—";
   if (mode === "Missing") return <span className="text-amber-600 font-medium">Missing</span>;
-  if (mode === "Last scan") {
-    return (
-      <>
-        {formatTime(record?.lastScan)}
-        {record?.lastScanMethod ? <span className="text-[10px] text-slate-400 ml-1">{record.lastScanMethod}</span> : null}
-        <Pill tone="green">Last scan</Pill>
-      </>
-    );
-  }
   return (
     <>
       {formatTime(record?.checkOut)}

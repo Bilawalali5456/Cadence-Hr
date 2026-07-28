@@ -563,7 +563,7 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  if (isAttendanceInProgress(user, record, dateKey, now)) return "Working";
+  if (bounds.end && now < bounds.end) return "Working";
 
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) {
@@ -573,6 +573,7 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (late) return "Late";
+  if (bounds.end && now < bounds.end) return "Working";
   if (new Date(record.checkOut) < bounds.end) return "Early Leave";
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
@@ -961,7 +962,8 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
 
 export function displayWorkingHours(record, user, now = new Date()) {
   const dateKey = record?.date || todayKey();
-  if (record?.checkIn && isAttendanceInProgress(user, record, dateKey, now)) {
+  const bounds = getShiftBounds(user, dateKey);
+  if (record?.checkIn && bounds.end && now < bounds.end) {
     return formatDurationMs(calcLiveWorkingMs(record, now));
   }
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
@@ -976,11 +978,9 @@ export function displayWorkingHours(record, user, now = new Date()) {
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.end && now < bounds.end) return "—";
   if (record.checkOut) return null;
-  if (isAttendanceInProgress(user, record, dateKey, now)) {
-    if (record.lastScan && record.lastScan !== record.checkIn) return "Last scan";
-    return "—";
-  }
   return "Missing";
 }
 
