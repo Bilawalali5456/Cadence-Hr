@@ -76,8 +76,24 @@ export function splitLines(body) {
   return body.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").map(l => l.trim()).filter(Boolean);
 }
 
-export function parseZktTime(raw) {
+/**
+ * ZKTeco / locale quirks can emit hour 24 (e.g. "2026-07-22 24:16:15").
+ * Postgres rejects that; normalize to next calendar day 00:mm:ss.
+ */
+export function normalizeWallClockTimestamp(raw) {
   const s = String(raw || "").trim();
+  if (!s) return "";
+  const spaced = s.includes("T") ? s.replace("T", " ") : s;
+  const m = spaced.match(/^(\d{4})-(\d{2})-(\d{2})[ T]24:(\d{2}):(\d{2})(.*)$/);
+  if (!m) return spaced;
+  const [, year, month, day, minute, second, rest = ""] = m;
+  const next = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + 1, 0, Number(minute), Number(second)));
+  const p = (n) => String(n).padStart(2, "0");
+  return `${next.getUTCFullYear()}-${p(next.getUTCMonth() + 1)}-${p(next.getUTCDate())} 00:${minute}:${second}${rest}`;
+}
+
+export function parseZktTime(raw) {
+  const s = normalizeWallClockTimestamp(raw);
   if (!s) return null;
   const normalized = s.includes("T") ? s : s.replace(" ", "T");
   if (/[zZ]|[+-]\d{2}:\d{2}$/.test(normalized)) {
@@ -139,10 +155,12 @@ export function parseAttLogLine(line) {
   if (!punchTime) return null;
   const statusCode = parseInt(parts[2], 10) || 0;
   const verifyCode = parseInt(parts[3], 10) || 0;
+  // Always store Postgres-safe Pakistan wall-clock text (never hour 24).
+  const punchTimeText = karachiTimestampText(punchTime);
   return {
     deviceUserId,
     punchTime,
-    punchTimeText: tsRaw.includes("T") ? tsRaw.replace("T", " ") : tsRaw,
+    punchTimeText,
     statusCode,
     punchType: PUNCH_TYPES[statusCode] || "check_in",
     verifyMethod: VERIFY_METHODS[verifyCode] || "unknown",

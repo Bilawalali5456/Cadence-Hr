@@ -5,7 +5,7 @@ const { Client } = pg;
 
 function normalize24Timestamp(value) {
   const s = String(value || "").trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2}) 24:(\d{2}):(\d{2})(.*)$/);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T]24:(\d{2}):(\d{2})(.*)$/);
   if (!m) return s;
   const [, year, month, day, minute, second, rest = ""] = m;
   const next = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + 1, 0, Number(minute), Number(second)));

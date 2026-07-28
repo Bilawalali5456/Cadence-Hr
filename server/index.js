@@ -17,7 +17,7 @@ import {
   revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
   HR_ADMIN_ROLES,
 } from "./lib/auth.js";
-import { karachiTimestampText, parseAttLogLine } from "./lib/admsHelpers.js";
+import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
 dotenv.config();
 
@@ -901,12 +901,17 @@ async function migratePlaintextPasswords() {
 }
 
 async function applyBiometricTimezoneFix() {
-  const migrationKey = "biometric_timezone_fix_v2";
+  const migrationKey = "biometric_timezone_fix_v3";
   const already = await pool.query("SELECT value FROM app_meta WHERE key = $1 LIMIT 1", [migrationKey]);
   if (already.rows.length) return;
 
-  const backup = await createDatabaseBackup(pool, migrationKey);
-  console.log(`✓ Timezone-fix backup created: ${backup.filename}`);
+  let backup = null;
+  try {
+    backup = await createDatabaseBackup(pool, migrationKey);
+    console.log(`✓ Timezone-fix backup created: ${backup.filename}`);
+  } catch (e) {
+    console.warn("Timezone-fix backup skipped:", e.message);
+  }
 
   // punch_time is TIMESTAMP WITHOUT TIME ZONE and stores the device's Pakistan
   // wall-clock text as-is (e.g. "2026-07-28 13:00:15"). Do NOT write punchTime
@@ -921,16 +926,51 @@ async function applyBiometricTimezoneFix() {
   );
 
   let logsFixed = 0;
+  let logsFailed = 0;
   const touchedLogIds = [];
   for (const row of rows) {
-    const parsed = parseAttLogLine(row.raw_data);
-    const desired = parsed?.punchTime ? karachiTimestampText(parsed.punchTime) : "";
-    if (!desired) continue;
-    const current = String(row.punch_time_text || "").trim();
-    if (current === desired) continue;
-    await pool.query("UPDATE attendance_logs SET punch_time = $1::timestamp, synced_to_attendance = false, updated_at = NOW() WHERE id = $2", [desired, row.id]);
-    touchedLogIds.push(row.id);
-    logsFixed += 1;
+    try {
+      const parsed = parseAttLogLine(row.raw_data);
+      const desired = parsed?.punchTimeText || (parsed?.punchTime ? karachiTimestampText(parsed.punchTime) : "");
+      if (!desired) continue;
+      const current = String(row.punch_time_text || "").trim();
+      if (current === desired) continue;
+      await pool.query(
+        "UPDATE attendance_logs SET punch_time = $1::timestamp, synced_to_attendance = false, updated_at = NOW() WHERE id = $2",
+        [desired, row.id]
+      );
+      touchedLogIds.push(row.id);
+      logsFixed += 1;
+    } catch (e) {
+      logsFailed += 1;
+      console.warn(`Timezone fix skipped log id=${row.id}:`, e.message);
+    }
+  }
+
+  // Repair attendance TEXT fields that still contain invalid hour-24 clock values
+  const { rows: badAttendance } = await pool.query(
+    `SELECT id, check_in, check_out, break_start, break_end
+     FROM attendance
+     WHERE COALESCE(check_in, '') LIKE '% 24:%'
+        OR COALESCE(check_out, '') LIKE '% 24:%'
+        OR COALESCE(break_start, '') LIKE '% 24:%'
+        OR COALESCE(break_end, '') LIKE '% 24:%'`
+  );
+  let attendanceTextFixed = 0;
+  for (const row of badAttendance) {
+    const next = {
+      check_in: row.check_in ? normalizeWallClockTimestamp(row.check_in) : null,
+      check_out: row.check_out ? normalizeWallClockTimestamp(row.check_out) : null,
+      break_start: row.break_start ? normalizeWallClockTimestamp(row.break_start) : null,
+      break_end: row.break_end ? normalizeWallClockTimestamp(row.break_end) : null,
+    };
+    await pool.query(
+      `UPDATE attendance
+       SET check_in = $1, check_out = $2, break_start = $3, break_end = $4
+       WHERE id = $5`,
+      [next.check_in, next.check_out, next.break_start, next.break_end, row.id]
+    );
+    attendanceTextFixed += 1;
   }
 
   const { rowCount: biometricRowsFlagged } = await pool.query(
@@ -947,15 +987,17 @@ async function applyBiometricTimezoneFix() {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [migrationKey, JSON.stringify({
       appliedAt: new Date().toISOString(),
-      backup: backup.filename,
+      backup: backup?.filename || null,
       logsFixed,
+      logsFailed,
+      attendanceTextFixed,
       touchedLogIds: touchedLogIds.length,
       biometricRowsFlagged,
       syncResult,
     })]
   );
 
-  console.log(`✓ Biometric timezone fix applied (${logsFixed} attendance log timestamps corrected)`);
+  console.log(`✓ Biometric timezone fix applied (${logsFixed} attendance log timestamps corrected, ${attendanceTextFixed} attendance text rows, ${logsFailed} skipped)`);
 }
 
 const PORT = process.env.PORT || 4000;
@@ -963,7 +1005,9 @@ const PORT = process.env.PORT || 4000;
 ensureSchema()
   .then(() => cleanupExpiredSessions(pool))
   .then(() => migratePlaintextPasswords())
-  .then(() => applyBiometricTimezoneFix())
+  .then(() => applyBiometricTimezoneFix().catch((e) => {
+    console.error("Biometric timezone fix failed (continuing startup):", e.message);
+  }))
   .then(() => {
     startAttendanceSyncProcessor(pool);
     app.listen(PORT, () => {
