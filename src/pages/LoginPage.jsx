@@ -40,7 +40,7 @@ export function LoginPage({ onLogin }) {
         setErr(`This account is not registered as ${roleAtLogin}. Your role is ${u.role}.`);
         return;
       }
-      onLogin(u, pw);
+      onLogin(u, pw, data.sessionToken);
     } catch (e) {
       setErr(e.message || "Incorrect email or password.");
     } finally {

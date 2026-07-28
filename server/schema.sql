@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS app_meta (
   updated_at    TIMESTAMP DEFAULT NOW()
 );
 
+-- Server-side login sessions (Bearer token validated on protected API routes)
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token          TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at     TIMESTAMP DEFAULT NOW(),
+  last_seen_at   TIMESTAMP DEFAULT NOW(),
+  expires_at     TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_at);
+
 CREATE TABLE IF NOT EXISTS attendance (
   id              TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL,

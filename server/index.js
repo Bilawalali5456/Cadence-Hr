@@ -12,6 +12,10 @@ import { registerAttendanceApi } from "./routes/attendance.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
+import {
+  createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
+  revokeAllUserSessions, cleanupExpiredSessions,
+} from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine } from "./lib/admsHelpers.js";
 
 dotenv.config();
@@ -75,10 +79,7 @@ function canViewAllAttendance(role) {
 }
 
 async function resolveRequestUser(req) {
-  const userId = req.headers["x-user-id"];
-  if (!userId) return null;
-  const { rows } = await pool.query("SELECT id, role, name FROM users WHERE id = $1", [userId]);
-  return rows[0] || null;
+  return resolveAuthenticatedUser(pool, req);
 }
 
 async function requireAttendanceAdmin(req, res, next) {
@@ -279,7 +280,15 @@ const warningToJs = (r) => ({
 /* ─── GET /api/bootstrap — everything in one call ─── */
 app.get("/api/bootstrap", async (req, res) => {
   try {
-    const actor = await resolveRequestUser(req);
+    const token = extractSessionToken(req);
+    let actor = null;
+    if (token) {
+      actor = await resolveAuthenticatedUser(pool, req);
+      if (!actor) {
+        return res.status(401).json({ error: "Session expired or invalid" });
+      }
+    }
+
     const attendanceQuery = !actor
       ? Promise.resolve({ rows: [] })
       : canViewAllAttendance(actor.role)
@@ -386,13 +395,12 @@ app.delete("/api/users/:userId", async (req, res) => {
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
 
     let actor = null;
-    const actorUserId = req.headers["x-user-id"];
-    if (actorUserId) {
-      const { rows } = await pool.query(
-        "SELECT id, name, role FROM users WHERE id = $1",
-        [actorUserId]
-      );
-      actor = rows[0] || null;
+    const token = extractSessionToken(req);
+    if (token) {
+      actor = await resolveAuthenticatedUser(pool, req);
+      if (!actor) {
+        return res.status(401).json({ error: "Session expired or invalid" });
+      }
     }
 
     const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
@@ -443,9 +451,26 @@ app.post("/api/login", async (req, res) => {
       return res.json({ ok: false, error: "Invalid credentials" });
     }
 
-    res.json({ ok: true, user: userToSafeJs(row) });
+    const session = await createSession(pool, row.id);
+    res.json({
+      ok: true,
+      user: userToSafeJs(row),
+      sessionToken: session.token,
+      expiresAt: session.expiresAt,
+    });
   } catch (e) {
     console.error("login error:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/logout", async (req, res) => {
+  try {
+    const token = extractSessionToken(req);
+    if (token) await revokeSession(pool, token);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("logout error:", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -482,8 +507,15 @@ app.post("/api/change-password", async (req, res) => {
       "UPDATE users SET password = $1, first_login = false, temp_password = NULL WHERE id = $2",
       [hashed, userId]
     );
+    await revokeAllUserSessions(pool, userId);
+    const session = await createSession(pool, userId);
     const { rows: updated } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
-    res.json({ ok: true, user: userToSafeJs(updated[0]) });
+    res.json({
+      ok: true,
+      user: userToSafeJs(updated[0]),
+      sessionToken: session.token,
+      expiresAt: session.expiresAt,
+    });
   } catch (e) {
     console.error("change-password error:", e.message);
     res.status(500).json({ ok: false, error: e.message });
@@ -943,6 +975,7 @@ async function applyBiometricTimezoneFix() {
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
+  .then(() => cleanupExpiredSessions(pool))
   .then(() => migratePlaintextPasswords())
   .then(() => applyBiometricTimezoneFix())
   .then(() => {

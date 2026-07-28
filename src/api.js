@@ -2,20 +2,31 @@ export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
 
-export async function apiBootstrap(userId) {
-  const headers = userId ? { "X-User-Id": userId } : {};
-  const res = await fetch(`${API_URL}/bootstrap`, { headers });
+/** Auth headers from stored session token (never send forgeable X-User-Id). */
+export function authHeaders(extra = {}) {
+  const session = loadSession();
+  const headers = { ...extra };
+  if (session?.sessionToken) {
+    headers.Authorization = `Bearer ${session.sessionToken}`;
+  }
+  return headers;
+}
+
+export async function apiBootstrap() {
+  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearSession();
+    throw new Error("Session expired");
+  }
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
 
-export async function apiSave(collection, data, actorUserId) {
+export async function apiSave(collection, data) {
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (actorUserId) headers["X-User-Id"] = actorUserId;
     const res = await fetch(`${API_URL}/${collection}`, {
       method: "PUT",
-      headers,
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(data),
     });
     if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
@@ -24,9 +35,25 @@ export async function apiSave(collection, data, actorUserId) {
   }
 }
 
-export async function apiDeleteEmployee(userId, actorUserId) {
-  const headers = actorUserId ? { "X-User-Id": actorUserId } : {};
-  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, { method: "DELETE", headers });
+export async function apiLogout() {
+  const res = await fetch(`${API_URL}/logout`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Logout failed");
+  clearSession();
+  return res.json();
+}
+
+export function clearSession() {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+export async function apiDeleteEmployee(userId) {
+  const res = await fetch(`${API_URL}/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
   return body;
@@ -137,7 +164,7 @@ export async function apiLogin(email, password) {
 export async function apiChangePassword({ userId, currentPassword, newPassword }) {
   const res = await fetch(`${API_URL}/change-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ userId, currentPassword, newPassword }),
   });
   const data = await res.json().catch(() => ({}));
@@ -211,36 +238,36 @@ export function sanitizeWarnings(list) {
     }));
 }
 
-function biometricHeaders(userId) {
-  return { "Content-Type": "application/json", "X-User-Id": userId };
+function biometricHeaders() {
+  return authHeaders({ "Content-Type": "application/json" });
 }
 
-export async function apiBiometricStatus(userId) {
-  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders(userId) });
+export async function apiBiometricStatus() {
+  const res = await fetch(`${API_URL}/biometric/status`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load device status");
   return res.json();
 }
 
-export async function apiBiometricLogs(userId, date, method = "all") {
+export async function apiBiometricLogs(date, method = "all") {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
   if (method && method !== "all") params.set("method", method);
   const q = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders(userId) });
+  const res = await fetch(`${API_URL}/biometric/logs${q}`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric logs");
   return res.json();
 }
 
-export async function apiBiometricUsers(userId) {
-  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders(userId) });
+export async function apiBiometricUsers() {
+  const res = await fetch(`${API_URL}/biometric/users`, { headers: biometricHeaders() });
   if (!res.ok) throw new Error("Failed to load biometric users");
   return res.json();
 }
 
-export async function apiBiometricMap(userId, pin, employeeId) {
+export async function apiBiometricMap(pin, employeeId) {
   const res = await fetch(`${API_URL}/biometric/map`, {
     method: "POST",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
     body: JSON.stringify({ pin, employee_id: employeeId }),
   });
   const data = await res.json().catch(() => ({}));
@@ -248,36 +275,40 @@ export async function apiBiometricMap(userId, pin, employeeId) {
   return data;
 }
 
-export async function apiBiometricUnmap(userId, pin, deviceSerial) {
+export async function apiBiometricUnmap(pin, deviceSerial) {
   const q = deviceSerial ? `?device_serial_number=${encodeURIComponent(deviceSerial)}` : "";
   const res = await fetch(`${API_URL}/biometric/map/${encodeURIComponent(pin)}${q}`, {
     method: "DELETE",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to remove mapping");
   return res.json();
 }
 
-export async function apiBiometricClearLogs(userId) {
+export async function apiBiometricClearLogs() {
   const res = await fetch(`${API_URL}/biometric/raw-logs`, {
     method: "DELETE",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to clear logs");
   return res.json();
 }
 
-export async function apiBiometricProcess(userId) {
+export async function apiBiometricProcess() {
   const res = await fetch(`${API_URL}/biometric/process`, {
     method: "POST",
-    headers: biometricHeaders(userId),
+    headers: biometricHeaders(),
   });
   if (!res.ok) throw new Error("Failed to process logs");
   return res.json();
 }
 
 export async function apiRefreshAttendance() {
-  const res = await fetch(`${API_URL}/bootstrap`);
+  const res = await fetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearSession();
+    throw new Error("Session expired");
+  }
   if (!res.ok) throw new Error("Failed to refresh attendance");
   const d = await res.json();
   return sanitizeAttendance(d.attendance);

@@ -71,9 +71,9 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     setErr("");
     try {
       const [st, bu, lg] = await Promise.all([
-        apiBiometricStatus(currentUser.id),
-        apiBiometricUsers(currentUser.id),
-        apiBiometricLogs(currentUser.id, today),
+        apiBiometricStatus(),
+        apiBiometricUsers(),
+        apiBiometricLogs(today),
       ]);
       setStatus(st);
       setBioUsers(Array.isArray(bu) ? bu : []);
@@ -90,7 +90,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   async function handleClearLogs() {
     if (!window.confirm("Clear all recent /iclock request logs?")) return;
     try {
-      await apiBiometricClearLogs(currentUser.id);
+      await apiBiometricClearLogs();
       setOk("Request logs cleared.");
       setTimeout(() => setOk(""), 3000);
       load();
@@ -104,8 +104,8 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     if (!employeeId) { setErr("Select an employee to map."); return; }
     setErr("");
     try {
-      await apiBiometricMap(currentUser.id, pin, employeeId);
-      await apiBiometricProcess(currentUser.id);
+      await apiBiometricMap(pin, employeeId);
+      await apiBiometricProcess();
       if (setAttendance) {
         const att = await apiRefreshAttendance();
         setAttendance(att);
@@ -121,7 +121,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   async function handleUnmap(pin, deviceSerial) {
     if (!window.confirm(`Remove mapping for PIN ${pin}?`)) return;
     try {
-      await apiBiometricUnmap(currentUser.id, pin, deviceSerial || device?.serial_number);
+      await apiBiometricUnmap(pin, deviceSerial || device?.serial_number);
       setOk(`Mapping removed for PIN ${pin}.`);
       setTimeout(() => setOk(""), 4000);
       load();

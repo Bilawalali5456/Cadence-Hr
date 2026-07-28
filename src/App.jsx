@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiLogout, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
@@ -73,7 +73,11 @@ export default function App() {
   const [warnings,      setWarnings]      = useState([]);
   const [roles,         setRoles]         = useState([]);
   const [company,       setCompany]       = useState(DEFAULT_COMPANY);
-  const [session,       setSession]       = useState(loadSession);
+  const [session,       setSession]       = useState(() => {
+    const s = loadSession();
+    if (s && !s.sessionToken) return null;
+    return s;
+  });
   const [route,         setRoute]         = useState("home");
   const [roleMenu,      setRoleMenu]      = useState(false);
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
@@ -81,8 +85,7 @@ export default function App() {
 
   /* ── Load everything from PostgreSQL on startup ── */
   useEffect(() => {
-    const uid = loadSession()?.userId;
-    apiBootstrap(uid)
+    apiBootstrap()
       .then(d => {
         setUsers(d.users || []);
         setAttendance(sanitizeAttendance(d.attendance));
@@ -100,7 +103,31 @@ export default function App() {
         loadedRef.current = true;
         setDbStatus("ready");
       })
-      .catch(e => {
+      .catch(async (e) => {
+        if (String(e.message || "").includes("Session expired")) {
+          setSession(null);
+          try {
+            const d = await apiBootstrap();
+            setUsers(d.users || []);
+            setAttendance(sanitizeAttendance(d.attendance));
+            setLeaveRequests(sanitizeLeaveRequests(d.leave));
+            setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
+            setAnnouncements(sanitizeAnnouncements(d.announcements));
+            setPayroll(d.payroll || []);
+            setPolicies(d.policies || []);
+            setAssets(d.assets || []);
+            setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
+            setNotifications(sanitizeNotifications(d.notifications));
+            setWarnings(sanitizeWarnings(d.warnings));
+            setRoles(d.roles || []);
+            setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
+            loadedRef.current = true;
+            setDbStatus("ready");
+            return;
+          } catch (retryErr) {
+            console.error("Bootstrap retry failed:", retryErr);
+          }
+        }
         console.error("Database connection failed:", e);
         setDbStatus("error");
       });
@@ -112,7 +139,7 @@ export default function App() {
     if (!loadedRef.current) return;
     let cancelled = false;
     (async () => {
-      await apiSave("users", users, session?.userId);
+      await apiSave("users", users);
       if (cancelled) return;
       const hasPlain = users.some(u => {
         const p = u?.password;
@@ -127,15 +154,14 @@ export default function App() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [users, session?.userId]);
+  }, [users]);
   useEffect(() => {
-    if (!loadedRef.current) return;
-    if (!session?.userId) return;
+    if (!loadedRef.current || !session?.sessionToken) return;
     const actor = users.find(u => u.id === session.userId);
     const canSyncAll = actor && (actor.role === "HR Admin" || actor.role === "Executive");
     if (!canSyncAll) return;
-    apiSave("attendance", attendance, session.userId);
-  }, [attendance, session?.userId, users]);
+    apiSave("attendance", attendance);
+  }, [attendance, session?.sessionToken, session?.userId, users]);
   useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
   useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
   useEffect(() => { if (loadedRef.current) apiSave("announcements", announcements); }, [announcements]);
@@ -174,9 +200,12 @@ export default function App() {
 
   /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
-    if (session) {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId: session.userId }));
-    } else {
+    if (session?.userId && session?.sessionToken) {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        userId: session.userId,
+        sessionToken: session.sessionToken,
+      }));
+    } else if (!session) {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
   }, [session]);
@@ -187,12 +216,13 @@ export default function App() {
 
   const currentUser = session ? users.find(u => u.id === session.userId) : null;
 
-  function handleLogin(u, loginPassword) {
+  function handleLogin(u, loginPassword, sessionToken) {
     setSession({
       userId: u.id,
+      sessionToken,
       pendingTempPassword: u.firstLogin ? loginPassword : undefined,
     });
-    apiBootstrap(u.id).then(d => {
+    apiBootstrap().then(d => {
       setAttendance(sanitizeAttendance(d.attendance));
       setLeaveRequests(sanitizeLeaveRequests(d.leave));
       setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
@@ -210,10 +240,18 @@ export default function App() {
     });
     setRoute("home");
   }
-  function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
+  async function handleLogout() {
+    try { await apiLogout(); } catch { /* clear local session regardless */ }
+    setSession(null);
+    setRoute("home");
+    setRoleMenu(false);
+  }
   function handleFirstLoginDone(updatedUser) {
     const uid = updatedUser?.id || session?.userId;
-    setSession(s => (s ? { userId: s.userId } : null));
+    setSession(s => (s ? {
+      userId: s.userId,
+      sessionToken: updatedUser?.sessionToken || s.sessionToken,
+    } : null));
     if (!uid) return;
     setUsers(us => us.map(u => u.id === uid
       ? { ...u, ...updatedUser, firstLogin: false, tempPassword: undefined, password: undefined }

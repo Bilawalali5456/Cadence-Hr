@@ -32,7 +32,10 @@ export function ForcePasswordChange({ userId, currentPassword, onDone }) {
         setErr(data.error || "Failed to change password.");
         return;
       }
-      onDone(data.user || { firstLogin: false });
+      onDone({
+        ...(data.user || { firstLogin: false }),
+        sessionToken: data.sessionToken,
+      });
     } catch (e) {
       setErr(e.message || "Failed to change password.");
     } finally {

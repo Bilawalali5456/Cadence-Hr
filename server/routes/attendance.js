@@ -8,6 +8,7 @@ import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 import {
   manualMapPin, manualUnmapPin,
 } from "../lib/pinMapping.js";
+import { resolveAuthenticatedUser } from "../lib/auth.js";
 
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -16,13 +17,12 @@ function dateKey(d) {
 export function requireHrAdmin(pool) {
   return async (req, res, next) => {
     try {
-      const userId = req.headers["x-user-id"] || req.query.userId;
-      if (!userId) return res.status(401).json({ error: "Authentication required (X-User-Id header)" });
-      const { rows } = await pool.query("SELECT id, role, name FROM users WHERE id = $1", [userId]);
-      if (!rows[0] || !["HR Admin", "Executive"].includes(rows[0].role)) {
+      const user = await resolveAuthenticatedUser(pool, req);
+      if (!user) return res.status(401).json({ error: "Authentication required" });
+      if (!["HR Admin", "Executive"].includes(user.role)) {
         return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
       }
-      req.authUser = rows[0];
+      req.authUser = user;
       next();
     } catch (e) {
       res.status(500).json({ error: e.message });

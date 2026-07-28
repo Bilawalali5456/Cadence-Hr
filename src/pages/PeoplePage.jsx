@@ -144,7 +144,7 @@ export function PeoplePage({
     setDelBusy(true);
     setPageErr("");
     try {
-      const result = await apiDeleteEmployee(delTgt.id, currentUser.id);
+      const result = await apiDeleteEmployee(delTgt.id);
       purgeEmployeeClientState(delTgt.id, {
         setUsers, setAttendance, setLeaveRequests, setShortLeaveRequests,
         setPayroll, setNotifications, setWarnings, setAssets,
