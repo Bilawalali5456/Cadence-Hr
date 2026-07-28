@@ -24,7 +24,7 @@ function CheckOutCell({ record, user, dateKey, now = new Date() }) {
     <>
       {formatTime(record?.checkOut)}
       {record?.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{record.checkOutMethod}</span> : null}
-      {record?.autoCheckout && <Pill tone="amber">Auto</Pill>}
+      {record?.autoCheckout && <Pill tone="amber">Auto checkout</Pill>}
     </>
   );
 }

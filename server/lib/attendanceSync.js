@@ -10,13 +10,34 @@ import { karachiDateKey, parseZktTime } from "./admsHelpers.js";
  */
 
 export function hasShiftEnded(user, dateKey, now = new Date()) {
+  return now >= getShiftEndDate(user, dateKey);
+}
+
+/** Shift end + 30 minutes — when auto-checkout runs for single-scan days. */
+export function isAutoCheckoutDue(user, dateKey, now = new Date()) {
+  if (!hasShiftEnded(user, dateKey, now)) return false;
   const shift = getUserShift(user, dateKey);
-  if (shift.off) return true;
-  const end = shiftDateTime(dateKey, shift.shiftEnd);
-  let shiftEnd = end;
+  if (shift.off) return false;
+  return now >= new Date(getShiftEndDate(user, dateKey).getTime() + 30 * 60000);
+}
+
+function getShiftEndDate(user, dateKey) {
+  const shift = getUserShift(user, dateKey);
   const start = shiftDateTime(dateKey, shift.shiftStart);
-  if (shiftEnd <= start) shiftEnd = new Date(shiftEnd.getTime() + 86400000);
-  return now >= shiftEnd;
+  let end = shiftDateTime(dateKey, shift.shiftEnd);
+  if (end <= start) end = new Date(end.getTime() + 86400000);
+  return end;
+}
+
+/** ISO check-out time at scheduled shift end (for auto-checkout). */
+export function shiftEndIso(user, dateKey) {
+  const shift = getUserShift(user, dateKey);
+  const text = `${dateKey} ${shift.shiftEnd}:00`;
+  return parseZktTime(text)?.toISOString() || getShiftEndDate(user, dateKey).toISOString();
+}
+
+export function hasExtraScan(record) {
+  return !!(record?.lastScan && record.lastScan !== record?.checkIn);
 }
 
 /** Karachi calendar day has passed for this attendance date (midnight cutoff). */
@@ -32,7 +53,10 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
   if (!record?.checkIn || record.checkOut) return false;
   if (record.manuallyCorrected) return false;
-  return !shouldFinalizeAttendance(user, dateKey, now);
+  if (!hasShiftEnded(user, dateKey, now) && !isAttendanceDayClosed(dateKey, now)) return true;
+  // Shift ended but only one scan — keep "Working" until auto-checkout at shift end + 30 min
+  if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
+  return false;
 }
 
 export function dateKeyFromDate(d) {
@@ -216,8 +240,7 @@ export function isEarlyLeave(checkOutIso, user) {
   const dateKey = dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
-  const end = shiftDateTime(dateKey, shift.shiftEnd);
-  return d < end;
+  return d < getShiftEndDate(user, dateKey);
 }
 
 export function isShortHours(checkIn, checkOut, user, options = {}) {
@@ -316,6 +339,30 @@ export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
   };
 }
 
+function resolveFinalizedCheckout(user, dateKey, agg, prev, now) {
+  let checkOut = agg.checkOut || null;
+  let checkOutMethod = agg.checkOutMethod || null;
+  let autoCheckout = false;
+  let lastScan = agg.lastScan || null;
+
+  if (checkOut) {
+    return { checkOut, checkOutMethod, autoCheckout: false, lastScan };
+  }
+
+  if (hasExtraScan({ checkIn: agg.checkIn, lastScan: agg.lastScan || prev.last_scan }) && hasShiftEnded(user, dateKey, now)) {
+    checkOut = agg.lastScan || prev.last_scan;
+    checkOutMethod = agg.lastScanMethod || prev.last_scan_method || null;
+    return { checkOut, checkOutMethod, autoCheckout: false, lastScan: checkOut };
+  }
+
+  if (agg.checkIn && agg.scanCount === 1 && isAutoCheckoutDue(user, dateKey, now)) {
+    checkOut = shiftEndIso(user, dateKey);
+    return { checkOut, checkOutMethod: null, autoCheckout: true, lastScan: null };
+  }
+
+  return { checkOut: null, checkOutMethod: null, autoCheckout: false, lastScan };
+}
+
 /**
  * Rebuild daily attendance from attendance_logs for mapped employees.
  * When new scans arrive for a day, reloads ALL that day's logs so first/last stay correct.
@@ -381,17 +428,24 @@ export async function syncAttendanceFromLogs(pool) {
     }
 
     if (existing.rows.length === 0) {
-      const { workingMs, status, late } = computeRowMetrics(agg.checkIn, agg.checkOut, [], [], null, null);
+      const resolved = resolveFinalizedCheckout(user, dateKey, agg, {}, now);
+      const finalCheckOut = agg.checkOut || resolved.checkOut;
+      const finalAuto = resolved.autoCheckout;
+      const { workingMs, status, late } = computeRowMetrics(
+        agg.checkIn, finalCheckOut, [], [], null, null
+      );
 
       await pool.query(
         `INSERT INTO attendance (
            id, user_id, date, check_in, check_out, last_scan, breaks, short_leaves,
            auto_checkout, working_ms, total_break_ms, status, late, source,
            check_in_method, check_out_method, last_scan_method
-         ) VALUES ($1,$2,$3,$4,$5,$6,'[]','[]',false,$7,0,$8,$9,'biometric',$10,$11,$12)`,
+         ) VALUES ($1,$2,$3,$4,$5,$6,'[]','[]',$7,$8,0,$9,$10,'biometric',$11,$12,$13)`,
         [
-          genAttId(), employeeId, dateKey, agg.checkIn, agg.checkOut, agg.lastScan,
-          workingMs, status, late, agg.checkInMethod, agg.checkOutMethod, agg.lastScanMethod,
+          genAttId(), employeeId, dateKey, agg.checkIn, finalCheckOut, agg.lastScan,
+          finalAuto, workingMs, status, late,
+          agg.checkInMethod, finalAuto ? null : (agg.checkOutMethod || resolved.checkOutMethod),
+          agg.lastScanMethod,
         ]
       );
       rowsUpdated += 1;
@@ -410,15 +464,18 @@ export async function syncAttendanceFromLogs(pool) {
       let newOutMethod = prev.check_out_method || null;
       let newLastScanMethod = prev.last_scan_method || null;
       let newSource = source;
+      let newAutoCheckout = prev.auto_checkout || false;
 
       if (source === "biometric" || !prev.check_in) {
         newCheckIn = agg.checkIn;
-        newCheckOut = agg.checkOut;
         newLastScan = agg.lastScan;
         newInMethod = agg.checkInMethod;
-        newOutMethod = agg.checkOutMethod;
         newLastScanMethod = agg.lastScanMethod;
         newSource = "biometric";
+        const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
+        newCheckOut = agg.checkOut || resolved.checkOut;
+        newOutMethod = agg.checkOut ? agg.checkOutMethod : resolved.checkOutMethod;
+        newAutoCheckout = resolved.autoCheckout;
       } else if (source === "manual" && !prev.check_out) {
         if (!newCheckIn) {
           newCheckIn = agg.checkIn;
@@ -445,11 +502,12 @@ export async function syncAttendanceFromLogs(pool) {
         `UPDATE attendance SET
            check_in = $1, check_out = $2, last_scan = $3, working_ms = $4, total_break_ms = $5,
            status = $6, late = $7, source = $8, check_in_method = $9, check_out_method = $10,
-           last_scan_method = $11
-         WHERE id = $12`,
+           last_scan_method = $11, auto_checkout = $12
+         WHERE id = $13`,
         [
           newCheckIn, newCheckOut, newLastScan, workingMs, totalBreakMs,
-          status, late, newSource, newInMethod, newOutMethod, newLastScanMethod, prev.id,
+          status, late, newSource, newInMethod, newOutMethod, newLastScanMethod,
+          newAutoCheckout, prev.id,
         ]
       );
       rowsUpdated += 1;
@@ -506,7 +564,7 @@ export async function finalizeOpenAttendance(pool) {
       const workingMs = computeNetWorkingMs(prev.check_in, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
       await pool.query(
         `UPDATE attendance SET
-           check_out = NULL, check_out_method = NULL,
+           check_out = NULL, check_out_method = NULL, auto_checkout = false,
            last_scan = $1, last_scan_method = COALESCE($2, last_scan_method),
            status = 'Working', working_ms = $3, late = $4
          WHERE id = $5`,
@@ -531,27 +589,44 @@ export async function finalizeOpenAttendance(pool) {
       );
       const agg = aggregateDayScans(dayLogs, user, dateKey, now);
       if (!agg.checkIn) continue;
-      const workingMs = agg.checkOut
-        ? computeNetWorkingMs(agg.checkIn, agg.checkOut, breaks, shortLeaves, breakStart, breakEnd)
+      const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
+      const checkOut = agg.checkOut || resolved.checkOut;
+      const autoCheckout = resolved.autoCheckout;
+      const workingMs = checkOut
+        ? computeNetWorkingMs(agg.checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd)
         : null;
-      const status = computeBiometricDayStatus(user, agg.checkIn, agg.checkOut, {
+      const status = computeBiometricDayStatus(user, agg.checkIn, checkOut, {
         breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
         netWorkingMs: workingMs, source: "biometric",
       });
       await pool.query(
         `UPDATE attendance SET
            check_in = $1, check_out = $2, last_scan = $3,
-           working_ms = $4, status = $5, late = $6,
-           check_in_method = $7, check_out_method = $8, last_scan_method = $9
-         WHERE id = $10`,
+           working_ms = $4, status = $5, late = $6, auto_checkout = $7,
+           check_in_method = $8, check_out_method = $9, last_scan_method = $10
+         WHERE id = $11`,
         [
-          agg.checkIn, agg.checkOut, agg.lastScan, workingMs, status,
-          isLateCheckIn(agg.checkIn, user),
-          agg.checkInMethod, agg.checkOutMethod, agg.lastScanMethod, prev.id,
+          agg.checkIn, checkOut, agg.lastScan, workingMs, status,
+          isLateCheckIn(agg.checkIn, user), autoCheckout,
+          agg.checkInMethod, autoCheckout ? null : (agg.checkOutMethod || resolved.checkOutMethod),
+          agg.lastScanMethod, prev.id,
         ]
       );
       rowsUpdated += 1;
-    } else if (!prev.check_out) {
+    } else if (!prev.check_out && isAutoCheckoutDue(user, dateKey, now)) {
+      const checkOut = shiftEndIso(user, dateKey);
+      const workingMs = computeNetWorkingMs(prev.check_in, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+      const status = computeBiometricDayStatus(user, prev.check_in, checkOut, {
+        breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
+        netWorkingMs: workingMs, source: prev.source || "manual",
+      });
+      await pool.query(
+        `UPDATE attendance SET check_out = $1, auto_checkout = true, working_ms = $2, status = $3, late = $4
+         WHERE id = $5`,
+        [checkOut, workingMs, status, isLateCheckIn(prev.check_in, user), prev.id]
+      );
+      rowsUpdated += 1;
+    } else if (!prev.check_out && shouldFinalizeAttendance(user, dateKey, now)) {
       const status = "Missing Checkout";
       await pool.query(
         `UPDATE attendance SET status = $1, working_ms = NULL WHERE id = $2`,

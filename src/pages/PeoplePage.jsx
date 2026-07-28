@@ -753,7 +753,7 @@ export function PeoplePage({
                             <tr key={r.id} className="border-b border-slate-50 last:border-0">
                               <td className="px-3 py-2">{formatDate(r.date)}</td>
                               <td className="px-3 py-2 tabular-nums">{formatTime(r.checkIn)}{r.checkIn && isLateCheckIn(r.checkIn, sel, holidays) && <Pill tone="amber">Late</Pill>}</td>
-                              <td className="px-3 py-2 tabular-nums">{formatTime(r.checkOut)}{r.autoCheckout && <Pill tone="amber">Auto</Pill>}</td>
+                              <td className="px-3 py-2 tabular-nums">{formatTime(r.checkOut)}{r.autoCheckout && <Pill tone="amber">Auto checkout</Pill>}</td>
                               <td className="px-3 py-2 tabular-nums">{formatDurationMs(calcTotalBreakMs(r))}</td>
                               <td className="px-3 py-2 tabular-nums">{displayWorkingHours(r, sel)}</td>
                               <td className="px-3 py-2"><Pill tone={ds.tone}>{ds.label}</Pill></td>

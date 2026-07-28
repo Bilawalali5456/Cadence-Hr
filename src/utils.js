@@ -417,6 +417,17 @@ export function hasShiftEnded(user, dateKey, now = new Date()) {
   return now >= bounds.end;
 }
 
+export function isAutoCheckoutDue(user, dateKey, now = new Date()) {
+  if (!hasShiftEnded(user, dateKey, now)) return false;
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.off || !bounds.end) return false;
+  return now >= new Date(bounds.end.getTime() + 30 * 60000);
+}
+
+export function hasExtraScan(record) {
+  return !!(record?.lastScan && record.lastScan !== record?.checkIn);
+}
+
 /** Karachi calendar day has passed (midnight cutoff). */
 export function isAttendanceDayClosed(dateKey, now = new Date()) {
   return todayKey(now) > String(dateKey || "").slice(0, 10);
@@ -430,7 +441,9 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
   if (!record?.checkIn || record.checkOut) return false;
   if (record.manuallyCorrected) return false;
-  return !shouldFinalizeAttendance(user, dateKey, now);
+  if (!hasShiftEnded(user, dateKey, now) && !isAttendanceDayClosed(dateKey, now)) return true;
+  if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
+  return false;
 }
 
 export function formatShiftRange(user, dateKey = todayKey()) {
@@ -905,26 +918,42 @@ export function removeShortLeaveFromAttendance(attendance, users, request) {
     .filter(r => r && !(r.userId === request.userId && r.date === request.date && !r.checkIn && !r.checkOut && !(r.shortLeaves || []).length));
 }
 
-export function applyAutoCheckouts(attendance, users) {
+export function applyAutoCheckouts(attendance, users, holidays = []) {
   const now = new Date();
-  const key = todayKey(now);
   let changed = false;
   const next = (attendance || []).map(r => {
-    if (!r || r.date !== key || !r.checkIn || r.checkOut) return r;
+    if (!r?.checkIn || r.checkOut || r.manuallyCorrected) return r;
+    const dateKey = r.date || todayKey(now);
     const user = users.find(u => u.id === r.userId);
     if (!user) return r;
-    const bounds = getShiftBounds(user, key);
-    if (now >= bounds.checkoutDeadline) {
+    const bounds = getShiftBounds(user, dateKey);
+    if (bounds.off || !bounds.end) return r;
+
+    // During active shift — never finalize checkout here
+    if (isAttendanceInProgress(user, r, dateKey, now) && !hasShiftEnded(user, dateKey, now)) return r;
+
+    // Multiple scans: last scan becomes checkout after shift end
+    if (hasExtraScan(r) && hasShiftEnded(user, dateKey, now)) {
+      changed = true;
+      let updated = {
+        ...r,
+        checkOut: r.lastScan,
+        checkOutMethod: r.lastScanMethod || null,
+        autoCheckout: false,
+      };
+      if (isOnBreak(updated)) updated = closeActiveBreak(updated, r.lastScan);
+      return finalizeRecord(updated, user, holidays);
+    }
+
+    // Single scan only — auto checkout at shift end, 30 min grace
+    if (isAutoCheckoutDue(user, dateKey, now) && !hasExtraScan(r)) {
       changed = true;
       let updated = r;
-      const endIso = bounds.checkoutDeadline.toISOString();
+      const endIso = bounds.end.toISOString();
       if (isOnBreak(updated)) updated = closeActiveBreak(updated, endIso);
-      return finalizeRecord({
-        ...updated,
-        checkOut: endIso,
-        autoCheckout: true,
-      }, user);
+      return finalizeRecord({ ...updated, checkOut: endIso, autoCheckout: true }, user, holidays);
     }
+
     return r;
   });
   return changed ? next : attendance;
