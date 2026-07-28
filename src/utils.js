@@ -391,10 +391,9 @@ export function getUserShift(user, dateKey = todayKey()) {
 }
 
 export function shiftDateTime(dateKey, hhmm) {
-  const [h, m] = String(hhmm || "00:00").split(":").map(Number);
-  const d = new Date(dateKey + "T00:00:00");
-  d.setHours(h || 0, m || 0, 0, 0);
-  return d;
+  // Always interpret wall-clock times in Asia/Karachi (not the browser's local TZ).
+  const iso = karachiDateToIso(dateKey, hhmm || "00:00");
+  return iso ? new Date(iso) : new Date(NaN);
 }
 
 export function getShiftBounds(user, dateKey) {
@@ -566,7 +565,8 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  // Before shift end, employee is still working — ignore provisional check-out scans
+  // Before shift end on an open attendance day, employee is still working.
+  // Never keep "Working" after the Karachi calendar day has closed.
   const shift = getUserShift(user, dateKey);
   let employeeShiftEndTime = bounds.end;
   if (!shift.off && shift.shiftEnd) {
@@ -579,7 +579,8 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
       }
     }
   }
-  if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
+  const dayOpen = !isAttendanceDayClosed(dateKey, currentTime);
+  if (dayOpen && employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
 
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) {
@@ -589,7 +590,7 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (late) return "Late";
-  if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
+  if (dayOpen && employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
   if (employeeShiftEndTime && new Date(record.checkOut) < employeeShiftEndTime) return "Early Leave";
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
@@ -605,10 +606,11 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   return computeDayStatus(user, record, holidays, now);
 }
 
-/** Effective checkout for display — null during active shift even if DB has premature check_out. */
+/** Effective checkout for display — null only during an open/active shift day. */
 export function effectiveCheckOut(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return null;
   const currentTime = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+  if (isAttendanceDayClosed(dateKey, currentTime)) return record.checkOut || null;
   const shift = getUserShift(user, dateKey);
   let employeeShiftEndTime = getShiftBounds(user, dateKey).end;
   if (!shift.off && shift.shiftEnd) {
@@ -1018,18 +1020,24 @@ export function displayWorkingHours(record, user, now = new Date()) {
 
 /**
  * Check-out column display mode.
- * Returns "—" | "Missing" | "Last scan" | null (show finalized check-out time).
+ * Returns "—" | "Missing" | "InProgress" | null (show finalized check-out time).
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
-  if (computeDayStatus(user, record, [], now) === "Working") return "—";
+  if (computeDayStatus(user, record, [], now) === "Working") {
+    // Still show the latest scan time while Working — never blank the cell.
+    if (record.checkOut || (record.lastScan && record.lastScan !== record.checkIn)) return "InProgress";
+    return "—";
+  }
   if (effectiveCheckOut(record, user, dateKey, now)) return null;
   return "Missing";
 }
 
 export function formatCheckOutTime(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
-  if (mode === "Last scan") return formatTime(record.lastScan);
+  if (mode === "InProgress") {
+    return formatTime(record.checkOut || record.lastScan);
+  }
   if (mode === "Missing") return null;
   if (mode === "—") return "—";
   return formatTime(record.checkOut);
@@ -1180,9 +1188,20 @@ export function hoursWorked(checkIn, checkOut) {
   return `${h}h ${m}m`;
 }
 
-export function getUserTodayRecord(attendance, userId) {
-  const key = todayKey();
-  return (attendance || []).find(r => r && r.userId === userId && r.date === key) || null;
+export function getUserTodayRecord(attendance, userId, user = null, now = new Date()) {
+  const key = todayKey(now);
+  const list = (attendance || []).filter(r => r && r.userId === userId);
+  const today = list.find(r => r.date === key) || null;
+  if (today?.checkIn) return today;
+  // Overnight shifts: if yesterday's row is still in progress, treat it as today's live record
+  if (user) {
+    const yKey = todayKey(new Date(now.getTime() - 20 * 3600000));
+    if (yKey && yKey !== key) {
+      const yRec = list.find(r => r.date === yKey) || null;
+      if (yRec?.checkIn && !hasShiftEnded(user, yKey, now)) return yRec;
+    }
+  }
+  return today;
 }
 
 export function attendanceStatus(record) {

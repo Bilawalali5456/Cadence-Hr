@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary } from "../utils.js";
+import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -11,6 +11,15 @@ function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
   if (mode === "—") return "—";
   if (mode === "Missing") return <span className="text-amber-600 font-medium">Missing</span>;
+  if (mode === "InProgress") {
+    const scan = record?.checkOut || record?.lastScan;
+    return (
+      <>
+        {formatTime(scan)}
+        <span className="text-[10px] text-emerald-600 ml-1">in progress</span>
+      </>
+    );
+  }
   return (
     <>
       {formatTime(record?.checkOut)}
@@ -194,12 +203,12 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
   }
 
-  const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && !r?.checkOut; });
-  const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
+  const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && !effectiveCheckOut(r, u, r?.date || todayKey()); });
+  const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
   const autoToday = (attendance || []).filter(r => r && r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
   const absentTodayCount = liveRoster.filter(u => {
-    const r = getUserTodayRecord(attendance, u.id);
-    return resolveDayStatus(u, r, today, holidays) === "Absent";
+    const r = getUserTodayRecord(attendance, u.id, u);
+    return resolveDayStatus(u, r, r?.date || today, holidays) === "Absent";
   }).length;
 
   const reportRows = filterAttendanceByPeriod(attendance || [], period)
@@ -359,9 +368,10 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               {liveRoster.length === 0 ? (
                 <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
-                const r = getUserTodayRecord(attendance, u.id);
-                const shiftCfg = getUserShift(u, today);
-                const ds = dayStatusPill(resolveDayStatus(u, r, today, holidays, now));
+                const r = getUserTodayRecord(attendance, u.id, u, now);
+                const rowDate = r?.date || today;
+                const shiftCfg = getUserShift(u, rowDate);
+                const ds = dayStatusPill(resolveDayStatus(u, r, rowDate, holidays, now));
                 const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
@@ -370,11 +380,11 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         <Avatar name={u.name} size={7} />
                         <div>
                           <div className="font-medium text-slate-800">{u.name}</div>
-                          <div className="text-xs text-slate-400">{formatShiftRange(u, today)}</div>
+                          <div className="text-xs text-slate-400">{formatShiftRange(u, rowDate)}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{formatDate(today)}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(rowDate)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
                       {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
@@ -392,7 +402,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      <CheckOutCell record={r} user={u} dateKey={today} now={now} />
+                      <CheckOutCell record={r} user={u} dateKey={rowDate} now={now} />
                     </td>
                     <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u, now)}</td>
                     <td className="px-4 py-3">
@@ -400,7 +410,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r?.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
-                        {isWfhAttendance(r, u.id, today, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
+                        {isWfhAttendance(r, u.id, rowDate, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
                     {canManageCorrections && (
@@ -408,7 +418,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         {canCorrectAttendance(currentUser, r) && (
                           <button
                             type="button"
-                            onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: today })}
+                            onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: rowDate })}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
                             title="Edit attendance"
                           >
