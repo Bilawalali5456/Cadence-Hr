@@ -17,6 +17,7 @@ import { registerAnnouncementsRoutes } from "./routes/announcements.js";
 import { registerPayrollRoutes } from "./routes/payroll.js";
 import { registerHolidaysRoutes } from "./routes/holidays.js";
 import { registerPoliciesRoutes } from "./routes/policies.js";
+import { registerAssetsRoutes } from "./routes/assets.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -367,20 +368,7 @@ app.get("/api/short-leave", requireAuth, async (req, res) => {
 
 // Policies module: served by server/routes/policies.js
 
-app.get("/api/assets", requireAuth, async (req, res) => {
-  try {
-    const actor = req.authUser;
-    const { rows } = await pool.query("SELECT * FROM assets ORDER BY name");
-    let list = rows.map(assetToJs);
-    if (!canViewAllAttendance(actor.role)) {
-      list = list.filter((a) => a.assignedTo === actor.id);
-    }
-    res.json(list);
-  } catch (e) {
-    console.error("GET /api/assets error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// Assets module: served by server/routes/assets.js
 
 // Announcements module: served by server/routes/announcements.js
 
@@ -1033,6 +1021,7 @@ registerAnnouncementsRoutes(app, pool, requireAuth, requireHrAdmin);
 registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin);
 registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin);
 registerPoliciesRoutes(app, pool, requireAuth, requireHrAdmin);
+registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin);
 registerUsersRoutes(app, pool, requireAuth, requireHrAdmin);
 
 /* ─── Production: serve built frontend ─── */

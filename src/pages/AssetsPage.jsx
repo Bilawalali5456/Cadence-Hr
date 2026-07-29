@@ -3,6 +3,7 @@ import { Search, Trash2, Edit2, Save, Plus, Phone, Package } from "lucide-react"
 import { B } from "../brand.jsx";
 import { can, isStaffRole, isHrAdminRole, todayKey } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
+import { apiCreateAsset, apiUpdateAsset, apiDeleteAsset } from "../api.js";
 
 export const ASSET_TYPES = [
   "Laptop", "PC", "Monitor", "Keyboard", "Mouse", "Headphones", "Mobile Phone", "Access Card", "Other",
@@ -69,11 +70,12 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     return "available";
   }
 
-  function saveAsset() {
+  async function saveAsset() {
     if (!form.name.trim()) { setFerr("Asset name is required."); return; }
     if (!form.serialNumber.trim()) { setFerr("Asset ID / serial number is required."); return; }
     const assignedTo = form.assignedTo || null;
     if (assignedTo && !form.assignedDate) { setFerr("Assignment date is required when assigning an asset."); return; }
+    setFerr("");
     const status = deriveStatus(assignedTo, form.returnDate);
     const now = new Date().toLocaleString();
     const payload = {
@@ -88,26 +90,49 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
       status,
       updatedAt: now,
     };
-    if (editId) {
-      setAssets(prev => prev.map(a => a.id === editId ? { ...a, ...payload } : a));
-    } else {
-      setAssets(prev => [{ id: "ast-" + Date.now(), ...payload }, ...prev]);
+    try {
+      if (editId) {
+        const saved = await apiUpdateAsset(editId, payload);
+        if (!saved) throw new Error("Asset was not saved.");
+        setAssets(prev => prev.map(a => a.id === editId ? saved : a));
+      } else {
+        const saved = await apiCreateAsset({ id: "ast-" + Date.now(), ...payload });
+        if (!saved) throw new Error("Asset was not saved.");
+        setAssets(prev => [saved, ...prev]);
+      }
+      setOpen(false);
+    } catch (e) {
+      setFerr(e?.message || String(e));
     }
-    setOpen(false);
   }
 
-  function deleteAsset(id) {
+  async function deleteAsset(id) {
     if (!window.confirm("Delete this asset record?")) return;
-    setAssets(prev => prev.filter(a => a.id !== id));
+    setFerr("");
+    try {
+      await apiDeleteAsset(id);
+      setAssets(prev => prev.filter(a => a.id !== id));
+    } catch (e) {
+      setFerr(e?.message || String(e));
+    }
   }
 
-  function markReturned(a) {
+  async function markReturned(a) {
     const returnDate = todayKey();
-    setAssets(prev => prev.map(x =>
-      x.id === a.id
-        ? { ...x, returnDate, status: "returned", updatedAt: new Date().toLocaleString() }
-        : x
-    ));
+    const now = new Date().toLocaleString();
+    setFerr("");
+    try {
+      const saved = await apiUpdateAsset(a.id, {
+        ...a,
+        returnDate,
+        status: "returned",
+        updatedAt: now,
+      });
+      if (!saved) throw new Error("Update failed.");
+      setAssets(prev => prev.map(x => x.id === a.id ? saved : x));
+    } catch (e) {
+      setFerr(e?.message || String(e));
+    }
   }
 
   function statusTone(status) {

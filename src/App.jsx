@@ -262,7 +262,7 @@ export default function App() {
   useEffect(() => { persistCollection("attendance", attendance, { hrOnly: true }); }, [attendance]);
   // Payroll is persisted via granular REST endpoints (no bulk wipe).
   // Policies are persisted via granular REST endpoints (no bulk wipe).
-  useEffect(() => { persistCollection("assets", assets); }, [assets]);
+  // Assets are persisted via granular REST endpoints (no bulk wipe).
   // Holidays are persisted via granular REST endpoints (no bulk wipe).
   useEffect(() => { persistCollection("notifications", notifications); }, [notifications]);
   useEffect(() => { persistCollection("warnings", warnings); }, [warnings]);

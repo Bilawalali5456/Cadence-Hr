@@ -221,6 +221,42 @@ export async function apiFetchAssets() {
   return Array.isArray(data) ? data : [];
 }
 
+export async function apiGetAssets() {
+  return apiFetchAssets();
+}
+
+export async function apiCreateAsset(data) {
+  const res = await apiFetch(`${API_URL}/assets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create asset failed (${res.status})`);
+  return body.asset || null;
+}
+
+export async function apiUpdateAsset(id, patch) {
+  const res = await apiFetch(`${API_URL}/assets/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update asset failed (${res.status})`);
+  return body.asset || null;
+}
+
+export async function apiDeleteAsset(id) {
+  const res = await apiFetch(`${API_URL}/assets/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete asset failed (${res.status})`);
+  return true;
+}
+
 export async function apiFetchAnnouncements() {
   return sanitizeAnnouncements(await apiGetJson("/announcements"));
 }
