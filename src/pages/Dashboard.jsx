@@ -3,7 +3,7 @@ import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, 
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
-import { apiSendWarningEmail } from "../api.js";
+import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
@@ -18,47 +18,69 @@ export function HrAdminOversightPanel({
   const pendingLeave = (leaveRequests || []).filter(r => r && r.status === "pending" && isHrAdminRequest(r, users));
   if (pendingShort.length === 0 && pendingLeave.length === 0) return null;
 
-  function adjustBalance(userId, type, delta) {
+  async function adjustBalanceAndPersist(userId, type, delta) {
     if (type === "Unpaid" || type === "WFH") return;
-    setUsers(us => us.map(u => {
-      if (u.id !== userId) return u;
-      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
-    }));
+    const current = users.find(u => u.id === userId)?.leaveBalance ?? DEFAULT_ANNUAL_LEAVE;
+    const next = Math.max(0, current + delta);
+    setUsers(us => us.map(u => (u.id === userId ? { ...u, leaveBalance: next } : u)));
+    try {
+      await apiUpdateUser(userId, { leaveBalance: next });
+    } catch (e) {
+      console.error("Persist leaveBalance failed:", e.message || e);
+    }
   }
 
-  function changeShortStatus(id, newStatus) {
+  async function changeShortStatus(id, newStatus) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canChangeShortLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
-    if (newStatus === "approved" && prev !== "approved") {
-      setAttendance(a => applyApprovedShortLeave(a, users, req));
+    const patch = buildApprovalDecision(currentUser, newStatus);
+    const nextReq = { ...req, ...patch, status: newStatus };
+    try {
+      await apiUpdateShortLeaveRequest(id, nextReq);
+      if (newStatus === "approved" && prev !== "approved") {
+        setAttendance(a => applyApprovedShortLeave(a, users, req));
+      }
+      if (prev === "approved" && newStatus !== "approved") {
+        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      }
+      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      console.error("Short leave approval persist failed:", e.message || e);
     }
-    if (prev === "approved" && newStatus !== "approved") {
-      setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    }
-    setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
-  function changeLeaveStatus(id, newStatus) {
+  async function changeLeaveStatus(id, newStatus) {
     const req = leaveRequests.find(r => r.id === id);
     if (!req || !canChangeLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
     const paid = leavePaidDays(req);
-    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
-    if (prev === "approved" && newStatus !== "approved") adjustBalance(req.userId, req.type, +paid);
+    const patch = buildApprovalDecision(currentUser, newStatus);
     const note = buildLeaveStatusNotification(req, newStatus);
     if (note && setNotifications) setNotifications(prev => [...prev, note]);
-    setLeaveRequests(p => p.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
+    try {
+      if (newStatus === "approved" && prev !== "approved") await adjustBalanceAndPersist(req.userId, req.type, -paid);
+      if (prev === "approved" && newStatus !== "approved") await adjustBalanceAndPersist(req.userId, req.type, +paid);
+      await apiUpdateLeaveRequest(id, { ...req, ...patch, status: newStatus });
+      setLeaveRequests(p => p.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      console.error("Leave approval persist failed:", e.message || e);
+    }
   }
 
-  function deleteShortLeave(id) {
+  async function deleteShortLeave(id) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canDeleteShortLeaveRecord(currentUser, req, users, roles)) return;
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
-    if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    try {
+      await apiDeleteShortLeaveRequest(id);
+      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    } catch (e) {
+      console.error("Short leave delete failed:", e.message || e);
+    }
   }
 
   return (
@@ -201,22 +223,34 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     && !(isExecutiveRole(role) && isHrAdminRequest(r, users))
   );
 
-  function approveShort(id, status) {
+  async function approveShort(id, status) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canChangeShortLeaveRequestStatus(me, req, users, roles)) return;
     const prev = req.status;
     if (prev === status) return;
-    if (status === "approved" && prev !== "approved") setAttendance(a => applyApprovedShortLeave(a, users, req));
-    if (prev === "approved" && status !== "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, status) } : r));
+    const patch = buildApprovalDecision(currentUser, status);
+    const nextReq = { ...req, ...patch, status };
+    try {
+      await apiUpdateShortLeaveRequest(id, nextReq);
+      if (status === "approved" && prev !== "approved") setAttendance(a => applyApprovedShortLeave(a, users, req));
+      if (prev === "approved" && status !== "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      console.error("Short leave approval persist failed:", e.message || e);
+    }
   }
 
-  function deleteShort(id) {
+  async function deleteShort(id) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canDeleteShortLeaveRecord(me, req, users, roles)) return;
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
-    if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    try {
+      await apiDeleteShortLeaveRequest(id);
+      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    } catch (e) {
+      console.error("Short leave delete failed:", e.message || e);
+    }
   }
 
   const thisMonth = monthKey();
@@ -232,7 +266,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     setWarnOpen(true);
   }
 
-  function issueWarning({ type, reason, date }) {
+  async function issueWarning({ type, reason, date }) {
     const emp = warnTgt;
     if (!emp || !canIssueWarnings || !setWarnings) return;
     const warning = {
@@ -244,17 +278,22 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
       issuedBy: currentUser.name,
       acknowledged: false,
     };
-    setWarnings(prev => [warning, ...(prev || []).filter(w => w && w.userId)]);
-    const note = buildWarningNotification(emp.id, warning.type, reason);
-    if (setNotifications) setNotifications(prev => [...(prev || []), note]);
-    if (emp.email) {
-      return apiSendWarningEmail({
-        to: emp.email,
-        name: emp.name,
-        warningType: warningTypeLabel(warning.type),
-        reason,
-        date: warning.date,
-      }).catch(() => {});
+    try {
+      const saved = await apiCreateWarning(warning);
+      setWarnings(prev => [saved || warning, ...(prev || []).filter(w => w && w.userId)]);
+      const note = buildWarningNotification(emp.id, warning.type, reason);
+      if (setNotifications) setNotifications(prev => [...(prev || []), note]);
+      if (emp.email) {
+        return apiSendWarningEmail({
+          to: emp.email,
+          name: emp.name,
+          warningType: warningTypeLabel(warning.type),
+          reason,
+          date: warning.date,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error("issueWarning failed:", e?.message || e);
     }
   }
 

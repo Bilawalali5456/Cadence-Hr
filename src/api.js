@@ -302,6 +302,47 @@ export async function apiFetchWarnings() {
   return sanitizeWarnings(await apiGetJson("/warnings"));
 }
 
+export async function apiGetWarnings(params = {}) {
+  const q = new URLSearchParams();
+  if (params.userId) q.set("userId", params.userId);
+  const qs = q.toString() ? `?${q}` : "";
+  return sanitizeWarnings(await apiGetJson(`/warnings${qs}`));
+}
+
+export async function apiCreateWarning(data) {
+  const res = await apiFetch(`${API_URL}/warnings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create warning failed (${res.status})`);
+  const list = sanitizeWarnings(body.warning ? [body.warning] : []);
+  return list[0] || body.warning || null;
+}
+
+export async function apiUpdateWarning(id, patch) {
+  const res = await apiFetch(`${API_URL}/warnings/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update warning failed (${res.status})`);
+  const list = sanitizeWarnings(body.warning ? [body.warning] : []);
+  return list[0] || body.warning || null;
+}
+
+export async function apiDeleteWarning(id) {
+  const res = await apiFetch(`${API_URL}/warnings/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete warning failed (${res.status})`);
+  return true;
+}
+
 export async function apiFetchCompany() {
   const data = await apiGetJson("/company");
   return data && typeof data === "object" ? data : {};

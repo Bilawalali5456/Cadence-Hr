@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
-import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState } from "../api.js";
+import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
 import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
@@ -96,8 +96,10 @@ export function PeoplePage({
     setEmailSending(true);
     setFerr("");
     setPageErr("");
-    setUsers(p => [...p, newUser]);
     try {
+      const created = await apiCreateUser(newUser);
+      setUsers(p => [...p, created.user]);
+
       console.log(`[people] Sending welcome credentials to ${email} (${role})`);
       await apiSendCredentials({
         to: email,
@@ -119,7 +121,7 @@ export function PeoplePage({
     }
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!canEditPerson(currentUser, editTgt, roles)) { setFerr("You do not have permission to edit this account."); return; }
     if (!form.name || !form.email) { setFerr("Full name and work email are required."); return; }
     if (!isValidCnic(form.cnic)) { setFerr("A valid 13-digit CNIC is required (format: XXXXX-XXXXXXX-X)."); return; }
@@ -134,9 +136,14 @@ export function PeoplePage({
       shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
       shiftId: null,
     };
-    setUsers(p => p.map(u => u.id === editTgt.id ? { ...u, ...updated } : u));
-    if (sel?.id === editTgt.id) setSel(s => ({ ...s, ...updated }));
-    setEditOpen(false);
+    try {
+      const updatedRes = await apiUpdateUser(editTgt.id, updated);
+      setUsers(p => p.map(u => u.id === editTgt.id ? updatedRes.user : u));
+      if (sel?.id === editTgt.id) setSel(s => ({ ...s, ...updatedRes.user }));
+      setEditOpen(false);
+    } catch (e) {
+      setFerr(e.message || "Failed to update user");
+    }
   }
 
   async function confirmDel() {
@@ -160,38 +167,46 @@ export function PeoplePage({
     }
   }
 
-  function doPasswordReset() {
+  async function doPasswordReset() {
     if (!canResetPersonCredentials(currentUser, resetTgt, roles)) return;
     const tempPw = genTempPw();
     setEmailSending(true);
     setResetResult("");
-    setUsers(p => p.map(u => u.id === resetTgt.id ? { ...u, password: tempPw, firstLogin: true, tempPassword: tempPw } : u));
-    apiSendCredentials({
-      to: resetTgt.email,
-      name: resetTgt.name,
-      email: resetTgt.email,
-      password: tempPw,
-      role: resetTgt.role,
-      isReset: true,
-    })
-      .then(() => {
-        setResetResult(`A new temporary password was emailed to ${resetTgt.email}. They must change it on next login.`);
-      })
-      .catch(e => {
-        setResetResult(`Password was reset, but the email could not be sent: ${e.message}`);
-      })
-      .finally(() => setEmailSending(false));
+    try {
+      const updated = await apiUpdateUser(resetTgt.id, { password: tempPw, firstLogin: true });
+      setUsers(p => p.map(u => u.id === resetTgt.id ? updated.user : u));
+
+      await apiSendCredentials({
+        to: resetTgt.email,
+        name: resetTgt.name,
+        email: resetTgt.email,
+        password: tempPw,
+        role: resetTgt.role,
+        isReset: true,
+      });
+
+      setResetResult(`A new temporary password was emailed to ${resetTgt.email}. They must change it on next login.`);
+    } catch (e) {
+      setResetResult(`Password was reset, but the email could not be sent: ${e.message || e}`);
+    } finally {
+      setEmailSending(false);
+    }
   }
 
-  function doEmailChange() {
+  async function doEmailChange() {
     if (!canResetPersonCredentials(currentUser, resetTgt, roles)) return;
     if (!newEmail) return;
     if (users.find(u => u.email.toLowerCase() === newEmail.toLowerCase() && u.id !== resetTgt.id)) {
       setResetResult("Error: This email is already in use."); return;
     }
-    setUsers(p => p.map(u => u.id === resetTgt.id ? { ...u, email: newEmail } : u));
-    setResetResult(`Email updated to: ${newEmail}`);
-    setNewEmail("");
+    try {
+      const updated = await apiUpdateUser(resetTgt.id, { email: newEmail });
+      setUsers(p => p.map(u => u.id === resetTgt.id ? updated.user : u));
+      setResetResult(`Email updated to: ${newEmail}`);
+      setNewEmail("");
+    } catch (e) {
+      setResetResult(e.message || "Failed to update email");
+    }
   }
 
   function managingSel() {
@@ -214,7 +229,7 @@ export function PeoplePage({
     setAttendance(a => a.filter(r => r.id !== recordId));
   }
 
-  function issueWarning({ type, reason, date }) {
+  async function issueWarning({ type, reason, date }) {
     const emp = warnTgt;
     if (!emp || !canManage || !isStaffRole(emp.role) || !setWarnings) return;
     const warning = {
@@ -226,53 +241,82 @@ export function PeoplePage({
       issuedBy: currentUser.name,
       acknowledged: false,
     };
-    setWarnings(prev => [warning, ...(prev || []).filter(w => w && w.userId)]);
-    const note = buildWarningNotification(emp.id, warning.type, reason);
-    if (setNotifications) setNotifications(prev => [...(prev || []), note]);
-    setPageOk(`${warningTypeLabel(warning.type)} issued to ${emp.name}.`);
-    setTimeout(() => setPageOk(""), 5000);
-    if (emp.email) {
-      return apiSendWarningEmail({
-        to: emp.email,
-        name: emp.name,
-        warningType: warningTypeLabel(warning.type),
-        reason,
-        date: warning.date,
-      }).catch(e => {
-        setPageErr(`Warning saved, but email failed: ${e.message}`);
-        setTimeout(() => setPageErr(""), 6000);
-      });
+    try {
+      const saved = await apiCreateWarning(warning);
+      setWarnings(prev => [saved || warning, ...(prev || []).filter(w => w && w.userId)]);
+      const note = buildWarningNotification(emp.id, warning.type, reason);
+      if (setNotifications) setNotifications(prev => [...(prev || []), note]);
+      setPageOk(`${warningTypeLabel(warning.type)} issued to ${emp.name}.`);
+      setTimeout(() => setPageOk(""), 5000);
+      if (emp.email) {
+        return apiSendWarningEmail({
+          to: emp.email,
+          name: emp.name,
+          warningType: warningTypeLabel(warning.type),
+          reason,
+          date: warning.date,
+        }).catch(e => {
+          setPageErr(`Warning saved, but email failed: ${e.message}`);
+          setTimeout(() => setPageErr(""), 6000);
+        });
+      }
+    } catch (e) {
+      setPageErr(e.message || "Failed to issue warning");
+      setTimeout(() => setPageErr(""), 6000);
     }
   }
 
-  function deleteLeaveRecord(id) {
+  async function deleteLeaveRecord(id) {
     if (!managingSel() || !setLeaveRequests) return;
     const req = leaveRequests.find(r => r.id === id);
     if (!req) return;
     if (!window.confirm(`Delete this leave request?`)) return;
-    if (req.status === "approved") {
-      const paid = leavePaidDays(req);
-      setUsers(us => us.map(u => {
-        if (u.id !== sel.id) return u;
-        return { ...u, leaveBalance: (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + paid };
-      }));
-      setSel(s => ({
-        ...s,
-        leaveBalance: (s.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + paid,
-      }));
+    setPageErr("");
+    try {
+      await apiDeleteLeaveRequest(id);
+
+      if (req.status === "approved") {
+        const paid = leavePaidDays(req);
+        const current = users.find(u => u.id === sel.id)?.leaveBalance ?? DEFAULT_ANNUAL_LEAVE;
+        const next = (current ?? DEFAULT_ANNUAL_LEAVE) + paid;
+
+        setUsers(us => us.map(u => {
+          if (u.id !== sel.id) return u;
+          return { ...u, leaveBalance: next };
+        }));
+        setSel(s => ({
+          ...s,
+          leaveBalance: next,
+        }));
+
+        try {
+          await apiUpdateUser(sel.id, { leaveBalance: next });
+        } catch (e) {
+          console.error("Persist leaveBalance failed:", e.message || e);
+        }
+      }
+
+      setLeaveRequests(p => p.filter(r => r.id !== id));
+    } catch (e) {
+      setPageErr(e.message || "Failed to delete leave request");
     }
-    setLeaveRequests(p => p.filter(r => r.id !== id));
   }
 
-  function deleteShortLeaveRecord(id) {
+  async function deleteShortLeaveRecord(id) {
     if (!managingSel() || !setShortLeaveRequests) return;
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req) return;
     if (!window.confirm(`Delete this short leave record?`)) return;
-    if (req.status === "approved" && setAttendance) {
-      setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+    setPageErr("");
+    try {
+      await apiDeleteShortLeaveRequest(id);
+      if (req.status === "approved" && setAttendance) {
+        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      }
+      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    } catch (e) {
+      setPageErr(e.message || "Failed to delete short leave request");
     }
-    setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
   }
 
   function deletePayrollSlip(id) {

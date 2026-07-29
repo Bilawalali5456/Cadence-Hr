@@ -18,6 +18,7 @@ import { registerPayrollRoutes } from "./routes/payroll.js";
 import { registerHolidaysRoutes } from "./routes/holidays.js";
 import { registerPoliciesRoutes } from "./routes/policies.js";
 import { registerAssetsRoutes } from "./routes/assets.js";
+import { registerWarningsRoutes } from "./routes/warnings.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -372,18 +373,7 @@ app.get("/api/short-leave", requireAuth, async (req, res) => {
 
 // Announcements module: served by server/routes/announcements.js
 
-app.get("/api/warnings", requireAuth, async (req, res) => {
-  try {
-    const actor = req.authUser;
-    const { rows } = canViewAllAttendance(actor.role)
-      ? await pool.query("SELECT * FROM warnings ORDER BY date DESC")
-      : await pool.query("SELECT * FROM warnings WHERE user_id = $1 ORDER BY date DESC", [actor.id]);
-    res.json(rows.map(warningToJs));
-  } catch (e) {
-    console.error("GET /api/warnings error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// Warnings module: served by server/routes/warnings.js
 
 app.get("/api/company", requireAuth, async (_req, res) => {
   try {
@@ -1022,6 +1012,7 @@ registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin);
 registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin);
 registerPoliciesRoutes(app, pool, requireAuth, requireHrAdmin);
 registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin);
+registerWarningsRoutes(app, pool, requireAuth, requireHrAdmin);
 registerUsersRoutes(app, pool, requireAuth, requireHrAdmin);
 
 /* ─── Production: serve built frontend ─── */

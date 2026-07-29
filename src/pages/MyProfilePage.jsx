@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Key, Check, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, getUserCnic, formatDate } from "../utils.js";
-import { apiChangePassword } from "../api.js";
+import { apiChangePassword, apiUpdateWarning } from "../api.js";
 import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox, Pill } from "../components/ui.jsx";
 import { warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
 
@@ -48,11 +48,16 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings
     }
   }
 
-  function acknowledgeWarning(id) {
+  async function acknowledgeWarning(id) {
     if (!setWarnings) return;
-    setWarnings(prev => (prev || []).map(w =>
-      w && w.id === id ? { ...w, acknowledged: true } : w
-    ));
+    try {
+      const saved = await apiUpdateWarning(id, { acknowledged: true });
+      setWarnings(prev => (prev || []).map(w =>
+        w && w.id === id ? (saved || { ...w, acknowledged: true }) : w
+      ));
+    } catch (e) {
+      console.error("acknowledgeWarning failed:", e?.message || e);
+    }
   }
 
   return (

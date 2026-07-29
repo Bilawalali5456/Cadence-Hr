@@ -265,7 +265,7 @@ export default function App() {
   // Assets are persisted via granular REST endpoints (no bulk wipe).
   // Holidays are persisted via granular REST endpoints (no bulk wipe).
   useEffect(() => { persistCollection("notifications", notifications); }, [notifications]);
-  useEffect(() => { persistCollection("warnings", warnings); }, [warnings]);
+  // Warnings are persisted via granular REST endpoints (no bulk wipe).
   useEffect(() => { persistCollection("company", company, { hrOnly: true }); }, [company]);
 
   useEffect(() => {
