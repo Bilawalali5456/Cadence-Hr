@@ -1,6 +1,11 @@
 import { HR_ADMIN_ROLES } from "../lib/auth.js";
 import { karachiDateKey } from "../lib/admsHelpers.js";
-import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
+import {
+  syncAttendanceFromLogs,
+  hasShiftEnded,
+  computeNetWorkingMs,
+  computeBreakMs,
+} from "../lib/attendanceSync.js";
 
 function attToJs(r) {
   return {
@@ -47,6 +52,72 @@ function monthToRange(month) {
     return `${y}-${mo}-${da}`;
   };
   return { start: toYMD(start), end: toYMD(end) };
+}
+
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function prevDateKey(dateKey) {
+  const [y, m, d] = String(dateKey || "").slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const dt = new Date(Date.UTC(y, m - 1, d - 1));
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
+function isActiveBreak(row) {
+  return !!(row?.break_start && !row?.break_end);
+}
+
+async function loadUserForBreak(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT id, shift FROM users WHERE id = $1 AND status = 'active' LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+async function findAttendanceForBreak(pool, userId, user, dateKey) {
+  const key = String(dateKey || karachiDateKey(new Date())).slice(0, 10);
+  const { rows } = await pool.query(
+    `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
+    [userId, key]
+  );
+  if (rows[0]?.check_in) return rows[0];
+
+  const prev = prevDateKey(key);
+  if (!prev) return rows[0] || null;
+  const { rows: prevRows } = await pool.query(
+    `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
+    [userId, prev]
+  );
+  const prevRec = prevRows[0];
+  if (prevRec?.check_in && !prevRec.check_out && user && !hasShiftEnded(user, prev, new Date())) {
+    return prevRec;
+  }
+  return rows[0] || null;
+}
+
+function breakStatusPayload(row) {
+  const breaks = parseJsonArray(row?.breaks);
+  const totalBreakMs = row?.total_break_ms != null ? Number(row.total_break_ms) : 0;
+  return {
+    activeBreak: isActiveBreak(row),
+    breakStart: row?.break_start || null,
+    breaks,
+    totalBreakMs,
+    record: row ? attToJs(row) : null,
+  };
 }
 
 export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAdmin) {
@@ -226,6 +297,120 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       res.json(rows.map(attToJs));
     } catch (e) {
       console.error("GET /api/attendance error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/attendance/break/status", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      const date = String(req.query.date || req.body?.date || "").slice(0, 10) || karachiDateKey(new Date());
+      const user = await loadUserForBreak(pool, actor.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const row = await findAttendanceForBreak(pool, actor.id, user, date);
+      if (!row) {
+        return res.json({
+          activeBreak: false,
+          breakStart: null,
+          breaks: [],
+          totalBreakMs: 0,
+          record: null,
+        });
+      }
+      res.json(breakStatusPayload(row));
+    } catch (e) {
+      console.error("GET /api/attendance/break/status error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/attendance/break/start", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      const date = String(req.body?.date || "").slice(0, 10) || karachiDateKey(new Date());
+      const user = await loadUserForBreak(pool, actor.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const row = await findAttendanceForBreak(pool, actor.id, user, date);
+      if (!row?.check_in) {
+        return res.status(400).json({ error: "You must check in first" });
+      }
+      if (row.check_out) {
+        return res.status(400).json({ error: "Cannot start a break after check-out" });
+      }
+      if (isActiveBreak(row)) {
+        return res.status(400).json({ error: "Break already active" });
+      }
+
+      const breakStart = new Date().toISOString();
+      const { rows: updated } = await pool.query(
+        `UPDATE attendance SET break_start = $1, break_end = NULL
+         WHERE id = $2 AND user_id = $3
+         RETURNING *`,
+        [breakStart, row.id, actor.id]
+      );
+      const next = updated[0];
+      res.json({ ok: true, breakStart, record: attToJs(next) });
+    } catch (e) {
+      console.error("POST /api/attendance/break/start error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/attendance/break/end", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      const date = String(req.body?.date || "").slice(0, 10) || karachiDateKey(new Date());
+      const user = await loadUserForBreak(pool, actor.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const row = await findAttendanceForBreak(pool, actor.id, user, date);
+      if (!row?.break_start) {
+        return res.status(400).json({ error: "No active break" });
+      }
+      if (row.break_end) {
+        return res.status(400).json({ error: "No active break" });
+      }
+
+      const breakEnd = new Date().toISOString();
+      const breakStart = row.break_start;
+      const breakDuration = Math.max(0, new Date(breakEnd) - new Date(breakStart));
+      const breaks = parseJsonArray(row.breaks);
+      breaks.push({ start: breakStart, end: breakEnd });
+
+      const shortLeaves = parseJsonArray(row.short_leaves);
+      const totalBreakMs = computeBreakMs(breaks);
+      const endForWorking = row.check_out || breakEnd;
+      const workingMs = computeNetWorkingMs(
+        row.check_in,
+        endForWorking,
+        breaks,
+        shortLeaves,
+        null,
+        null
+      );
+
+      const { rows: updated } = await pool.query(
+        `UPDATE attendance SET
+           breaks = $1,
+           break_start = NULL,
+           break_end = NULL,
+           total_break_ms = $2,
+           working_ms = $3
+         WHERE id = $4 AND user_id = $5
+         RETURNING *`,
+        [JSON.stringify(breaks), totalBreakMs, workingMs, row.id, actor.id]
+      );
+      const next = updated[0];
+      res.json({
+        ok: true,
+        breakEnd,
+        breakDuration,
+        totalBreakMs,
+        record: attToJs(next),
+      });
+    } catch (e) {
+      console.error("POST /api/attendance/break/end error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

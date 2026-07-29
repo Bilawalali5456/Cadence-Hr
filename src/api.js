@@ -448,6 +448,41 @@ export async function apiUpdateAttendance(id, patch) {
   return data;
 }
 
+export async function apiStartBreak(date) {
+  const res = await apiFetch(`${API_URL}/attendance/break/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ date }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to start break");
+  if (data.record) data.record = sanitizeAttendance([data.record])[0] || data.record;
+  return data;
+}
+
+export async function apiEndBreak(date) {
+  const res = await apiFetch(`${API_URL}/attendance/break/end`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ date }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to end break");
+  if (data.record) data.record = sanitizeAttendance([data.record])[0] || data.record;
+  return data;
+}
+
+export async function apiBreakStatus(date) {
+  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+  const res = await apiFetch(`${API_URL}/attendance/break/status${q}`, {
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to get break status");
+  if (data.record) data.record = sanitizeAttendance([data.record])[0] || data.record;
+  return data;
+}
+
 export async function apiCreateLeaveRequest(payload) {
   const res = await apiFetch(`${API_URL}/leave`, {
     method: "POST",

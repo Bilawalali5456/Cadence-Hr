@@ -16,8 +16,6 @@ import {
   hasShiftEnded,
   performCheckIn,
   performCheckOut,
-  performBreakStart,
-  performBreakEnd,
   displayWorkingHours,
   todayKey,
   getPublicHoliday,
@@ -27,13 +25,27 @@ import {
   isApprovedWfhDay,
   isWfhAttendance,
 } from "../utils.js";
+import { apiStartBreak, apiEndBreak, apiBreakStatus } from "../api.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
+
+function upsertAttendanceRecord(list, record) {
+  if (!record?.id) return list || [];
+  const arr = list || [];
+  const idx = arr.findIndex(r => r?.id === record.id);
+  if (idx >= 0) {
+    const next = [...arr];
+    next[idx] = record;
+    return next;
+  }
+  return [...arr, record];
+}
 
 export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays = [], leaveRequests = [], compact = false }) {
   const [err, setErr] = useState("");
+  const [breakBusy, setBreakBusy] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  const today = getUserTodayRecord(attendance, user.id);
-  const key = todayKey();
+  const today = getUserTodayRecord(attendance, user.id, user, now);
+  const key = today?.date || todayKey(now);
   const shift = getUserShift(user, key);
   const bounds = getShiftBounds(user, key);
   const publicHoliday = getPublicHoliday(key, holidays);
@@ -44,6 +56,20 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
   const showBreakButton = checkedIn && !dayOff;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await apiBreakStatus(key);
+        if (cancelled || !status.record) return;
+        setAttendance(prev => upsertAttendanceRecord(prev, status.record));
+      } catch (e) {
+        console.error("Break status load failed:", e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user.id, key, setAttendance]);
 
   useEffect(() => {
     if (!checkedIn) return undefined;
@@ -58,6 +84,22 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
     if (result.error) { setErr(result.error); return; }
     setNow(new Date());
     setAttendance(result.attendance);
+  }
+
+  async function handleBreakToggle() {
+    setErr("");
+    setBreakBusy(true);
+    try {
+      const data = onBreak ? await apiEndBreak(key) : await apiStartBreak(key);
+      setNow(new Date());
+      if (data.record) {
+        setAttendance(prev => upsertAttendanceRecord(prev, data.record));
+      }
+    } catch (e) {
+      setErr(e.message || "Break action failed");
+    } finally {
+      setBreakBusy(false);
+    }
   }
 
   return (
@@ -113,11 +155,8 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
                 size="sm"
                 variant={onBreak ? "accent" : "primary"}
                 className="w-full mt-2 justify-center"
-                onClick={() => run(() =>
-                  onBreak
-                    ? performBreakEnd(attendance, user.id, user, new Date(), holidays)
-                    : performBreakStart(attendance, user.id, user)
-                )}
+                disabled={breakBusy}
+                onClick={handleBreakToggle}
               >
                 <Coffee size={13} />{onBreak ? "End Break" : "Start Break"}
               </Btn>
