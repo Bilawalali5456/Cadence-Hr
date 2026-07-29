@@ -312,6 +312,13 @@ app.get("/api/bootstrap", async (req, res) => {
       shifts: shifts.rows.map(shiftToJs),
       actor: actor ? { id: actor.id, role: actor.role, name: actor.name, email: actor.email } : null,
     });
+
+    // Background finalize/sync after bootstrap — do not block first paint.
+    if (actor) {
+      syncAttendanceFromLogs(pool).catch(err => {
+        console.error("bootstrap attendance sync:", err.message);
+      });
+    }
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
     console.error("bootstrap error:", msg);

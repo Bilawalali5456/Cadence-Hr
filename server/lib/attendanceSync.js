@@ -25,15 +25,15 @@ function getShiftEndDate(user, dateKey) {
   const shift = getUserShift(user, dateKey);
   const start = shiftDateTime(dateKey, shift.shiftStart);
   let end = shiftDateTime(dateKey, shift.shiftEnd);
+  if (!start || !end) return end || start || new Date(`${dateKey}T00:00:00Z`);
   if (end <= start) end = new Date(end.getTime() + 86400000);
   return end;
 }
 
 /** ISO check-out time at scheduled shift end (for auto-checkout). */
 export function shiftEndIso(user, dateKey) {
-  const shift = getUserShift(user, dateKey);
-  const text = `${dateKey} ${shift.shiftEnd}:00`;
-  return parseZktTime(text)?.toISOString() || getShiftEndDate(user, dateKey).toISOString();
+  // Always use overnight-aware end (do not parse shiftEnd on the calendar date alone).
+  return getShiftEndDate(user, dateKey).toISOString();
 }
 
 export function hasExtraScan(record) {
@@ -143,10 +143,92 @@ export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
 }
 
 function shiftDateTime(dateKey, hhmm) {
-  const [h, m] = String(hhmm).split(":").map(Number);
-  const d = new Date(`${dateKey}T00:00:00`);
-  d.setHours(h || 0, m || 0, 0, 0);
-  return d;
+  // Parse as Pakistan wall-clock so shift bounds match punch times.
+  const raw = String(hhmm || "00:00");
+  const withSeconds = /^\d{1,2}:\d{2}$/.test(raw) ? `${raw}:00` : raw;
+  return parseZktTime(`${dateKey} ${withSeconds}`) || parseZktTime(`${dateKey} ${raw}`);
+}
+
+function addDaysToDateKey(dateKey, delta) {
+  const [y, m, d] = String(dateKey || "").slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const utc = Date.UTC(y, m - 1, d) + delta * 86400000;
+  const dt = new Date(utc);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
+function getPreviousDate(dateKey) {
+  return addDaysToDateKey(dateKey, -1);
+}
+
+function getNextDate(dateKey) {
+  return addDaysToDateKey(dateKey, 1);
+}
+
+/** True when scheduled end is on/after midnight relative to start (overnight). */
+function isOvernightShift(user, dateKey) {
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return false;
+  const start = shiftDateTime(dateKey, shift.shiftStart);
+  const endSameDay = shiftDateTime(dateKey, shift.shiftEnd);
+  if (!start || !endSameDay) return false;
+  return endSameDay <= start;
+}
+
+/**
+ * Map a punch to the attendance day it belongs to (shift-aware).
+ * Post-midnight late checkouts for overnight shifts stay on the previous day.
+ */
+export function getAttendanceDay(scanTime, user) {
+  if (!scanTime || Number.isNaN(scanTime.getTime())) return "";
+  const scanDate = karachiDateKey(scanTime);
+  if (!scanDate) return "";
+  const prevDate = getPreviousDate(scanDate);
+
+  const prevShift = getUserShift(user, prevDate);
+  if (!prevShift.off) {
+    const prevShiftEnd = getShiftEndDate(user, prevDate);
+    if (prevShiftEnd) {
+      const postShiftWindow = new Date(prevShiftEnd.getTime() + 2 * 60 * 60 * 1000);
+      if (scanTime >= prevShiftEnd && scanTime <= postShiftWindow) {
+        return prevDate;
+      }
+    }
+  }
+
+  const todayShift = getUserShift(user, scanDate);
+  if (!todayShift.off && todayShift.shiftStart) {
+    const todayShiftStart = shiftDateTime(scanDate, todayShift.shiftStart);
+    if (todayShiftStart) {
+      const earliestAllowed = new Date(todayShiftStart.getTime() - 60 * 60 * 1000);
+      // Too early for today: only reassign when yesterday was overnight so normal
+      // day-shift early scans (e.g. 7 AM before 9 AM) are not pulled backward.
+      if (scanTime < earliestAllowed && isOvernightShift(user, prevDate)) {
+        return prevDate;
+      }
+    }
+  }
+
+  return scanDate;
+}
+
+/** Load logs whose shift-aware attendance day equals dateKey (may span two calendar days). */
+async function fetchLogsForAttendanceDay(pool, employeeId, user, dateKey) {
+  const nextDate = getNextDate(dateKey);
+  const { rows } = await pool.query(
+    `SELECT attendance_logs.*, TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
+     FROM attendance_logs
+     WHERE employee_id = $1
+       AND is_duplicate = false
+       AND punch_time::date IN ($2::date, $3::date)
+     ORDER BY punch_time ASC`,
+    [employeeId, dateKey, nextDate]
+  );
+  return rows.filter(log => {
+    const scanTime = parseZktTime(log.punch_time_local || log.punch_time);
+    return scanTime && getAttendanceDay(scanTime, user) === dateKey;
+  });
 }
 
 function methodLabel(verifyMethod) {
@@ -374,42 +456,51 @@ function resolveFinalizedCheckout(user, dateKey, agg, prev, now) {
 
 /**
  * Rebuild daily attendance from attendance_logs for mapped employees.
- * When new scans arrive for a day, reloads ALL that day's logs so first/last stay correct.
+ * Scans are assigned to shift-aware attendance days (overnight late checkouts
+ * stay on the previous day), then first/last aggregation runs per day.
  */
 export async function syncAttendanceFromLogs(pool) {
-  const { rows: pending } = await pool.query(
-    `SELECT DISTINCT employee_id, TO_CHAR(punch_time, 'YYYY-MM-DD') AS day
+  const { rows: pendingLogs } = await pool.query(
+    `SELECT id, employee_id, punch_time,
+            TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
      FROM attendance_logs
-     WHERE synced_to_attendance = false AND is_duplicate = false AND employee_id IS NOT NULL`
+     WHERE synced_to_attendance = false AND is_duplicate = false AND employee_id IS NOT NULL
+     ORDER BY punch_time ASC`
   );
-  if (!pending.length) return { logsProcessed: 0, rowsUpdated: 0 };
+  if (!pendingLogs.length) {
+    return { logsProcessed: 0, rowsUpdated: await finalizeOpenAttendance(pool) };
+  }
 
   const { rows: users } = await pool.query(`SELECT id, shift FROM users WHERE status = 'active'`);
   const userById = new Map(users.map(u => [u.id, enrichUserShift(u)]));
 
+  // Group pending work by (employee, shift-aware attendance day).
+  const workKeys = new Map();
+  for (const log of pendingLogs) {
+    const user = userById.get(log.employee_id);
+    if (!user) continue;
+    const scanTime = parseZktTime(log.punch_time_local || log.punch_time);
+    if (!scanTime) continue;
+    const attDay = getAttendanceDay(scanTime, user);
+    if (!attDay) continue;
+    workKeys.set(`${log.employee_id}|${attDay}`, { employeeId: log.employee_id, dateKey: attDay });
+    // Also reprocess calendar day so wrongly created "next day" check-ins can be cleared.
+    const calDay = karachiDateKey(scanTime);
+    if (calDay && calDay !== attDay) {
+      workKeys.set(`${log.employee_id}|${calDay}`, { employeeId: log.employee_id, dateKey: calDay });
+    }
+  }
+
   let rowsUpdated = 0;
   let logsProcessed = 0;
 
-  for (const row of pending) {
-    const employeeId = row.employee_id;
-    const dateKey = String(row.day || "").slice(0, 10);
+  for (const { employeeId, dateKey } of workKeys.values()) {
     const user = userById.get(employeeId);
     if (!user) continue;
 
-    const { rows: dayLogs } = await pool.query(
-      `SELECT attendance_logs.*, TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
-       FROM attendance_logs
-       WHERE employee_id = $1
-         AND is_duplicate = false
-         AND punch_time::date = $2::date
-       ORDER BY punch_time ASC`,
-      [employeeId, dateKey]
-    );
-    if (!dayLogs.length) continue;
+    const dayLogs = await fetchLogsForAttendanceDay(pool, employeeId, user, dateKey);
 
     const agg = aggregateDayScans(dayLogs, user, dateKey, new Date());
-    if (!agg.checkIn) continue;
-
     const now = new Date();
     const timeOptsBase = { dateKey, now, source: "biometric" };
 
@@ -417,6 +508,21 @@ export async function syncAttendanceFromLogs(pool) {
       `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
       [employeeId, dateKey]
     );
+
+    // No valid scans for this attendance day — clear mis-assigned biometric rows.
+    if (!agg.checkIn) {
+      if (existing.rows.length) {
+        const prev = existing.rows[0];
+        if (prev.source === "biometric" && !prev.manually_corrected && prev.check_in) {
+          const belongDay = getAttendanceDay(new Date(prev.check_in), user);
+          if (belongDay && belongDay !== dateKey) {
+            await pool.query(`DELETE FROM attendance WHERE id = $1`, [prev.id]);
+            rowsUpdated += 1;
+          }
+        }
+      }
+      continue;
+    }
 
     function computeRowMetrics(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd) {
       const timeOpts = { breaks, shortLeaves, breakStart, breakEnd, ...timeOptsBase };
@@ -532,12 +638,15 @@ export async function syncAttendanceFromLogs(pool) {
       );
       rowsUpdated += 1;
     }
+  }
 
+  // Mark pending logs synced (by id — calendar date is no longer the grouping key).
+  const pendingIds = pendingLogs.map(l => l.id).filter(id => id != null);
+  if (pendingIds.length) {
     const { rowCount } = await pool.query(
       `UPDATE attendance_logs SET synced_to_attendance = true, updated_at = NOW()
-       WHERE employee_id = $1 AND is_duplicate = false AND punch_time::date = $2::date
-         AND synced_to_attendance = false`,
-      [employeeId, dateKey]
+       WHERE id = ANY($1::int[]) AND synced_to_attendance = false`,
+      [pendingIds]
     );
     logsProcessed += rowCount || 0;
   }
@@ -602,15 +711,19 @@ export async function finalizeOpenAttendance(pool) {
     if (!finalized) continue;
 
     if (prev.source === "biometric") {
-      const { rows: dayLogs } = await pool.query(
-        `SELECT attendance_logs.*, TO_CHAR(punch_time, 'YYYY-MM-DD HH24:MI:SS') AS punch_time_local
-         FROM attendance_logs
-         WHERE employee_id = $1 AND is_duplicate = false AND punch_time::date = $2::date
-         ORDER BY punch_time ASC`,
-        [prev.user_id, dateKey]
-      );
+      const dayLogs = await fetchLogsForAttendanceDay(pool, prev.user_id, user, dateKey);
       const agg = aggregateDayScans(dayLogs, user, dateKey, now);
-      if (!agg.checkIn) continue;
+      if (!agg.checkIn) {
+        // Mis-assigned next-day row whose only scans belong to the previous shift day.
+        if (!prev.manually_corrected && prev.check_in) {
+          const belongDay = getAttendanceDay(new Date(prev.check_in), user);
+          if (belongDay && belongDay !== dateKey) {
+            await pool.query(`DELETE FROM attendance WHERE id = $1`, [prev.id]);
+            rowsUpdated += 1;
+          }
+        }
+        continue;
+      }
       const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
       const checkOut = agg.checkOut || resolved.checkOut;
       const autoCheckout = resolved.autoCheckout;

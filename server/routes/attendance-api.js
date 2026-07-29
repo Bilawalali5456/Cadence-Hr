@@ -1,5 +1,6 @@
 import { HR_ADMIN_ROLES } from "../lib/auth.js";
 import { karachiDateKey } from "../lib/admsHelpers.js";
+import { syncAttendanceFromLogs } from "../lib/attendanceSync.js";
 
 function attToJs(r) {
   return {
@@ -168,6 +169,13 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
   // Optional userId is only honored for HR roles.
   app.get("/api/attendance", requireAuth, async (req, res) => {
     try {
+      // Refresh biometric aggregation (overnight day assignment + finalize) before read.
+      try {
+        await syncAttendanceFromLogs(pool);
+      } catch (syncErr) {
+        console.error("GET /api/attendance sync warning:", syncErr.message);
+      }
+
       const actor = req.authUser;
       const roleCanViewAll = HR_ADMIN_ROLES.includes(actor.role);
 
