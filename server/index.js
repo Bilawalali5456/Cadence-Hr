@@ -9,6 +9,14 @@ import bcryptjs from "bcryptjs";
 import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from "./mail.js";
 import { registerAdmsRoutes } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
+import { registerAttendanceRestRoutes } from "./routes/attendance-api.js";
+import { registerLeaveRoutes } from "./routes/leave.js";
+import { registerUsersRoutes } from "./routes/users.js";
+import { registerShortLeaveRoutes } from "./routes/short-leave.js";
+import { registerAnnouncementsRoutes } from "./routes/announcements.js";
+import { registerPayrollRoutes } from "./routes/payroll.js";
+import { registerHolidaysRoutes } from "./routes/holidays.js";
+import { registerPoliciesRoutes } from "./routes/policies.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -267,7 +275,7 @@ const warningToJs = (r) => ({
   acknowledged: !!r.acknowledged,
 });
 
-/* ─── GET /api/bootstrap — everything in one call ─── */
+/* ─── GET /api/bootstrap — shell data for first paint ─── */
 app.get("/api/bootstrap", async (req, res) => {
   try {
     const token = extractSessionToken(req);
@@ -279,49 +287,123 @@ app.get("/api/bootstrap", async (req, res) => {
       }
     }
 
-    const attendanceQuery = !actor
-      ? Promise.resolve({ rows: [] })
-      : canViewAllAttendance(actor.role)
-        ? pool.query("SELECT * FROM attendance ORDER BY date DESC")
-        : pool.query("SELECT * FROM attendance WHERE user_id = $1 ORDER BY date DESC", [actor.id]);
+    const usersPromise = actor
+      ? HR_ADMIN_ROLES.includes(actor.role)
+        ? pool.query("SELECT * FROM users ORDER BY name")
+        : pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [actor.id])
+      : Promise.resolve({ rows: [] });
 
-    const [users, attendance, leave, shortLeave, announcements, payroll, company, policies, assets, roles, holidays, shifts, notifications, warnings] = await Promise.all([
-      pool.query("SELECT * FROM users ORDER BY name"),
-      attendanceQuery,
-      pool.query("SELECT * FROM leave_requests ORDER BY id"),
-      pool.query("SELECT * FROM short_leave_requests ORDER BY id DESC"),
-      pool.query("SELECT * FROM announcements ORDER BY id DESC"),
-      pool.query("SELECT * FROM payroll ORDER BY month DESC"),
-      pool.query("SELECT * FROM company_settings WHERE id = 1"),
-      pool.query("SELECT * FROM policies ORDER BY updated_at DESC NULLS LAST, title"),
-      pool.query("SELECT * FROM assets ORDER BY name"),
+    const [users, roles, company, holidays, shifts, notifications] = await Promise.all([
+      usersPromise,
       pool.query("SELECT * FROM roles ORDER BY name"),
+      pool.query("SELECT * FROM company_settings WHERE id = 1"),
       pool.query("SELECT * FROM holidays ORDER BY date"),
       pool.query("SELECT * FROM shifts ORDER BY name"),
-      pool.query("SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"),
-      pool.query("SELECT * FROM warnings ORDER BY date DESC"),
+      actor
+        ? pool.query(
+            "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 100",
+            [actor.id]
+          )
+        : Promise.resolve({ rows: [] }),
     ]);
+
+    // Heavy collections load via per-module GET on tab open / refreshModule
     res.json({
       users: users.rows.map(userToSafeJs),
-      attendance: attendance.rows.map(attToJs),
-      leave: leave.rows.map(leaveToJs),
-      shortLeave: shortLeave.rows.map(shortLeaveToJs),
-      announcements: announcements.rows.map(annToJs),
-      payroll: payroll.rows.map((r) => r.data),
+      attendance: [],
+      leave: [],
+      shortLeave: [],
+      announcements: [],
+      payroll: [],
       company: company.rows[0] ? companyToJs(company.rows[0]) : {},
-      policies: policies.rows.map(policyToJs),
-      assets: assets.rows.map(assetToJs),
+      policies: [],
+      assets: [],
       roles: roles.rows.map(roleToJs),
       holidays: holidays.rows.map(holidayToJs),
       shifts: shifts.rows.map(shiftToJs),
       notifications: notifications.rows.map(notificationToJs),
-      warnings: warnings.rows.map(warningToJs),
+      warnings: [],
+      actor: actor ? { id: actor.id, role: actor.role, name: actor.name, email: actor.email } : null,
     });
   } catch (e) {
     const msg = e?.message || e?.code || String(e);
     console.error("bootstrap error:", msg);
     if (e?.cause) console.error("bootstrap cause:", e.cause);
     res.status(500).json({ error: msg });
+  }
+});
+
+/* ─── Per-module GET APIs (reload-free tab refresh) ─── */
+
+app.get("/api/leave", requireAuth, async (req, res) => {
+  try {
+    const actor = req.authUser;
+    const { rows } = canViewAllAttendance(actor.role)
+      ? await pool.query("SELECT * FROM leave_requests ORDER BY id DESC")
+      : await pool.query("SELECT * FROM leave_requests WHERE user_id = $1 ORDER BY id DESC", [actor.id]);
+    res.json(rows.map(leaveToJs));
+  } catch (e) {
+    console.error("GET /api/leave error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/short-leave", requireAuth, async (req, res) => {
+  try {
+    const actor = req.authUser;
+    const { rows } = canViewAllAttendance(actor.role)
+      ? await pool.query("SELECT * FROM short_leave_requests ORDER BY id DESC")
+      : await pool.query("SELECT * FROM short_leave_requests WHERE user_id = $1 ORDER BY id DESC", [actor.id]);
+    res.json(rows.map(shortLeaveToJs));
+  } catch (e) {
+    console.error("GET /api/short-leave error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Payroll module: served by server/routes/payroll.js
+
+// Holidays module: served by server/routes/holidays.js
+
+// Policies module: served by server/routes/policies.js
+
+app.get("/api/assets", requireAuth, async (req, res) => {
+  try {
+    const actor = req.authUser;
+    const { rows } = await pool.query("SELECT * FROM assets ORDER BY name");
+    let list = rows.map(assetToJs);
+    if (!canViewAllAttendance(actor.role)) {
+      list = list.filter((a) => a.assignedTo === actor.id);
+    }
+    res.json(list);
+  } catch (e) {
+    console.error("GET /api/assets error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Announcements module: served by server/routes/announcements.js
+
+app.get("/api/warnings", requireAuth, async (req, res) => {
+  try {
+    const actor = req.authUser;
+    const { rows } = canViewAllAttendance(actor.role)
+      ? await pool.query("SELECT * FROM warnings ORDER BY date DESC")
+      : await pool.query("SELECT * FROM warnings WHERE user_id = $1 ORDER BY date DESC", [actor.id]);
+    res.json(rows.map(warningToJs));
+  } catch (e) {
+    console.error("GET /api/warnings error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/company", requireAuth, async (_req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM company_settings WHERE id = 1");
+    res.json(rows[0] ? companyToJs(rows[0]) : {});
+  } catch (e) {
+    console.error("GET /api/company error:", e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -741,11 +823,17 @@ app.put("/api/assets", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/notifications", async (_req, res) => {
+app.get("/api/notifications", requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      "SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC"
-    );
+    const actor = req.authUser;
+    const { rows } = canViewAllAttendance(actor.role)
+      ? await pool.query(
+          "SELECT * FROM notifications ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 200"
+        )
+      : await pool.query(
+          "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 100",
+          [actor.id]
+        );
     res.json(rows.map(notificationToJs));
   } catch (e) {
     console.error("notifications fetch error:", e.message);
@@ -938,6 +1026,14 @@ app.post("/api/send-warning-email", async (req, res) => {
 });
 
 registerAttendanceApi(app, pool);
+registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAdmin);
+registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin);
+registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin);
+registerAnnouncementsRoutes(app, pool, requireAuth, requireHrAdmin);
+registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin);
+registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin);
+registerPoliciesRoutes(app, pool, requireAuth, requireHrAdmin);
+registerUsersRoutes(app, pool, requireAuth, requireHrAdmin);
 
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));

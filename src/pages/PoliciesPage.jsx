@@ -4,6 +4,7 @@ import { B } from "../brand.jsx";
 import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { buildPolicyNotifications, sendPolicyEmails } from "../notifications.js";
+import { apiCreatePolicy, apiUpdatePolicy, apiDeletePolicy } from "../api.js";
 
 export const POLICY_CATEGORIES = [
   "Attendance", "Leave", "Code of Conduct", "IT", "Security", "HR", "Finance", "General",
@@ -46,39 +47,59 @@ export function PoliciesPage({ currentUser, policies, setPolicies, roles, users 
     setOpen(true);
   }
 
-  function savePolicy() {
+  async function savePolicy() {
     if (!form.title.trim()) { setFerr("Policy title is required."); return; }
     if (!form.body.trim()) { setFerr("Policy content is required."); return; }
+    setFerr("");
     const now = new Date().toLocaleString();
-    if (editId) {
-      setPolicies(prev => prev.map(p =>
-        p.id === editId
-          ? { ...p, title: form.title.trim(), category: form.category, body: form.body.trim(), version: (p.version || 1) + 1, updatedAt: now, updatedBy: currentUser.name }
-          : p
-      ));
-    } else {
-      const policy = {
-        id: "pol-" + Date.now(),
-        title: form.title.trim(),
-        category: form.category,
-        body: form.body.trim(),
-        version: 1,
-        updatedAt: now,
-        updatedBy: currentUser.name,
-        createdAt: now,
-      };
-      setPolicies(prev => [policy, ...prev]);
-      const newNotes = buildPolicyNotifications(users, policy.title);
-      if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
-      sendPolicyEmails(users, { title: policy.title, body: policy.body }).catch(e => console.error("Policy emails failed:", e));
+    try {
+      if (editId) {
+        const existing = policies.find(p => p.id === editId);
+        const saved = await apiUpdatePolicy(editId, {
+          title: form.title.trim(),
+          category: form.category,
+          body: form.body.trim(),
+          version: (existing?.version || 1) + 1,
+          updatedAt: now,
+          updatedBy: currentUser.name,
+          createdAt: existing?.createdAt || now,
+        });
+        if (!saved) throw new Error("Policy was not saved.");
+        setPolicies(prev => prev.map(p => (p.id === editId ? saved : p)));
+      } else {
+        const policy = {
+          id: "pol-" + Date.now(),
+          title: form.title.trim(),
+          category: form.category,
+          body: form.body.trim(),
+          version: 1,
+          updatedAt: now,
+          updatedBy: currentUser.name,
+          createdAt: now,
+        };
+        const saved = await apiCreatePolicy(policy);
+        if (!saved) throw new Error("Policy was not saved.");
+        setPolicies(prev => [saved, ...prev]);
+        const newNotes = buildPolicyNotifications(users, policy.title);
+        if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
+        sendPolicyEmails(users, { title: policy.title, body: policy.body }).catch(e => console.error("Policy emails failed:", e));
+      }
+      setOpen(false);
+    } catch (e) {
+      setFerr(e?.message || String(e));
     }
-    setOpen(false);
   }
 
-  function deletePolicy(id) {
+  async function deletePolicy(id) {
     if (!window.confirm("Delete this policy?")) return;
-    setPolicies(prev => prev.filter(p => p.id !== id));
-    if (viewId === id) setViewId(null);
+    setFerr("");
+    try {
+      await apiDeletePolicy(id);
+      setPolicies(prev => prev.filter(p => p.id !== id));
+      if (viewId === id) setViewId(null);
+    } catch (e) {
+      setFerr(e?.message || String(e));
+    }
   }
 
   return (

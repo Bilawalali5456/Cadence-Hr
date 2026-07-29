@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -85,12 +85,105 @@ export default function App() {
   const [route,         setRoute]         = useState("home");
   const [roleMenu,      setRoleMenu]      = useState(false);
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
+  const [syncBanner,    setSyncBanner]    = useState(null);
   const loadedRef = useRef(false);
+  const ignoreSyncUntilRef = useRef(0);
+  const refreshInFlightRef = useRef(null);
 
-  /* ── Load everything from PostgreSQL on startup ── */
+  function markRemoteApply() {
+    ignoreSyncUntilRef.current = Date.now() + 800;
+  }
+
+  function shouldSkipSync() {
+    return !loadedRef.current || Date.now() < ignoreSyncUntilRef.current;
+  }
+
+  /** Refresh only the collections needed for the active tab (no full page reload). */
+  async function refreshModule(routeId) {
+    const key = routeId || "home";
+    if (refreshInFlightRef.current === key) return;
+    refreshInFlightRef.current = key;
+    try {
+      markRemoteApply();
+      if (key === "home" || key === "reports" || key === "attendance" || key === "biometric") {
+        const [att, leave, shortLeave, warnings] = await Promise.all([
+          apiFetchAttendance(),
+          apiFetchLeave(),
+          apiFetchShortLeave(),
+          apiFetchWarnings(),
+        ]);
+        markRemoteApply();
+        setAttendance(att);
+        setLeaveRequests(leave);
+        setShortLeaveRequests(shortLeave);
+        setWarnings(warnings);
+      }
+      if (key === "people" || key === "executives" || key === "settings" || key === "myprofile") {
+        const [us, warnings] = await Promise.all([apiFetchUsers(), apiFetchWarnings()]);
+        markRemoteApply();
+        setUsers(us);
+        setWarnings(warnings);
+      }
+      if (key === "shortleave") {
+        const [shortLeave, att] = await Promise.all([apiFetchShortLeave(), apiFetchAttendance()]);
+        markRemoteApply();
+        setShortLeaveRequests(shortLeave);
+        setAttendance(att);
+      }
+      if (key === "leave") {
+        const leave = await apiFetchLeave();
+        markRemoteApply();
+        setLeaveRequests(leave);
+      }
+      if (key === "payroll") {
+        const [pay, companyData, att] = await Promise.all([
+          apiFetchPayroll(),
+          apiFetchCompany(),
+          apiFetchAttendance(),
+        ]);
+        markRemoteApply();
+        setPayroll(pay);
+        setCompany(c => ({ ...DEFAULT_COMPANY, ...c, ...companyData }));
+        setAttendance(att);
+      }
+      if (key === "holidays") {
+        const list = await apiFetchHolidays();
+        markRemoteApply();
+        setHolidays(list);
+      }
+      if (key === "policies") {
+        const list = await apiFetchPolicies();
+        markRemoteApply();
+        setPolicies(list);
+      }
+      if (key === "assets") {
+        const list = await apiFetchAssets();
+        markRemoteApply();
+        setAssets(list);
+      }
+      if (key === "announcements") {
+        const list = await apiFetchAnnouncements();
+        markRemoteApply();
+        setAnnouncements(list);
+      }
+      if (key === "biometric") {
+        // attendance already refreshed above; users help PIN mapping
+        const us = await apiFetchUsers();
+        markRemoteApply();
+        setUsers(us);
+      }
+    } catch (e) {
+      console.error(`Module refresh failed (${key}):`, e);
+    } finally {
+      if (refreshInFlightRef.current === key) refreshInFlightRef.current = null;
+    }
+  }
+
+  /* ── Load shell from bootstrap, then hydrate active module ── */
   useEffect(() => {
     apiBootstrap()
-      .then(d => {
+      .then(async d => {
+        markRemoteApply();
         setUsers(d.users || []);
         setAttendance(sanitizeAttendance(d.attendance));
         setLeaveRequests(sanitizeLeaveRequests(d.leave));
@@ -106,6 +199,8 @@ export default function App() {
         setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
         loadedRef.current = true;
         setDbStatus("ready");
+        const s = loadSession();
+        if (s?.token) await refreshModule("home");
       })
       .catch(e => {
         console.error("Database connection failed:", e);
@@ -113,13 +208,42 @@ export default function App() {
       });
   }, []);
 
-  /* ── Sync each collection to PostgreSQL when it changes ── */
-  /* ── Sync users; strip plain passwords from memory after save so they are not re-sent ── */
+  /* ── On tab change (and after DB ready): fetch that module's APIs ── */
   useEffect(() => {
-    if (!loadedRef.current) return;
+    if (dbStatus !== "ready" || !session?.token) return;
+    refreshModule(route);
+  }, [route, session?.token, dbStatus]);
+
+  /* ── Live poll while Attendance / Biometric / Home tab is open ── */
+  useEffect(() => {
+    if (dbStatus !== "ready" || !session?.token) return;
+    if (route !== "attendance" && route !== "biometric" && route !== "home") return;
+    const id = setInterval(() => {
+      refreshModule(route === "biometric" ? "biometric" : route === "home" ? "home" : "attendance");
+    }, 20000);
+    return () => clearInterval(id);
+  }, [route, session?.token, dbStatus]);
+
+  /* ── Sync each collection to PostgreSQL when it changes ── */
+  function actorIsHrAdmin() {
+    const actor = users.find(u => u.id === session?.userId);
+    return isHrAdminRole(actor?.role);
+  }
+
+  async function persistCollection(collection, data, { hrOnly = false } = {}) {
+    if (shouldSkipSync()) return;
+    if (hrOnly && !actorIsHrAdmin()) return;
+    const result = await apiSave(collection, data);
+    if (result && !result.ok) {
+      setSyncBanner(`Could not save ${collection}: ${result.error}`);
+    }
+  }
+
+  useEffect(() => {
+    if (shouldSkipSync() || !actorIsHrAdmin()) return;
     let cancelled = false;
     (async () => {
-      await apiSave("users", users);
+      await persistCollection("users", users, { hrOnly: true });
       if (cancelled) return;
       const hasPlain = users.some(u => {
         const p = u?.password;
@@ -135,40 +259,40 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [users]);
-  useEffect(() => { if (loadedRef.current) apiSave("attendance", attendance); }, [attendance]);
-  useEffect(() => { if (loadedRef.current) apiSave("leave", leaveRequests); }, [leaveRequests]);
-  useEffect(() => { if (loadedRef.current) apiSave("short-leave", shortLeaveRequests); }, [shortLeaveRequests]);
-  useEffect(() => { if (loadedRef.current) apiSave("announcements", announcements); }, [announcements]);
-  useEffect(() => { if (loadedRef.current) apiSave("payroll", payroll); }, [payroll]);
-  useEffect(() => { if (loadedRef.current) apiSave("policies", policies); }, [policies]);
-  useEffect(() => { if (loadedRef.current) apiSave("assets", assets); }, [assets]);
-  useEffect(() => { if (loadedRef.current) apiSave("holidays", holidays); }, [holidays]);
-  useEffect(() => { if (loadedRef.current) apiSave("notifications", notifications); }, [notifications]);
-  useEffect(() => { if (loadedRef.current) apiSave("warnings", warnings); }, [warnings]);
-  useEffect(() => { if (loadedRef.current) apiSave("company", company); }, [company]);
+  useEffect(() => { persistCollection("attendance", attendance, { hrOnly: true }); }, [attendance]);
+  // Payroll is persisted via granular REST endpoints (no bulk wipe).
+  // Policies are persisted via granular REST endpoints (no bulk wipe).
+  useEffect(() => { persistCollection("assets", assets); }, [assets]);
+  // Holidays are persisted via granular REST endpoints (no bulk wipe).
+  useEffect(() => { persistCollection("notifications", notifications); }, [notifications]);
+  useEffect(() => { persistCollection("warnings", warnings); }, [warnings]);
+  useEffect(() => { persistCollection("company", company, { hrOnly: true }); }, [company]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
     const tick = () => {
       setAttendance(prev => {
-        const next = applyAutoCheckouts(prev, users);
+        const next = applyAutoCheckouts(prev, users, holidays);
         return next === prev ? prev : next;
       });
     };
     tick();
     const id = setInterval(tick, 30000);
     return () => clearInterval(id);
-  }, [users]);
+  }, [users, holidays]);
 
   useEffect(() => {
     if (!loadedRef.current || !session?.userId) return;
     const id = setInterval(() => {
       apiFetchNotifications()
         .then(list => {
-          if (Array.isArray(list)) setNotifications(sanitizeNotifications(list));
+          if (Array.isArray(list)) {
+            markRemoteApply();
+            setNotifications(sanitizeNotifications(list));
+          }
         })
         .catch(e => console.error("Notification refresh failed:", e));
-    }, 60000);
+    }, 30000);
     return () => clearInterval(id);
   }, [session]);
 
@@ -344,6 +468,13 @@ export default function App() {
         </header>
 
         <main className="flex-1 p-4 lg:p-6 max-w-7xl w-full mx-auto">
+          {syncBanner && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span className="flex-1">{syncBanner}</span>
+              <button type="button" className="text-xs font-medium underline" onClick={() => setSyncBanner(null)}>Dismiss</button>
+            </div>
+          )}
           <div className="mb-5">
             <h1 className="text-xl font-bold" style={{ color: B.dark }}>{title}</h1>
             <p className="text-sm text-slate-400">{sub}</p>
@@ -356,7 +487,7 @@ export default function App() {
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
           {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} />}
           {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} />}
-          {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={setAttendance} />}
+          {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={(next) => { markRemoteApply(); setAttendance(next); }} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}

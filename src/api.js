@@ -39,6 +39,349 @@ export async function apiBootstrap() {
   return res.json();
 }
 
+async function apiGetJson(path) {
+  const res = await apiFetch(`${API_URL}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `API error ${res.status} (${path})`);
+  }
+  return res.json();
+}
+
+export async function apiFetchUsers() {
+  // HR/Admin: GET /api/users returns full roster.
+  // Employee: fallback to GET /api/users/:id (own profile only).
+  try {
+    const res = await apiFetch(`${API_URL}/users`, { headers: authHeaders() });
+    if (res.ok) return await res.json();
+    if (res.status !== 401 && res.status !== 403) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+  } catch (e) {
+    // If we can't fetch full roster, try own profile.
+    // (Some auth failures might still be retried by the caller via refreshModule.)
+  }
+  const s = loadSession();
+  if (!s?.userId) throw new Error("Missing session for fetching own user");
+  const self = await apiGetJson(`/users/${encodeURIComponent(s.userId)}`);
+  return Array.isArray(self) ? self : [self];
+}
+
+export async function apiFetchAttendance(params = {}) {
+  const q = new URLSearchParams();
+  if (params.month) q.set("month", params.month);
+  if (params.from) q.set("from", params.from);
+  if (params.to) q.set("to", params.to);
+  if (params.userId) q.set("userId", params.userId);
+  const qs = q.toString() ? `?${q}` : "";
+  const data = await apiGetJson(`/attendance${qs}`);
+  return sanitizeAttendance(data);
+}
+
+export async function apiFetchLeave() {
+  return sanitizeLeaveRequests(await apiGetJson("/leave"));
+}
+
+export async function apiFetchShortLeave() {
+  return sanitizeShortLeaveRequests(await apiGetJson("/short-leave"));
+}
+
+export async function apiFetchPayroll() {
+  const data = await apiGetJson("/payroll");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiGetPayroll(params = {}) {
+  const q = new URLSearchParams();
+  if (params.month) q.set("month", params.month);
+  if (params.userId) q.set("userId", params.userId);
+  const qs = q.toString() ? `?${q}` : "";
+  const data = await apiGetJson(`/payroll${qs}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreatePayroll(slip) {
+  const res = await apiFetch(`${API_URL}/payroll`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(slip),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create payroll failed (${res.status})`);
+  return body.slip || null;
+}
+
+export async function apiUpdatePayroll(id, patch) {
+  const res = await apiFetch(`${API_URL}/payroll/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update payroll failed (${res.status})`);
+  return body.slip || null;
+}
+
+export async function apiDeletePayroll(id) {
+  const res = await apiFetch(`${API_URL}/payroll/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete payroll failed (${res.status})`);
+  return true;
+}
+
+export async function apiFetchHolidays() {
+  return sanitizeHolidays(await apiGetJson("/holidays"));
+}
+
+export async function apiGetHolidays() {
+  return apiFetchHolidays();
+}
+
+export async function apiCreateHoliday(data) {
+  const res = await apiFetch(`${API_URL}/holidays`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create holiday failed (${res.status})`);
+  const list = sanitizeHolidays(body.holiday ? [body.holiday] : []);
+  return list[0] || body.holiday || null;
+}
+
+export async function apiUpdateHoliday(id, patch) {
+  const res = await apiFetch(`${API_URL}/holidays/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update holiday failed (${res.status})`);
+  const list = sanitizeHolidays(body.holiday ? [body.holiday] : []);
+  return list[0] || body.holiday || null;
+}
+
+export async function apiDeleteHoliday(id) {
+  const res = await apiFetch(`${API_URL}/holidays/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete holiday failed (${res.status})`);
+  return true;
+}
+
+export async function apiFetchPolicies() {
+  const data = await apiGetJson("/policies");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiGetPolicies() {
+  return apiFetchPolicies();
+}
+
+export async function apiCreatePolicy(data) {
+  const res = await apiFetch(`${API_URL}/policies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create policy failed (${res.status})`);
+  return body.policy || null;
+}
+
+export async function apiUpdatePolicy(id, patch) {
+  const res = await apiFetch(`${API_URL}/policies/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update policy failed (${res.status})`);
+  return body.policy || null;
+}
+
+export async function apiDeletePolicy(id) {
+  const res = await apiFetch(`${API_URL}/policies/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete policy failed (${res.status})`);
+  return true;
+}
+
+export async function apiFetchAssets() {
+  const data = await apiGetJson("/assets");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiFetchAnnouncements() {
+  return sanitizeAnnouncements(await apiGetJson("/announcements"));
+}
+
+// REST announcement CRUD (granular endpoints)
+export async function apiGetAnnouncements() {
+  return apiFetchAnnouncements();
+}
+
+export async function apiCreateAnnouncement(data) {
+  const res = await apiFetch(`${API_URL}/announcements`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create announcement failed (${res.status})`);
+  return sanitizeAnnouncements(body.announcement ? [body.announcement] : []).at(0) || body.announcement || null;
+}
+
+export async function apiUpdateAnnouncement(id, patch) {
+  const res = await apiFetch(`${API_URL}/announcements/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update announcement failed (${res.status})`);
+  return sanitizeAnnouncements(body.announcement ? [body.announcement] : []).at(0) || body.announcement || null;
+}
+
+export async function apiDeleteAnnouncement(id) {
+  const res = await apiFetch(`${API_URL}/announcements/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete announcement failed (${res.status})`);
+  return true;
+}
+
+export async function apiFetchWarnings() {
+  return sanitizeWarnings(await apiGetJson("/warnings"));
+}
+
+export async function apiFetchCompany() {
+  const data = await apiGetJson("/company");
+  return data && typeof data === "object" ? data : {};
+}
+
+export async function apiCreateUser(userData) {
+  const res = await apiFetch(`${API_URL}/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(userData),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Create user failed (${res.status})`);
+  return data;
+}
+
+export async function apiUpdateUser(userId, patch) {
+  const res = await apiFetch(`${API_URL}/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Update user failed (${res.status})`);
+  return data;
+}
+
+export async function apiCreateAttendance(record) {
+  const res = await apiFetch(`${API_URL}/attendance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(record),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Create attendance failed (${res.status})`);
+  return data;
+}
+
+export async function apiUpdateAttendance(id, patch) {
+  const res = await apiFetch(`${API_URL}/attendance/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Update attendance failed (${res.status})`);
+  return data;
+}
+
+export async function apiCreateLeaveRequest(payload) {
+  const res = await apiFetch(`${API_URL}/leave`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Create leave failed (${res.status})`);
+  return data;
+}
+
+export async function apiUpdateLeaveRequest(id, patch) {
+  const res = await apiFetch(`${API_URL}/leave/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Update leave failed (${res.status})`);
+  return data;
+}
+
+export async function apiDeleteLeaveRequest(id) {
+  const res = await apiFetch(`${API_URL}/leave/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Delete leave failed (${res.status})`);
+  return data;
+}
+
+export async function apiCreateShortLeaveRequest(payload) {
+  const res = await apiFetch(`${API_URL}/short-leave`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Create short-leave failed (${res.status})`);
+  return data;
+}
+
+export async function apiUpdateShortLeaveRequest(id, patch) {
+  const res = await apiFetch(`${API_URL}/short-leave/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Update short-leave failed (${res.status})`);
+  return data;
+}
+
+export async function apiDeleteShortLeaveRequest(id) {
+  const res = await apiFetch(`${API_URL}/short-leave/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Delete short-leave failed (${res.status})`);
+  return data;
+}
+
+/** Last sync error message per collection (for UI debugging). */
+export const syncErrors = {};
+
 export async function apiSave(collection, data) {
   try {
     const res = await apiFetch(`${API_URL}/${collection}`, {
@@ -46,9 +389,19 @@ export async function apiSave(collection, data) {
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
     });
-    if (!res.ok) console.error(`Failed to sync ${collection}:`, res.status);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = body.error || `HTTP ${res.status}`;
+      syncErrors[collection] = msg;
+      console.error(`Failed to sync ${collection}:`, msg);
+      return { ok: false, status: res.status, error: msg };
+    }
+    delete syncErrors[collection];
+    return { ok: true };
   } catch (e) {
+    syncErrors[collection] = e.message || String(e);
     console.error(`Failed to sync ${collection}:`, e);
+    return { ok: false, error: e.message || String(e) };
   }
 }
 
@@ -312,8 +665,5 @@ export async function apiBiometricProcess(userId) {
 }
 
 export async function apiRefreshAttendance() {
-  const res = await apiFetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Failed to refresh attendance");
-  const d = await res.json();
-  return sanitizeAttendance(d.attendance);
+  return apiFetchAttendance();
 }
