@@ -304,10 +304,10 @@ export function requiredDutyMs(user, dateKey) {
   return Math.max(0, end - start - shift.breakMinutes * 60000);
 }
 
-export function isLateCheckIn(checkInIso, user) {
+export function isLateCheckIn(checkInIso, user, dateKeyOverride = null) {
   if (!checkInIso || !user) return false;
   const d = new Date(checkInIso);
-  const dateKey = dateKeyFromDate(d);
+  const dateKey = dateKeyOverride || dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
   const start = shiftDateTime(dateKey, shift.shiftStart);
@@ -316,10 +316,10 @@ export function isLateCheckIn(checkInIso, user) {
   return d > lateCutoff;
 }
 
-export function isEarlyLeave(checkOutIso, user) {
+export function isEarlyLeave(checkOutIso, user, dateKeyOverride = null) {
   if (!checkOutIso || !user) return false;
   const d = new Date(checkOutIso);
-  const dateKey = dateKeyFromDate(d);
+  const dateKey = dateKeyOverride || dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
   return d < getShiftEndDate(user, dateKey);
@@ -359,11 +359,11 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
 
   if (!hasShiftEnded(user, dateKey, now)) return "Working";
 
-  const late = isLateCheckIn(checkIn, user);
+  const late = isLateCheckIn(checkIn, user, dateKey);
   if (!checkOut) return shouldFinalizeAttendance(user, dateKey, now) ? "Missing Checkout" : (late ? "Late" : "Present");
   if (late) return "Late";
   if (!hasShiftEnded(user, dateKey, now)) return "Working";
-  if (isEarlyLeave(checkOut, user)) return "Early Leave";
+  if (isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
   if (isShortHours(checkIn, checkOut, user, options)) return "Short Hours";
   return "Present";
 }
@@ -537,7 +537,7 @@ export async function syncAttendanceFromLogs(pool) {
         ...timeOpts,
         netWorkingMs: workingMs,
       });
-      const late = isLateCheckIn(checkIn, user);
+      const late = isLateCheckIn(checkIn, user, dateKey);
       const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
       return { workingMs, status, late, totalBreakMs };
     }
@@ -701,7 +701,7 @@ export async function finalizeOpenAttendance(pool) {
          WHERE id = $5`,
         [
           prev.check_out, prev.check_out_method, workingMs,
-          isLateCheckIn(prev.check_in, user), prev.id,
+          isLateCheckIn(prev.check_in, user, dateKey), prev.id,
         ]
       );
       rowsUpdated += 1;
@@ -742,7 +742,7 @@ export async function finalizeOpenAttendance(pool) {
          WHERE id = $11`,
         [
           agg.checkIn, checkOut, agg.lastScan, workingMs, status,
-          isLateCheckIn(agg.checkIn, user), autoCheckout,
+          isLateCheckIn(agg.checkIn, user, dateKey), autoCheckout,
           agg.checkInMethod, autoCheckout ? null : (agg.checkOutMethod || resolved.checkOutMethod),
           agg.lastScanMethod, prev.id,
         ]
@@ -758,7 +758,7 @@ export async function finalizeOpenAttendance(pool) {
       await pool.query(
         `UPDATE attendance SET check_out = $1, auto_checkout = true, working_ms = $2, status = $3, late = $4
          WHERE id = $5`,
-        [checkOut, workingMs, status, isLateCheckIn(prev.check_in, user), prev.id]
+        [checkOut, workingMs, status, isLateCheckIn(prev.check_in, user, dateKey), prev.id]
       );
       rowsUpdated += 1;
     } else if (!prev.check_out && shouldFinalizeAttendance(user, dateKey, now)) {
