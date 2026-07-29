@@ -1,3 +1,5 @@
+import { monthKey } from "./utils.js";
+
 export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
@@ -71,6 +73,7 @@ export async function apiFetchUsers() {
 export async function apiFetchAttendance(params = {}) {
   const q = new URLSearchParams();
   if (params.month) q.set("month", params.month);
+  if (params.date) q.set("date", params.date);
   if (params.from) q.set("from", params.from);
   if (params.to) q.set("to", params.to);
   if (params.userId) q.set("userId", params.userId);
@@ -795,5 +798,5 @@ export async function apiBiometricProcess(userId) {
 }
 
 export async function apiRefreshAttendance() {
-  return apiFetchAttendance();
+  return apiFetchAttendance({ month: monthKey() });
 }

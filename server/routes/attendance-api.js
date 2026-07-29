@@ -1,4 +1,5 @@
 import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { karachiDateKey } from "../lib/admsHelpers.js";
 
 function attToJs(r) {
   return {
@@ -160,8 +161,10 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
 
   // Filtered attendance: HR sees all, Employee sees only their own.
   // Supports:
-  //   - month=YYYY-MM (recommended)
+  //   - date=YYYY-MM-DD (single day)
+  //   - month=YYYY-MM (recommended for summaries)
   //   - from=YYYY-MM-DD&to=YYYY-MM-DD (legacy compatibility)
+  // Defaults to today (Karachi) when no date range is provided.
   // Optional userId is only honored for HR roles.
   app.get("/api/attendance", requireAuth, async (req, res) => {
     try {
@@ -169,13 +172,26 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       const roleCanViewAll = HR_ADMIN_ROLES.includes(actor.role);
 
       const month = String(req.query.month || "").trim();
+      const date = String(req.query.date || "").slice(0, 10);
       const from = String(req.query.from || "").slice(0, 10);
       const to = String(req.query.to || "").slice(0, 10);
       const userId = String(req.query.userId || "").trim();
 
-      const range = month ? monthToRange(month) : null;
-      const dateFrom = range?.start || (from || "");
-      const dateTo = range?.end || (to || "");
+      let dateFrom = "";
+      let dateTo = "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        dateFrom = date;
+        dateTo = date;
+      } else {
+        const range = month ? monthToRange(month) : null;
+        dateFrom = range?.start || (from || "");
+        dateTo = range?.end || (to || "");
+        if (!dateFrom && !dateTo) {
+          const today = karachiDateKey(new Date());
+          dateFrom = today;
+          dateTo = today;
+        }
+      }
 
       const params = [];
       const where = [];

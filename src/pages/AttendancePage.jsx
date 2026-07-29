@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
+import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -11,23 +11,20 @@ import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttenda
 function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
   if (mode === "—") return "—";
-  if (mode === "Missing") return <span className="text-amber-600 font-medium">Missing</span>;
-  if (mode === "InProgress") {
-    const scan = record?.checkOut || record?.lastScan;
-    return (
-      <>
-        {formatTime(scan)}
-        <span className="text-[10px] text-emerald-600 ml-1">in progress</span>
-      </>
-    );
-  }
+  if (mode === "Missing") return <span className="text-red-600 font-medium">Missing</span>;
   return (
     <>
       {formatTime(record?.checkOut)}
       {record?.checkOutMethod ? <span className="text-[10px] text-slate-400 ml-1">{record.checkOutMethod}</span> : null}
-      {record?.autoCheckout && <Pill tone="amber">Auto checkout</Pill>}
     </>
   );
+}
+
+function getRecordForDate(attendance, userId, user, dateKey, now = new Date()) {
+  if (dateKey === todayKey(now) && user) {
+    return getUserTodayRecord(attendance, userId, user, now);
+  }
+  return (attendance || []).find(r => r && r.userId === userId && r.date === dateKey) || null;
 }
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
@@ -64,12 +61,39 @@ export function AttendancePage({ currentUser, users, attendance, setAttendance, 
     );
   }
 
-  return <EmployeeAttendanceHistory user={me} attendance={attendance} leaveRequests={leaveRequests} holidays={holidays} />;
+  return <EmployeeAttendanceHistory user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} holidays={holidays} />;
 }
 
-export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = [], holidays = [] }) {
+export function EmployeeAttendanceHistory({ user, attendance, setAttendance, leaveRequests = [], holidays = [] }) {
   const monthOptions = employeeAttendanceMonthOptions(user);
+  const [viewMode, setViewMode] = useState("daily");
+  const [selectedDate, setSelectedDate] = useState(() => todayKey());
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), monthOptions));
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = viewMode === "monthly" ? { month } : { date: selectedDate };
+        const list = await apiFetchAttendance(params);
+        if (!cancelled) setAttendance?.(list);
+      } catch (e) {
+        console.error("Failed to fetch attendance:", e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode, month, selectedDate, setAttendance]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const isToday = selectedDate === todayKey(now);
+  const dailyRecord = viewMode === "daily"
+    ? getRecordForDate(attendance, user.id, user, selectedDate, now)
+    : null;
   const history = (attendance || [])
     .filter(r => r && r.userId === user.id && r.date && r.date >= ATTENDANCE_MONTH_FLOOR)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -78,6 +102,24 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
 
   return (
     <div className="space-y-5 max-w-3xl">
+      <div className="flex gap-1 p-1 rounded-lg bg-slate-100 w-fit">
+        {[
+          { id: "daily", label: "Daily View" },
+          { id: "monthly", label: "Monthly Summary" },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setViewMode(tab.id)}
+            className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+            style={viewMode === tab.id ? { background: B.dark, color: B.white } : { color: B.dark }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {viewMode === "monthly" ? (
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
           <STitle>Monthly summary</STitle>
@@ -96,6 +138,7 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
             ["Late days", monthSummary.totalLateDays],
             ["Approved leave", monthSummary.approvedLeaveDays],
             ["Working hours", formatDurationMs(monthSummary.totalWorkingMs)],
+            ["Break time", formatDurationMs(monthSummary.totalBreakMs)],
             ["Required hours", formatDurationMs(monthSummary.totalRequiredMs)],
             ["Payable days", monthSummary.payableDays],
           ].map(([label, value]) => (
@@ -106,23 +149,74 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
           ))}
         </div>
       </Card>
+      ) : (
       <Card className="overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-200"><STitle>My attendance history</STitle></div>
+        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+          <STitle>Daily attendance</STitle>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value || todayKey())}
+            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Check in", "Check out", "Working Hours", "Status"].map(h => (
+                {["Date", "Check in", "Break", "Check out", "Working hours", "Status"].map(h => (
+                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const r = dailyRecord;
+                const dateKey = selectedDate;
+                const liveNow = isToday ? now : new Date(`${dateKey}T23:59:59`);
+                const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays, isToday ? now : liveNow), r);
+                return (
+                  <tr className="border-b border-slate-100">
+                    <td className="px-4 py-3 text-slate-700">{formatDate(dateKey)}</td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      {formatTime(r?.checkIn)}
+                      {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">{displayBreakTime(r, liveNow)}</td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      <CheckOutCell record={r} user={user} dateKey={dateKey} now={liveNow} />
+                    </td>
+                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, user, liveNow)}</td>
+                    <td className="px-4 py-3">
+                      <Pill tone={ds.tone}>{ds.label}</Pill>
+                    </td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      )}
+
+      {viewMode === "monthly" && (
+      <Card className="overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-200"><STitle>My attendance history</STitle></div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
+                {["Date", "Check in", "Break", "Check out", "Working hours", "Status"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {history.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
                 const dateKey = r?.date ?? todayKey();
-                const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays));
+                const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays), r);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -130,6 +224,7 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
                       {formatTime(r.checkIn)}
                       {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
                     </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">{displayBreakTime(r)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       <CheckOutCell record={r} user={user} dateKey={dateKey} />
                     </td>
@@ -147,6 +242,7 @@ export function EmployeeAttendanceHistory({ user, attendance, leaveRequests = []
           </table>
         </div>
       </Card>
+      )}
     </div>
   );
 }
@@ -157,6 +253,8 @@ export function EmployeeAttendanceFull(props) {
 }
 
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
+  const [viewMode, setViewMode] = useState("daily");
+  const [selectedDate, setSelectedDate] = useState(() => todayKey());
   const [period, setPeriod] = useState("daily");
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
@@ -165,15 +263,16 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     let cancelled = false;
     (async () => {
       try {
-        const list = await apiFetchAttendance({ month });
+        const params = viewMode === "monthly" ? { month } : { date: selectedDate };
+        const list = await apiFetchAttendance(params);
         if (cancelled) return;
         setAttendance(list);
       } catch (e) {
-        console.error("Failed to fetch attendance month:", e?.message || e);
+        console.error("Failed to fetch attendance:", e?.message || e);
       }
     })();
     return () => { cancelled = true; };
-  }, [month, setAttendance]);
+  }, [viewMode, month, selectedDate, setAttendance]);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
@@ -190,6 +289,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   ).filter(u => u && u.id);
   const visibleIds = attendanceVisibleUserIds(users || [], currentUser.role);
   const today = todayKey();
+  const isSelectedToday = selectedDate === today;
   const pendingShort = (shortLeaveRequests || []).filter(r =>
     r && canChangeShortLeaveRequestStatus(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
@@ -334,6 +434,24 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
         ))}
       </div>
 
+      <div className="flex gap-1 p-1 rounded-lg bg-slate-100 w-fit">
+        {[
+          { id: "daily", label: "Daily View" },
+          { id: "monthly", label: "Monthly Summary" },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setViewMode(tab.id)}
+            className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+            style={viewMode === tab.id ? { background: B.dark, color: B.white } : { color: B.dark }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {viewMode === "monthly" ? (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle>Monthly attendance summary</STitle>
@@ -374,16 +492,24 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </table>
         </div>
       </Card>
-
+      ) : (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-          <STitle>Daily attendance — today</STitle>
-          <span className="text-xs text-slate-400">
-            First scan = Check-in · Last scan = Check-out · {formatDate(todayKey())}
-          </span>
+          <STitle>Daily attendance</STitle>
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value || todayKey())}
+              className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+            />
+            <span className="text-xs text-slate-400">
+              First scan = Check-in · Last scan = Check-out after shift end
+            </span>
+          </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[800px]">
+          <table className="w-full text-sm min-w-[980px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
                 {["Employee", "Date", "Check-in", "Break", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
@@ -395,10 +521,11 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               {liveRoster.length === 0 ? (
                 <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : liveRoster.map(u => {
-                const r = getUserTodayRecord(attendance, u.id, u, now);
-                const rowDate = r?.date || today;
+                const rowDate = selectedDate;
+                const r = getRecordForDate(attendance, u.id, u, rowDate, now);
+                const liveNow = isSelectedToday ? now : new Date(`${rowDate}T23:59:59`);
                 const shiftCfg = getUserShift(u, rowDate);
-                const ds = dayStatusPill(resolveDayStatus(u, r, rowDate, holidays, now));
+                const ds = dayStatusPill(resolveDayStatus(u, r, rowDate, holidays, isSelectedToday ? now : liveNow), r);
                 const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
@@ -415,23 +542,25 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
                       {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
-                      {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="amber">Late</Pill>}
+                      {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="orange">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {!r?.checkIn ? "—" : (
                         <div className="text-xs">
                           <div className={`tabular-nums font-medium ${breakOver ? "text-red-600" : ""}`}>
-                            {formatBreakUsage(r, shiftCfg.breakMinutes)}
+                            {displayBreakTime(r, liveNow)}
                           </div>
-                          <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          {breakSessionCount(r) > 0 && (
+                            <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          )}
                           {breakOver && <Pill tone="red">Over</Pill>}
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      <CheckOutCell record={r} user={u} dateKey={rowDate} now={now} />
+                      <CheckOutCell record={r} user={u} dateKey={rowDate} now={liveNow} />
                     </td>
-                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u, now)}</td>
+                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, u, liveNow)}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
@@ -461,7 +590,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </table>
         </div>
       </Card>
+      )}
 
+      {viewMode === "monthly" && (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle right={<span className="text-xs text-slate-400">Total: {formatDurationMs(periodTotalMs)}</span>}>Attendance reports</STitle>
@@ -488,7 +619,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               ) : reportRows.map(r => {
                 const dateKey = r?.date ?? todayKey();
                 const shiftCfg = getUserShift(r.user, dateKey);
-                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays, dateKey === today ? now : undefined));
+                const rowNow = dateKey === today ? now : undefined;
+                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays, rowNow), r);
                 const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
@@ -502,17 +634,19 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       {!r.checkIn ? "—" : (
                         <div className="text-xs">
                           <div className={`tabular-nums font-medium ${breakOver ? "text-red-600" : ""}`}>
-                            {formatBreakUsage(r, shiftCfg.breakMinutes)}
+                            {displayBreakTime(r, rowNow || new Date())}
                           </div>
-                          <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          {breakSessionCount(r) > 0 && (
+                            <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
+                          )}
                           {breakOver && <Pill tone="red">Over</Pill>}
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
-                      <CheckOutCell record={r} user={r.user} dateKey={dateKey} />
+                      <CheckOutCell record={r} user={r.user} dateKey={dateKey} now={rowNow || new Date()} />
                     </td>
-                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user)}</td>
+                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user, rowNow || new Date())}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
@@ -542,6 +676,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </table>
         </div>
       </Card>
+      )}
 
       {correctionAudit.length > 0 && (
         <Card className="overflow-hidden">

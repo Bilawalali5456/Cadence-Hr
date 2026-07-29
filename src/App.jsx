@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -103,7 +103,7 @@ export default function App() {
       markRemoteApply();
       if (key === "home" || key === "reports" || key === "attendance" || key === "biometric") {
         const [att, leave, shortLeave, warnings] = await Promise.all([
-          apiFetchAttendance(),
+          apiFetchAttendance({ month: monthKey() }),
           apiFetchLeave(),
           apiFetchShortLeave(),
           apiFetchWarnings(),
@@ -121,7 +121,7 @@ export default function App() {
         setWarnings(warnings);
       }
       if (key === "shortleave") {
-        const [shortLeave, att] = await Promise.all([apiFetchShortLeave(), apiFetchAttendance()]);
+        const [shortLeave, att] = await Promise.all([apiFetchShortLeave(), apiFetchAttendance({ month: monthKey() })]);
         markRemoteApply();
         setShortLeaveRequests(shortLeave);
         setAttendance(att);
@@ -135,7 +135,7 @@ export default function App() {
         const [pay, companyData, att] = await Promise.all([
           apiFetchPayroll(),
           apiFetchCompany(),
-          apiFetchAttendance(),
+          apiFetchAttendance({ month: monthKey() }),
         ]);
         markRemoteApply();
         setPayroll(pay);

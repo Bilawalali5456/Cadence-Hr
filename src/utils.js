@@ -627,22 +627,30 @@ export function effectiveCheckOut(record, user, dateKey = record?.date || todayK
   return record.checkOut || null;
 }
 
-export function dayStatusPill(status) {
+export function dayStatusPill(status, record = null) {
+  if (record?.autoCheckout) return { tone: "yellow", label: "Auto Checkout" };
   const map = {
     Present: { tone: "green", label: "Present" },
-    Working: { tone: "green", label: "Working" },
+    Working: { tone: "blue", label: "Working" },
     "On Time": { tone: "green", label: "Present" },
-    Late: { tone: "amber", label: "Late" },
-    "Early Leave": { tone: "amber", label: "Early Leave" },
-    "Short Hours": { tone: "amber", label: "Short Hours" },
-    "Missing Checkout": { tone: "amber", label: "Missing Checkout" },
+    Late: { tone: "orange", label: "Late" },
+    "Early Leave": { tone: "red", label: "Early Leave" },
+    "Short Hours": { tone: "orange", label: "Short Hours" },
+    "Missing Checkout": { tone: "red-outline", label: "Missing Checkout" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
-    Off: { tone: "blue", label: "Off" },
-    "Weekend Off": { tone: "blue", label: "Weekend Off" },
+    Off: { tone: "slate", label: "Off" },
+    "Weekend Off": { tone: "slate", label: "Weekend Off" },
     "Public Holiday": { tone: "blue", label: "Public Holiday" },
   };
   return map[status] || { tone: "slate", label: status || "—" };
+}
+
+export function displayBreakTime(record, now = new Date()) {
+  if (!record?.checkIn) return "—";
+  const ms = calcTotalBreakMs(record, now);
+  if (!ms) return "—";
+  return formatDurationMs(ms);
 }
 
 export function finalizeRecord(record, user, holidays = []) {
@@ -1008,6 +1016,9 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
 
 export function displayWorkingHours(record, user, now = new Date()) {
   const dateKey = record?.date || todayKey();
+  if (record?.checkIn && computeDayStatus(user, record, [], now) === "Working") {
+    return formatDurationMs(calcLiveWorkingMs(record, now));
+  }
   const bounds = getShiftBounds(user, dateKey);
   if (record?.checkIn && bounds.end && now < bounds.end) {
     return formatDurationMs(calcLiveWorkingMs(record, now));
@@ -1020,24 +1031,17 @@ export function displayWorkingHours(record, user, now = new Date()) {
 
 /**
  * Check-out column display mode.
- * Returns "—" | "Missing" | "InProgress" | null (show finalized check-out time).
+ * Returns "—" | "Missing" | null (show finalized check-out time).
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
-  if (computeDayStatus(user, record, [], now) === "Working") {
-    // Still show the latest scan time while Working — never blank the cell.
-    if (record.checkOut || (record.lastScan && record.lastScan !== record.checkIn)) return "InProgress";
-    return "—";
-  }
+  if (computeDayStatus(user, record, [], now) === "Working") return "—";
   if (effectiveCheckOut(record, user, dateKey, now)) return null;
   return "Missing";
 }
 
 export function formatCheckOutTime(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
-  if (mode === "InProgress") {
-    return formatTime(record.checkOut || record.lastScan);
-  }
   if (mode === "Missing") return null;
   if (mode === "—") return "—";
   return formatTime(record.checkOut);
@@ -1162,9 +1166,10 @@ export function formatTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString([], {
-    hour: "2-digit",
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: APP_TIMEZONE,
   });
 }

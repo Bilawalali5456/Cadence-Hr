@@ -293,19 +293,29 @@ export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
   const sorted = [...(logs || [])].sort(
     (a, b) => parseZktTime(a.punch_time_local || a.punch_time) - parseZktTime(b.punch_time_local || b.punch_time)
   );
-  if (!sorted.length) {
+  const shift = getUserShift(user, dateKey);
+  let validScans = sorted;
+  if (!shift.off && shift.shiftStart) {
+    const shiftStart = shiftDateTime(dateKey, shift.shiftStart);
+    const earliestAllowed = new Date(shiftStart.getTime() - 60 * 60 * 1000);
+    validScans = sorted.filter(scan => {
+      const scanTime = parseZktTime(scan.punch_time_local || scan.punch_time);
+      return scanTime && scanTime >= earliestAllowed;
+    });
+  }
+  if (!validScans.length) {
     return {
       checkIn: null, checkOut: null, lastScan: null,
       checkInMethod: null, checkOutMethod: null, lastScanMethod: null, scanCount: 0,
     };
   }
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const first = validScans[0];
+  const last = validScans[validScans.length - 1];
   const checkIn = parseZktTime(first.punch_time_local || first.punch_time)?.toISOString();
   const checkInMethod = methodLabel(first.verify_method);
   const lastIso = parseZktTime(last.punch_time_local || last.punch_time)?.toISOString();
   const lastScanMethod = methodLabel(last.verify_method);
-  const scanCount = sorted.length;
+  const scanCount = validScans.length;
   const finalized = shouldFinalizeAttendance(user, dateKey, now);
 
   if (scanCount === 1) {
