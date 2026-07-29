@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Bell, Check, LogOut, User, Save, Key, Shield, Building, Phone, Mail, ToggleLeft, ToggleRight } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can } from "../utils.js";
-import { apiChangePassword } from "../api.js";
+import { apiChangePassword, apiUpdateUser, apiUpdateCompany } from "../api.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, PwInput, PwStrength, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
 export function SettingsPage({ currentUser, users, setUsers, onLogout, company, setCompany, roles }) {
@@ -21,11 +21,34 @@ export function SettingsPage({ currentUser, users, setUsers, onLogout, company, 
   const [pwLoading, setPwLoading] = useState(false);
   const [notifs, setNotifs] = useState({ leave: true, payroll: true, ann: true, att: false, weekly: true });
 
+  const [companyErr, setCompanyErr] = useState("");
+  const [companySaved, setCompanySaved] = useState(false);
+
   const canManageCompany = can(currentUser.role, "manage_company_settings", roles);
 
-  function saveProfile() {
-    setUsers(us => us.map(u => u.id === currentUser.id ? { ...u, ...prof } : u));
-    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  async function saveProfile() {
+    setSaved(false);
+    try {
+      const updated = await apiUpdateUser(currentUser.id, prof);
+      setUsers(us => us.map(u => u.id === currentUser.id ? (updated.user || { ...u, ...prof }) : u));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      console.error("saveProfile failed:", e?.message || e);
+    }
+  }
+
+  async function saveCompany() {
+    setCompanyErr("");
+    setCompanySaved(false);
+    try {
+      const saved = await apiUpdateCompany(company);
+      setCompany(saved);
+      setCompanySaved(true);
+      setTimeout(() => setCompanySaved(false), 2000);
+    } catch (e) {
+      setCompanyErr(e?.message || String(e));
+    }
   }
 
   async function changePw() {
@@ -169,7 +192,9 @@ export function SettingsPage({ currentUser, users, setUsers, onLogout, company, 
             <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
               Plan: <b>Business</b> · {users.length} employee{users.length !== 1 ? "s" : ""} · Next billing Jul 1
             </div>
-            <Btn className="mt-4"><Save size={14} />Save</Btn>
+            <Btn className="mt-4" onClick={saveCompany}><Save size={14} />Save</Btn>
+            {companySaved && <span className="ml-3 text-sm text-emerald-600">Saved!</span>}
+            <ErrBox msg={companyErr} />
           </Card>
         )}
 
