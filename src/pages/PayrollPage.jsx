@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Save, Landmark } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
 import { can, isStaffRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
 import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox } from "../components/ui.jsx";
+import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll } from "../api.js";
 
 export function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
   const canManage = can(currentUser.role, "manage_payroll", roles);
@@ -19,6 +20,20 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
   const monthSlips = payroll.filter(s => s.month === month);
   const mySlips = payroll.filter(s => s.userId === currentUser.id).sort((a, b) => b.month.localeCompare(a.month));
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiGetPayroll({ month });
+        if (cancelled) return;
+        setPayroll(list);
+      } catch (e) {
+        console.error("Failed to fetch payroll month:", e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [month, setPayroll]);
+
   function openGenerate(u) {
     const existing = monthSlips.find(s => s.userId === u.id);
     if (existing) { setSlipView(existing); return; }
@@ -28,9 +43,10 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
     setGenFor(u);
   }
 
-  function generateSlip() {
+  async function generateSlip() {
     const basic = parseFloat(genForm.basic) || 0;
     if (basic <= 0) { setGenErr("Enter a valid basic salary."); return; }
+    setGenErr("");
     const workDays    = workingDaysInMonth(month, holidays);
     const presentDays = presentDaysInMonth(attendance, genFor.id, month, holidays);
     const lateDays    = lateDaysInMonth(attendance, genFor.id, month, users, holidays);
@@ -60,20 +76,45 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
       generatedOn: new Date().toLocaleDateString(),
       status: "generated",
     };
-    setPayroll(p => [...p, slip]);
-    setGenFor(null);
-    setSlipView(slip);
+    try {
+      const saved = await apiCreatePayroll(slip);
+      if (!saved) throw new Error("Salary slip was not saved.");
+      setPayroll(p => [
+        ...p.filter(s => !(s && s.userId === saved.userId && s.month === saved.month)),
+        saved,
+      ]);
+      setGenFor(null);
+      setSlipView(saved);
+    } catch (e) {
+      setGenErr(e?.message || String(e));
+    }
   }
 
-  function markPaid(id) {
-    setPayroll(p => p.map(s => s.id === id ? { ...s, status: "paid", paidOn: new Date().toLocaleDateString() } : s));
-    setSlipView(v => v && v.id === id ? { ...v, status: "paid", paidOn: new Date().toLocaleDateString() } : v);
+  async function markPaid(id) {
+    const today = new Date().toLocaleDateString();
+    const slip = payroll.find(s => s && s.id === id) || (slipView && slipView.id === id ? slipView : null);
+    if (!slip) return;
+    try {
+      const saved = await apiUpdatePayroll(id, { ...slip, status: "paid", paidOn: today });
+      if (!saved) throw new Error("Update failed.");
+      setPayroll(p => p.map(s => (s && s.id === id ? saved : s)));
+      setSlipView(v => v && v.id === id ? saved : v);
+    } catch (e) {
+      console.error("markPaid failed:", e?.message || e);
+      setGenErr(e?.message || String(e));
+    }
   }
 
-  function deleteSlip(id) {
+  async function deleteSlip(id) {
     if (!window.confirm("Delete this salary slip?")) return;
-    setPayroll(p => p.filter(s => s.id !== id));
-    setSlipView(null);
+    setGenErr("");
+    try {
+      await apiDeletePayroll(id);
+      setPayroll(p => p.filter(s => s.id !== id));
+      setSlipView(null);
+    } catch (e) {
+      setGenErr(e?.message || String(e));
+    }
   }
 
   const cur = company.currency || "PKR";

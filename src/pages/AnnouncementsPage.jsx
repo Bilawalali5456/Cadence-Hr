@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { Send, Trash2, Plus } from "lucide-react";
+import { Send, Trash2, Plus, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
 import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
 import { buildAnnouncementNotifications, sendAnnouncementEmails } from "../notifications.js";
 import { Card, Modal, TextInput, Btn } from "../components/ui.jsx";
+import { apiCreateAnnouncement, apiUpdateAnnouncement, apiDeleteAnnouncement } from "../api.js";
 
 export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, users = [], notifications, setNotifications }) {
   const list = (anns || []).filter(a => a && a.id);
@@ -14,23 +15,67 @@ export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, user
   const [addOpen, setAddOpen] = useState(false);
   const [nt, setNt] = useState("");
   const [nb, setNb] = useState("");
+  const [err, setErr] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [et, setEt] = useState("");
+  const [eb, setEb] = useState("");
+  const [edate, setEdate] = useState("");
 
   async function addAnn() {
+    setErr("");
     if (!nt.trim()) return;
     const title = nt.trim();
     const body = nb.trim();
-    setAnns(p => [{ id: "a" + Date.now(), title, body, date: new Date().toLocaleDateString(), author: currentUser.name }, ...p]);
-    const newNotes = buildAnnouncementNotifications(users, title);
-    if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
-    sendAnnouncementEmails(users, { title, body }).catch(e => console.error("Announcement emails failed:", e));
-    setNt("");
-    setNb("");
-    setAddOpen(false);
+    const date = new Date().toLocaleDateString();
+    try {
+      const saved = await apiCreateAnnouncement({ title, body, date, author: currentUser.name });
+      if (!saved) throw new Error("Announcement was not saved.");
+      setAnns(p => [saved, ...p]);
+      const newNotes = buildAnnouncementNotifications(users, title);
+      if (newNotes.length && setNotifications) setNotifications(prev => [...prev, ...newNotes]);
+      sendAnnouncementEmails(users, { title, body }).catch(e => console.error("Announcement emails failed:", e));
+      setNt("");
+      setNb("");
+      setAddOpen(false);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
   }
 
-  function deleteAnn(id) {
+  async function deleteAnn(id) {
     if (!window.confirm("Delete this announcement?")) return;
-    setAnns(p => p.filter(a => a.id !== id));
+    setErr("");
+    try {
+      await apiDeleteAnnouncement(id);
+      setAnns(p => p.filter(a => a.id !== id));
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
+  }
+
+  function openEdit(a) {
+    setErr("");
+    setEditId(a.id);
+    setEt(a.title || "");
+    setEb(a.body || "");
+    setEdate(a.date || new Date().toLocaleDateString());
+    setEditOpen(true);
+  }
+
+  async function saveEdit() {
+    setErr("");
+    if (!editId) return;
+    const title = et.trim();
+    const body = eb.trim();
+    if (!title || !body) return;
+    try {
+      const saved = await apiUpdateAnnouncement(editId, { title, body, date: edate, author: currentUser.name });
+      setAnns(p => p.map(x => (x.id === editId ? saved : x)));
+      setEditOpen(false);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
   }
 
   return (
@@ -48,11 +93,18 @@ export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, user
               <div className="mt-2 text-xs text-slate-400">{a.author} · {a.date}</div>
             </div>
             {canManage && (
-              <button onClick={() => deleteAnn(a.id)}
-                className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
-                title="Delete announcement">
-                <Trash2 size={15} />
-              </button>
+              <div className="flex gap-1 shrink-0">
+                <button onClick={() => openEdit(a)}
+                  className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-slate-700"
+                  title="Edit announcement">
+                  <Pencil size={15} />
+                </button>
+                <button onClick={() => deleteAnn(a.id)}
+                  className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
+                  title="Delete announcement">
+                  <Trash2 size={15} />
+                </button>
+              </div>
             )}
           </div>
         </Card>
@@ -66,10 +118,28 @@ export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, user
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
           </div>
           <p className="text-xs text-slate-400">All active employees and managers will be notified by email and in-app alert.</p>
+          {err ? <div className="text-xs text-red-600">{err}</div> : null}
         </div>
         <div className="flex gap-2 mt-4">
           <Btn onClick={addAnn}><Send size={14} />Publish</Btn>
           <Btn variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit announcement">
+        <div className="space-y-3">
+          <TextInput label="Title" value={et} onChange={setEt} required placeholder="Announcement title" />
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Message</label>
+            <textarea value={eb} onChange={e => setEb(e.target.value)} rows={4} placeholder="Message body…"
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
+          </div>
+          <p className="text-xs text-slate-400">Published date: {edate}</p>
+          {err ? <div className="text-xs text-red-600">{err}</div> : null}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <Btn onClick={saveEdit}><Pencil size={14} />Save</Btn>
+          <Btn variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Btn>
         </div>
       </Modal>
     </div>

@@ -3,6 +3,7 @@ import { Calendar, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react"
 import { B } from "../brand.jsx";
 import { isHrAdminRole, isExecutiveRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear, filterValidHolidays, normalizeHolidayType } from "../utils.js";
 import { Pill, Card, STitle, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
+import { apiCreateHoliday, apiDeleteHoliday } from "../api.js";
 
 const TYPE_OPTIONS = [
   { value: "public", label: "Public Holiday" },
@@ -160,28 +161,42 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
     setOpen(true);
   }
 
-  function saveHoliday() {
+  async function saveHoliday() {
+    setFerr("");
     if (!form.title.trim()) { setFerr("Holiday title is required."); return; }
     if (!form.date) { setFerr("Date is required."); return; }
     if (safeHolidays.some(h => h.date === form.date && h.title.toLowerCase() === form.title.trim().toLowerCase())) {
       setFerr("A holiday with this title and date already exists.");
       return;
     }
-    setHolidays(prev => [
-      ...filterValidHolidays(prev),
-      {
-        id: "hol-" + Date.now(),
-        title: form.title.trim(),
-        date: form.date,
-        type: normalizeHolidayType(form.type),
-      },
-    ]);
-    setOpen(false);
+    const payload = {
+      id: "hol-" + Date.now(),
+      title: form.title.trim(),
+      date: form.date,
+      type: normalizeHolidayType(form.type),
+    };
+    try {
+      const saved = await apiCreateHoliday(payload);
+      if (!saved) throw new Error("Holiday was not saved.");
+      setHolidays(prev => [
+        ...filterValidHolidays(prev).filter(h => h.id !== saved.id),
+        saved,
+      ]);
+      setOpen(false);
+    } catch (e) {
+      setFerr(e?.message || String(e));
+    }
   }
 
-  function deleteHoliday(id) {
+  async function deleteHoliday(id) {
     if (!window.confirm("Delete this holiday?")) return;
-    setHolidays(prev => filterValidHolidays(prev).filter(h => h.id !== id));
+    setFerr("");
+    try {
+      await apiDeleteHoliday(id);
+      setHolidays(prev => filterValidHolidays(prev).filter(h => h.id !== id));
+    } catch (e) {
+      setFerr(e?.message || String(e));
+    }
   }
 
   function shiftMonth(delta) {

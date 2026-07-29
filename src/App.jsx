@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiSave, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, applyAutoCheckouts } from "./utils.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
+import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -94,10 +94,6 @@ export default function App() {
     ignoreSyncUntilRef.current = Date.now() + 800;
   }
 
-  function shouldSkipSync() {
-    return !loadedRef.current || Date.now() < ignoreSyncUntilRef.current;
-  }
-
   /** Refresh only the collections needed for the active tab (no full page reload). */
   async function refreshModule(routeId) {
     const key = routeId || "home";
@@ -184,23 +180,27 @@ export default function App() {
     apiBootstrap()
       .then(async d => {
         markRemoteApply();
-        setUsers(d.users || []);
-        setAttendance(sanitizeAttendance(d.attendance));
-        setLeaveRequests(sanitizeLeaveRequests(d.leave));
-        setShortLeaveRequests(sanitizeShortLeaveRequests(d.shortLeave));
-        setAnnouncements(sanitizeAnnouncements(d.announcements));
-        setPayroll(d.payroll || []);
-        setPolicies(d.policies || []);
-        setAssets(d.assets || []);
-        setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
-        setNotifications(sanitizeNotifications(d.notifications));
-        setWarnings(sanitizeWarnings(d.warnings));
-        setRoles(d.roles || []);
         setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
+        setRoles(d.roles || []);
+        setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
+        setUsers(d.currentUser ? [d.currentUser] : []);
         loadedRef.current = true;
         setDbStatus("ready");
         const s = loadSession();
-        if (s?.token) await refreshModule("home");
+        if (s?.token) {
+          try {
+            const [us, notifs] = await Promise.all([
+              apiFetchUsers(),
+              apiFetchNotifications(),
+            ]);
+            markRemoteApply();
+            setUsers(us);
+            setNotifications(sanitizeNotifications(notifs));
+          } catch (e) {
+            console.error("Post-bootstrap hydrate failed:", e);
+          }
+          await refreshModule("home");
+        }
       })
       .catch(e => {
         console.error("Database connection failed:", e);
@@ -224,49 +224,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [route, session?.token, dbStatus]);
 
-  /* ── Sync each collection to PostgreSQL when it changes ── */
-  function actorIsHrAdmin() {
-    const actor = users.find(u => u.id === session?.userId);
-    return isHrAdminRole(actor?.role);
-  }
-
-  async function persistCollection(collection, data, { hrOnly = false } = {}) {
-    if (shouldSkipSync()) return;
-    if (hrOnly && !actorIsHrAdmin()) return;
-    const result = await apiSave(collection, data);
-    if (result && !result.ok) {
-      setSyncBanner(`Could not save ${collection}: ${result.error}`);
-    }
-  }
-
-  useEffect(() => {
-    if (shouldSkipSync() || !actorIsHrAdmin()) return;
-    let cancelled = false;
-    (async () => {
-      await persistCollection("users", users, { hrOnly: true });
-      if (cancelled) return;
-      const hasPlain = users.some(u => {
-        const p = u?.password;
-        return p && !String(p).startsWith("$2a$") && !String(p).startsWith("$2b$");
-      });
-      if (!hasPlain) return;
-      setUsers(us => us.map(u => {
-        const p = u?.password;
-        if (!p || String(p).startsWith("$2a$") || String(p).startsWith("$2b$")) return u;
-        const { password, tempPassword, ...rest } = u;
-        return rest;
-      }));
-    })();
-    return () => { cancelled = true; };
-  }, [users]);
-  useEffect(() => { persistCollection("attendance", attendance, { hrOnly: true }); }, [attendance]);
-  // Payroll is persisted via granular REST endpoints (no bulk wipe).
-  // Policies are persisted via granular REST endpoints (no bulk wipe).
-  // Assets are persisted via granular REST endpoints (no bulk wipe).
-  // Holidays are persisted via granular REST endpoints (no bulk wipe).
-  useEffect(() => { persistCollection("notifications", notifications); }, [notifications]);
-  // Warnings are persisted via granular REST endpoints (no bulk wipe).
-  useEffect(() => { persistCollection("company", company, { hrOnly: true }); }, [company]);
+  /* ── Bulk sync disabled: all modules persist via granular REST endpoints ── */
 
   useEffect(() => {
     if (!loadedRef.current) return;

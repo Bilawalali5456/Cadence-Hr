@@ -6,6 +6,7 @@ import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
+import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance } from "../api.js";
 
 function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
@@ -161,6 +162,19 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiFetchAttendance({ month });
+        if (cancelled) return;
+        setAttendance(list);
+      } catch (e) {
+        console.error("Failed to fetch attendance month:", e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [month, setAttendance]);
+  useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
@@ -181,26 +195,38 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
   );
 
-  function changeShortStatus(id, newStatus) {
+  async function changeShortStatus(id, newStatus) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canChangeShortLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
-    if (newStatus === "approved" && prev !== "approved") {
-      setAttendance(a => applyApprovedShortLeave(a, users, req));
+    const patch = buildApprovalDecision(currentUser, newStatus);
+    const nextReq = { ...req, ...patch, status: newStatus };
+    try {
+      await apiUpdateShortLeaveRequest(id, nextReq);
+      if (newStatus === "approved" && prev !== "approved") {
+        setAttendance(a => applyApprovedShortLeave(a, users, req));
+      }
+      if (prev === "approved" && newStatus !== "approved") {
+        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      }
+      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      console.error("Short leave approval persist failed:", e.message || e);
     }
-    if (prev === "approved" && newStatus !== "approved") {
-      setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    }
-    setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
-  function deleteShort(id) {
+  async function deleteShort(id) {
     const req = shortLeaveRequests.find(r => r.id === id);
     if (!req || !canDeleteShortLeaveRecord(currentUser, req, users, roles)) return;
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
-    if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    try {
+      await apiDeleteShortLeaveRequest(id);
+      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+    } catch (e) {
+      console.error("Short leave delete failed:", e.message || e);
+    }
   }
 
   const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && !effectiveCheckOut(r, u, r?.date || todayKey()); });
@@ -239,6 +265,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
         attendance={attendance}
         setAttendance={setAttendance}
         holidays={holidays}
+        persistAttendance={(updatedRecord) => apiUpdateAttendance(updatedRecord.id, updatedRecord)}
       />
       {isExecutiveRole(currentUser.role) && (
         <HrAdminOversightPanel

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Briefcase, Search, UserPlus, Trash2, Edit2, User, Save, Phone, Mail, RefreshCw, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
-import { apiSendCredentials, apiDeleteEmployee, purgeEmployeeClientState } from "../api.js";
+import { apiSendCredentials, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser } from "../api.js";
 import { todayKey, genId, genTempPw } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, SelectInput, PwInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
@@ -72,8 +72,10 @@ export function ExecutivesPage({
     setEmailSending(true);
     setFerr("");
     setPageErr("");
-    setUsers(p => [...p, newUser]);
     try {
+      const created = await apiCreateUser(newUser);
+      setUsers(p => [...p, created.user]);
+
       console.log(`[executives] Sending welcome credentials to ${email}`);
       await apiSendCredentials({
         to: email,
@@ -95,19 +97,24 @@ export function ExecutivesPage({
     }
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!form.name.trim() || !form.email.trim()) { setFerr("Full name and email are required."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already in use."); return; }
-    setUsers(p => p.map(u => u.id === editTgt.id ? {
-      ...u,
-      name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim(),
-      title: form.title,
-      status: form.status,
-      ...(form.password ? { password: form.password, firstLogin: false, tempPassword: undefined } : {}),
-    } : u));
-    setEditOpen(false);
+    try {
+      const patch = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        title: form.title,
+        status: form.status,
+        ...(form.password ? { password: form.password, firstLogin: false } : {}),
+      };
+      const updated = await apiUpdateUser(editTgt.id, patch);
+      setUsers(p => p.map(u => u.id === editTgt.id ? updated.user : u));
+      setEditOpen(false);
+    } catch (e) {
+      setFerr(e.message || "Failed to update executive");
+    }
   }
 
   function toggleStatus(u) {
@@ -134,26 +141,29 @@ export function ExecutivesPage({
     }
   }
 
-  function doPasswordReset() {
+  async function doPasswordReset() {
     const tempPw = genTempPw();
     setEmailSending(true);
     setResetResult("");
-    setUsers(p => p.map(u => u.id === resetTgt.id ? { ...u, password: tempPw, firstLogin: true, tempPassword: tempPw } : u));
-    apiSendCredentials({
-      to: resetTgt.email,
-      name: resetTgt.name,
-      email: resetTgt.email,
-      password: tempPw,
-      role: "Executive",
-      isReset: true,
-    })
-      .then(() => {
-        setResetResult(`A new temporary password was emailed to ${resetTgt.email}.`);
-      })
-      .catch(e => {
-        setResetResult(`Password was reset, but the email could not be sent: ${e.message}`);
-      })
-      .finally(() => setEmailSending(false));
+    try {
+      const updated = await apiUpdateUser(resetTgt.id, { password: tempPw, firstLogin: true });
+      setUsers(p => p.map(u => u.id === resetTgt.id ? updated.user : u));
+
+      await apiSendCredentials({
+        to: resetTgt.email,
+        name: resetTgt.name,
+        email: resetTgt.email,
+        password: tempPw,
+        role: "Executive",
+        isReset: true,
+      });
+
+      setResetResult(`A new temporary password was emailed to ${resetTgt.email}.`);
+    } catch (e) {
+      setResetResult(`Password was reset, but the email could not be sent: ${e.message || e}`);
+    } finally {
+      setEmailSending(false);
+    }
   }
 
   return (

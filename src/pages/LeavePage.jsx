@@ -5,6 +5,7 @@ import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRe
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
+import { apiCreateLeaveRequest, apiUpdateLeaveRequest, apiDeleteLeaveRequest, apiUpdateUser } from "../api.js";
 
 export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications }) {
   const [form, setForm] = useState({ type: "Annual", from: "", to: "", note: "" });
@@ -21,15 +22,20 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
   const visibleReqs = visibleLeaveRequests(requests, currentUser, users, roles);
   const listHasApprovals = visibleReqs.some(r => canChangeLeaveRequestStatus(currentUser, r, users, roles));
 
-  function adjustBalance(userId, type, delta) {
+  async function adjustBalanceAndPersist(userId, type, delta) {
     if (type === "Unpaid" || type === "WFH" || delta === 0) return;
-    setUsers(us => us.map(u => {
-      if (u.id !== userId) return u;
-      return { ...u, leaveBalance: Math.max(0, (u.leaveBalance ?? DEFAULT_ANNUAL_LEAVE) + delta) };
-    }));
+    const current = users.find(u => u.id === userId)?.leaveBalance ?? DEFAULT_ANNUAL_LEAVE;
+    const next = Math.max(0, current + delta);
+    setUsers(us => us.map(u => (u.id === userId ? { ...u, leaveBalance: next } : u)));
+    try {
+      await apiUpdateUser(userId, { leaveBalance: next });
+    } catch (e) {
+      // If permissions don’t allow direct user updates yet, we rely on existing App sync.
+      console.error("Persist leaveBalance failed:", e.message || e);
+    }
   }
 
-  function submitLeave() {
+  async function submitLeave() {
     if (!form.from || !form.to) { setMsg("error:Please select both From and To dates."); return; }
     const days = countWorkingDaysInclusive(form.from, form.to);
     if (days <= 0) {
@@ -40,7 +46,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     const warn = split.unpaidDays > 0
       ? `warn:You have insufficient leave balance. ${split.unpaidDays} day${split.unpaidDays !== 1 ? "s" : ""} will be deducted from your salary as unpaid leave.`
       : "";
-    setRequests(p => [...p, {
+    const payload = {
       id: "l" + Date.now(),
       userId: currentUser.id,
       empName: currentUser.name,
@@ -54,33 +60,53 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
       payTag: split.payTag,
       status: "pending",
       submitted: new Date().toLocaleDateString(),
-    }]);
-    setForm({ type: "Annual", from: "", to: "", note: "" });
-    setMsg(warn || (isHrAdminRole(currentUser.role)
-      ? "ok:Leave request submitted for executive approval."
-      : "ok:Leave request submitted."));
-    setTimeout(() => setMsg(""), 6000);
+    };
+    try {
+      await apiCreateLeaveRequest(payload);
+      setRequests(p => [...p, payload]);
+      setForm({ type: "Annual", from: "", to: "", note: "" });
+      setMsg(warn || (isHrAdminRole(currentUser.role)
+        ? "ok:Leave request submitted for executive approval."
+        : "ok:Leave request submitted."));
+      setTimeout(() => setMsg(""), 6000);
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
+    }
   }
 
-  function changeStatus(id, newStatus) {
+  async function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
     if (!req || !canChangeLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
     const paid = leavePaidDays(req);
-    if (newStatus === "approved" && prev !== "approved") adjustBalance(req.userId, req.type, -paid);
-    if (prev === "approved" && newStatus !== "approved")  adjustBalance(req.userId, req.type, +paid);
+    const patch = buildApprovalDecision(currentUser, newStatus);
+    const nextReq = { ...req, ...patch, status: newStatus };
     const note = buildLeaveStatusNotification(req, newStatus);
     if (note && setNotifications) setNotifications(prev => [...prev, note]);
-    setRequests(p => p.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
+
+    try {
+      if (newStatus === "approved" && prev !== "approved") await adjustBalanceAndPersist(req.userId, req.type, -paid);
+      if (prev === "approved" && newStatus !== "approved")  await adjustBalanceAndPersist(req.userId, req.type, +paid);
+
+      await apiUpdateLeaveRequest(id, nextReq);
+      setRequests(p => p.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
+    }
   }
 
-  function deleteRequest(id) {
+  async function deleteRequest(id) {
     const req = requests.find(r => r.id === id);
     if (!req || !canDeleteLeaveRecord(currentUser, req, users, roles)) return;
     if (!window.confirm(`Delete this leave request from ${req.empName}?`)) return;
-    if (req.status === "approved") adjustBalance(req.userId, req.type, +leavePaidDays(req));
-    setRequests(p => p.filter(r => r.id !== id));
+    try {
+      await apiDeleteLeaveRequest(id);
+      if (req.status === "approved") await adjustBalanceAndPersist(req.userId, req.type, +leavePaidDays(req));
+      setRequests(p => p.filter(r => r.id !== id));
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
+    }
   }
 
   return (

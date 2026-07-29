@@ -17,6 +17,7 @@ export function AttendanceCorrectionModal({
   attendance,
   setAttendance,
   holidays = [],
+  persistAttendance,
 }) {
   const [checkInTime, setCheckInTime] = useState("");
   const [checkOutTime, setCheckOutTime] = useState("");
@@ -38,7 +39,7 @@ export function AttendanceCorrectionModal({
 
   if (!open || !target || !user) return null;
 
-  function save() {
+  async function save() {
     setErr("");
     const result = applyAttendanceCorrection(
       attendance,
@@ -53,8 +54,16 @@ export function AttendanceCorrectionModal({
       setErr(result.error);
       return;
     }
-    setAttendance(result.attendance);
-    onClose();
+    try {
+      const updated = result.attendance.find(r => r && r.userId === user.id && r.date === dateKey);
+      if (persistAttendance && updated) {
+        await persistAttendance(updated);
+      }
+      setAttendance(result.attendance);
+      onClose();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
   }
 
   return (

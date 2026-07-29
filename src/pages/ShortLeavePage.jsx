@@ -4,6 +4,7 @@ import { B } from "../brand.jsx";
 import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
+import { apiCreateShortLeaveRequest, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest } from "../api.js";
 
 export function ShortLeavePage({ currentUser, requests = [], setRequests, users, attendance, setAttendance, roles }) {
   const [form, setForm] = useState({ date: todayKey(), from: "", to: "", reason: "" });
@@ -12,29 +13,41 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
   const visibleReqs = visibleShortLeaveRequests(requests, currentUser, users, roles);
   const listHasApprovals = visibleReqs.some(r => canChangeShortLeaveRequestStatus(currentUser, r, users, roles));
 
-  function changeStatus(id, newStatus) {
+  async function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
     if (!req || !canChangeShortLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
-    if (newStatus === "approved" && prev !== "approved") {
-      setAttendance(a => applyApprovedShortLeave(a, users, req));
+    const patch = buildApprovalDecision(currentUser, newStatus);
+    const nextReq = { ...req, ...patch, status: newStatus };
+    try {
+      await apiUpdateShortLeaveRequest(id, nextReq);
+      if (newStatus === "approved" && prev !== "approved") {
+        setAttendance(a => applyApprovedShortLeave(a, users, req));
+      }
+      if (prev === "approved" && newStatus !== "approved") {
+        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      }
+      setRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
     }
-    if (prev === "approved" && newStatus !== "approved") {
-      setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    }
-    setRequests(rs => rs.map(r => r.id === id ? { ...r, ...buildApprovalDecision(currentUser, newStatus) } : r));
   }
 
-  function deleteRequest(id) {
+  async function deleteRequest(id) {
     const req = requests.find(r => r.id === id);
     if (!req || !canDeleteShortLeaveRecord(currentUser, req, users, roles)) return;
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
-    if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-    setRequests(rs => rs.filter(r => r.id !== id));
+    try {
+      await apiDeleteShortLeaveRequest(id);
+      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
+      setRequests(rs => rs.filter(r => r.id !== id));
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
+    }
   }
 
-  function submit() {
+  async function submit() {
     if (!form.date || !form.from || !form.to) {
       setMsg("error:Please select date, start time, and end time.");
       return;
@@ -49,7 +62,13 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
       setMsg("error:" + built.error);
       return;
     }
-    setRequests(p => [...p, built.request]);
+    try {
+      await apiCreateShortLeaveRequest(built.request);
+      setRequests(p => [...p, built.request]);
+    } catch (e) {
+      setMsg(`error:${e.message || e}`);
+      return;
+    }
     setForm({ date: todayKey(), from: "", to: "", reason: "" });
     setMsg(isHrAdminRole(currentUser.role)
       ? "ok:Short leave request submitted. An executive will review it."
