@@ -434,14 +434,14 @@ export function isAttendanceDayClosed(dateKey, now = new Date()) {
 
 export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
   if (isAttendanceDayClosed(dateKey, now)) return true;
-  return hasShiftEnded(user, dateKey, now);
+  return isAutoCheckoutDue(user, dateKey, now);
 }
 
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
   if (!record?.checkIn) return false;
   if (record.manuallyCorrected) return false;
-  // During active shift, ignore premature check-out from biometric sync
-  if (!hasShiftEnded(user, dateKey, now) && !isAttendanceDayClosed(dateKey, now)) return true;
+  // Until shift end + 30 min, treat as in progress (ignore premature check-out)
+  if (!shouldFinalizeAttendance(user, dateKey, now)) return true;
   if (record.checkOut) return false;
   if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
   return false;
@@ -565,8 +565,14 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  // Before shift end on an open attendance day, employee is still working.
-  // Never keep "Working" after the Karachi calendar day has closed.
+  // Working until shift end + 30 min (or day closed) — never finalize mid-shift.
+  if (!shouldFinalizeAttendance(user, dateKey, currentTime)) return "Working";
+
+  if (record.autoCheckout) return "Auto Checkout";
+
+  const late = isLateCheckIn(record.checkIn, user, holidays);
+  if (!record.checkOut) return "Missing Checkout";
+
   const shift = getUserShift(user, dateKey);
   let employeeShiftEndTime = bounds.end;
   if (!shift.off && shift.shiftEnd) {
@@ -579,19 +585,12 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
       }
     }
   }
-  const dayOpen = !isAttendanceDayClosed(dateKey, currentTime);
-  if (dayOpen && employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
 
-  const late = isLateCheckIn(record.checkIn, user, holidays);
-  if (!record.checkOut) {
-    return shouldFinalizeAttendance(user, dateKey, currentTime) ? "Missing Checkout" : (late ? "Late" : "Present");
-  }
-
+  // Early Leave beats Late when both apply.
+  if (employeeShiftEndTime && new Date(record.checkOut) < employeeShiftEndTime) return "Early Leave";
+  if (late) return "Late";
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
-  if (late) return "Late";
-  if (dayOpen && employeeShiftEndTime && currentTime < employeeShiftEndTime) return "Working";
-  if (employeeShiftEndTime && new Date(record.checkOut) < employeeShiftEndTime) return "Early Leave";
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
 }
@@ -628,7 +627,7 @@ export function effectiveCheckOut(record, user, dateKey = record?.date || todayK
 }
 
 export function dayStatusPill(status, record = null) {
-  if (record?.autoCheckout) return { tone: "yellow", label: "Auto Checkout" };
+  if (record?.autoCheckout || status === "Auto Checkout") return { tone: "yellow", label: "Auto Checkout" };
   const map = {
     Present: { tone: "green", label: "Present" },
     Working: { tone: "blue", label: "Working" },
@@ -637,6 +636,7 @@ export function dayStatusPill(status, record = null) {
     "Early Leave": { tone: "red", label: "Early Leave" },
     "Short Hours": { tone: "orange", label: "Short Hours" },
     "Missing Checkout": { tone: "red-outline", label: "Missing Checkout" },
+    "Auto Checkout": { tone: "yellow", label: "Auto Checkout" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
     Off: { tone: "slate", label: "Off" },
