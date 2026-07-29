@@ -19,6 +19,9 @@ import { registerHolidaysRoutes } from "./routes/holidays.js";
 import { registerPoliciesRoutes } from "./routes/policies.js";
 import { registerAssetsRoutes } from "./routes/assets.js";
 import { registerWarningsRoutes } from "./routes/warnings.js";
+import { registerShiftsRoutes } from "./routes/shifts.js";
+import { registerCompanyRoutes } from "./routes/company.js";
+import { registerRolesRoutes } from "./routes/roles.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -277,7 +280,7 @@ const warningToJs = (r) => ({
   acknowledged: !!r.acknowledged,
 });
 
-/* ─── GET /api/bootstrap — shell data for first paint ─── */
+/* ─── GET /api/bootstrap — lightweight shell data for first paint ─── */
 app.get("/api/bootstrap", async (req, res) => {
   try {
     const token = extractSessionToken(req);
@@ -289,42 +292,24 @@ app.get("/api/bootstrap", async (req, res) => {
       }
     }
 
-    const usersPromise = actor
-      ? HR_ADMIN_ROLES.includes(actor.role)
-        ? pool.query("SELECT * FROM users ORDER BY name")
-        : pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [actor.id])
+    const currentUserPromise = actor
+      ? pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [actor.id])
       : Promise.resolve({ rows: [] });
 
-    const [users, roles, company, holidays, shifts, notifications] = await Promise.all([
-      usersPromise,
+    const [currentUserRow, roles, company, holidays, shifts] = await Promise.all([
+      currentUserPromise,
       pool.query("SELECT * FROM roles ORDER BY name"),
       pool.query("SELECT * FROM company_settings WHERE id = 1"),
       pool.query("SELECT * FROM holidays ORDER BY date"),
       pool.query("SELECT * FROM shifts ORDER BY name"),
-      actor
-        ? pool.query(
-            "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 100",
-            [actor.id]
-          )
-        : Promise.resolve({ rows: [] }),
     ]);
 
-    // Heavy collections load via per-module GET on tab open / refreshModule
     res.json({
-      users: users.rows.map(userToSafeJs),
-      attendance: [],
-      leave: [],
-      shortLeave: [],
-      announcements: [],
-      payroll: [],
+      currentUser: currentUserRow.rows[0] ? userToSafeJs(currentUserRow.rows[0]) : null,
       company: company.rows[0] ? companyToJs(company.rows[0]) : {},
-      policies: [],
-      assets: [],
       roles: roles.rows.map(roleToJs),
       holidays: holidays.rows.map(holidayToJs),
       shifts: shifts.rows.map(shiftToJs),
-      notifications: notifications.rows.map(notificationToJs),
-      warnings: [],
       actor: actor ? { id: actor.id, role: actor.role, name: actor.name, email: actor.email } : null,
     });
   } catch (e) {
@@ -375,17 +360,9 @@ app.get("/api/short-leave", requireAuth, async (req, res) => {
 
 // Warnings module: served by server/routes/warnings.js
 
-app.get("/api/company", requireAuth, async (_req, res) => {
-  try {
-    const { rows } = await pool.query("SELECT * FROM company_settings WHERE id = 1");
-    res.json(rows[0] ? companyToJs(rows[0]) : {});
-  } catch (e) {
-    console.error("GET /api/company error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// Company module: served by server/routes/company.js
 
-/* ─── Full-collection sync endpoints ─── */
+/* ─── Full-collection sync endpoints (legacy — being phased out) ─── */
 async function replaceAll(table, rows, insertFn) {
   const client = await pool.connect();
   try {
@@ -743,40 +720,7 @@ app.put("/api/payroll", requireHrAdmin, async (req, res) => {
   }
 });
 
-app.put("/api/company", requireHrAdmin, async (req, res) => {
-  try {
-    const c = req.body;
-    await pool.query(
-      `INSERT INTO company_settings (id, office_start, grace_minutes, currency)
-       VALUES (1, $1, $2, $3)
-       ON CONFLICT (id) DO UPDATE SET office_start = $1, grace_minutes = $2, currency = $3`,
-      [c.officeStart || "09:00", c.graceMinutes ?? 15, c.currency || "PKR"]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("company sync error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.put("/api/policies", requireHrAdmin, async (req, res) => {
-  try {
-    await replaceAll("policies", req.body, (c, p) =>
-      c.query(
-        `INSERT INTO policies (id, title, category, body, version, updated_at, updated_by, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [
-          p.id, p.title, p.category || "General", p.body || "",
-          p.version ?? 1, p.updatedAt || "", p.updatedBy || "", p.createdAt || "",
-        ]
-      )
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("policies sync error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+// Legacy bulk PUT endpoints below are deprecated; granular REST routes take precedence when registered last.
 
 app.put("/api/assets", requireAuth, async (req, res) => {
   try {
@@ -873,30 +817,6 @@ app.put("/api/holidays", requireHrAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("holidays sync error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.put("/api/shifts", requireHrAdmin, async (req, res) => {
-  try {
-    await replaceAll("shifts", req.body, (c, s) =>
-      c.query(
-        `INSERT INTO shifts (id, name, grace_minutes, break_minutes, checkout_grace_minutes, weekly_schedule, is_default)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [
-          s.id,
-          s.name,
-          s.graceMinutes ?? 15,
-          s.breakMinutes ?? 60,
-          s.checkoutGraceMinutes ?? 10,
-          JSON.stringify(s.weeklySchedule || {}),
-          s.isDefault === true,
-        ]
-      )
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("shifts sync error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1013,6 +933,9 @@ registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin);
 registerPoliciesRoutes(app, pool, requireAuth, requireHrAdmin);
 registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin);
 registerWarningsRoutes(app, pool, requireAuth, requireHrAdmin);
+registerShiftsRoutes(app, pool, requireAuth, requireHrAdmin);
+registerCompanyRoutes(app, pool, requireAuth, requireHrAdmin);
+registerRolesRoutes(app, pool, requireAuth, requireHrAdmin);
 registerUsersRoutes(app, pool, requireAuth, requireHrAdmin);
 
 /* ─── Production: serve built frontend ─── */

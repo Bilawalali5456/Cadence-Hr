@@ -348,6 +348,59 @@ export async function apiFetchCompany() {
   return data && typeof data === "object" ? data : {};
 }
 
+export async function apiUpdateCompany(patch) {
+  const res = await apiFetch(`${API_URL}/company`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update company failed (${res.status})`);
+  return body.company || patch;
+}
+
+export async function apiFetchShifts() {
+  const data = await apiGetJson("/shifts");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateShift(data) {
+  const res = await apiFetch(`${API_URL}/shifts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create shift failed (${res.status})`);
+  return body.shift || null;
+}
+
+export async function apiUpdateShift(id, patch) {
+  const res = await apiFetch(`${API_URL}/shifts/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update shift failed (${res.status})`);
+  return body.shift || null;
+}
+
+export async function apiDeleteShift(id) {
+  const res = await apiFetch(`${API_URL}/shifts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete shift failed (${res.status})`);
+  return true;
+}
+
+export async function apiFetchRoles() {
+  const data = await apiGetJson("/roles");
+  return Array.isArray(data) ? data : [];
+}
+
 export async function apiCreateUser(userData) {
   const res = await apiFetch(`${API_URL}/users`, {
     method: "POST",
