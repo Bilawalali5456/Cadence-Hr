@@ -104,7 +104,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
     if (!employeeId) { setErr("Select an employee to map."); return; }
     setErr("");
     try {
-      await apiBiometricMap(pin, employeeId);
+      await apiBiometricMap(null, pin, employeeId);
       await apiBiometricProcess();
       if (setAttendance) {
         const att = await apiRefreshAttendance();
@@ -121,7 +121,7 @@ export function BiometricPage({ currentUser, users, setAttendance }) {
   async function handleUnmap(pin, deviceSerial) {
     if (!window.confirm(`Remove mapping for PIN ${pin}?`)) return;
     try {
-      await apiBiometricUnmap(pin, deviceSerial || device?.serial_number);
+      await apiBiometricUnmap(null, pin, deviceSerial || device?.serial_number);
       setOk(`Mapping removed for PIN ${pin}.`);
       setTimeout(() => setOk(""), 4000);
       load();
