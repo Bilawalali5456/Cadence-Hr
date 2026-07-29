@@ -201,7 +201,7 @@ export function getAttendanceDay(scanTime, user) {
   if (!todayShift.off && todayShift.shiftStart) {
     const todayShiftStart = shiftDateTime(scanDate, todayShift.shiftStart);
     if (todayShiftStart) {
-      const earliestAllowed = new Date(todayShiftStart.getTime() - 60 * 60 * 1000);
+      const earliestAllowed = new Date(todayShiftStart.getTime() - 2 * 60 * 60 * 1000);
       // Too early for today: only reassign when yesterday was overnight so normal
       // day-shift early scans (e.g. 7 AM before 9 AM) are not pulled backward.
       if (scanTime < earliestAllowed && isOvernightShift(user, prevDate)) {
@@ -379,7 +379,7 @@ export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
   let validScans = sorted;
   if (!shift.off && shift.shiftStart) {
     const shiftStart = shiftDateTime(dateKey, shift.shiftStart);
-    const earliestAllowed = new Date(shiftStart.getTime() - 60 * 60 * 1000);
+    const earliestAllowed = new Date(shiftStart.getTime() - 2 * 60 * 60 * 1000);
     validScans = sorted.filter(scan => {
       const scanTime = parseZktTime(scan.punch_time_local || scan.punch_time);
       return scanTime && scanTime >= earliestAllowed;
