@@ -43,7 +43,7 @@ export function PeoplePage({
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
-    graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 10,
+    graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 20,
     weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
   };
   const [form, setForm] = useState(blank);

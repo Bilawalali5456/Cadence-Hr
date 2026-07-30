@@ -229,7 +229,7 @@ ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, permissions = EXCLUDED.perm
 -- Seed default admin (only if users table is empty)
 INSERT INTO users (id, name, email, password, role, title, dept, team, type, hired, status, leave_balance, sick_balance, first_login, shift)
 SELECT 'u-admin', 'Admin', 'admin@adforce.com', 'Admin@123', 'HR Admin', 'HR Administrator', 'Management', 'HQ', 'Full-time', '2024-01-01', 'active', 24, 0, false,
-  '{"shiftStart":"09:00","shiftEnd":"18:00","graceMinutes":15,"breakMinutes":60,"checkoutGraceMinutes":10}'::jsonb
+  '{"shiftStart":"09:00","shiftEnd":"18:00","graceMinutes":15,"breakMinutes":60,"checkoutGraceMinutes":20}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM users);
 
 -- Migrate existing databases to new leave/weekend policy columns

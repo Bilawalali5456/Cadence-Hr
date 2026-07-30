@@ -124,7 +124,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         ) : (
           <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-            <b>Your shift today:</b> {formatShiftRange(user, key)} · Grace {shift.graceMinutes}m · Break allowance {shift.breakMinutes}m · Checkout by {formatTime(bounds.checkoutDeadline.toISOString())}
+            <b>Your shift today:</b> {formatShiftRange(user, key)} · Late grace {shift.graceMinutes}m · Checkout grace {shift.checkoutGraceMinutes ?? 20}m · Break {shift.breakMinutes}m · Checkout window until {formatTime(bounds.checkoutDeadline.toISOString())}
           </div>
         )}
         <ErrBox msg={err} />

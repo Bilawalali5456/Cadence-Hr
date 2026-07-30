@@ -248,7 +248,7 @@ const shiftToJs = (r) => ({
   name: r.name,
   graceMinutes: r.grace_minutes ?? 15,
   breakMinutes: r.break_minutes ?? 60,
-  checkoutGraceMinutes: r.checkout_grace_minutes ?? 10,
+  checkoutGraceMinutes: r.checkout_grace_minutes ?? 20,
   weeklySchedule: r.weekly_schedule || {},
   isDefault: r.is_default === true,
 });

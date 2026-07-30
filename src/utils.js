@@ -247,7 +247,7 @@ export const DEFAULT_SHIFT = {
   shiftEnd: "18:00",
   graceMinutes: 15,
   breakMinutes: 60,
-  checkoutGraceMinutes: 10,
+  checkoutGraceMinutes: 20,
   weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
 };
 
@@ -396,18 +396,32 @@ export function shiftDateTime(dateKey, hhmm) {
   return iso ? new Date(iso) : new Date(NaN);
 }
 
+function addDaysToDateKey(dateKey, delta) {
+  const [y, m, d] = String(dateKey || "").slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const utc = Date.UTC(y, m - 1, d) + delta * 86400000;
+  const dt = new Date(utc);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
 export function getShiftBounds(user, dateKey) {
   const s = getUserShift(user, dateKey);
   if (s.off) {
-    return { start: null, end: null, lateCutoff: null, checkoutDeadline: null, ...s };
+    return { start: null, end: null, lateCutoff: null, checkoutDeadline: null, earlyLeaveCutoff: null, ...s };
   }
   const start = shiftDateTime(dateKey, s.shiftStart);
   let end = shiftDateTime(dateKey, s.shiftEnd);
   // Overnight shifts (e.g. 16:00 → 01:00): end is next calendar day
   if (end <= start) end = new Date(end.getTime() + 86400000);
   const lateCutoff = new Date(start.getTime() + s.graceMinutes * 60000);
-  const checkoutDeadline = new Date(end.getTime() + s.checkoutGraceMinutes * 60000);
-  return { start, end, lateCutoff, checkoutDeadline, ...s };
+  const graceMs = (s.checkoutGraceMinutes ?? 20) * 60000;
+  // Early Leave: checkout before (shift end − grace) counts as Early Leave
+  const earlyLeaveCutoff = new Date(end.getTime() - graceMs);
+  // Biometric/portal checkout window closes at 05:00 AM PKT next morning
+  const nextKey = addDaysToDateKey(dateKey, 1);
+  const checkoutDeadline = shiftDateTime(nextKey, "05:00");
+  return { start, end, lateCutoff, checkoutDeadline, earlyLeaveCutoff, ...s };
 }
 
 export function hasShiftEnded(user, dateKey, now = new Date()) {
@@ -440,11 +454,8 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
   if (!record?.checkIn) return false;
   if (record.manuallyCorrected) return false;
-  // Until shift end + 30 min, treat as in progress (ignore premature check-out)
-  if (!shouldFinalizeAttendance(user, dateKey, now)) return true;
-  if (record.checkOut) return false;
-  if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
-  return false;
+  // Until shift end + 30 min: in progress. After finalize: closed (even Missing Checkout).
+  return !shouldFinalizeAttendance(user, dateKey, now);
 }
 
 export function formatShiftRange(user, dateKey = todayKey()) {
@@ -568,26 +579,12 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   // Working until shift end + 30 min (or day closed) — never finalize mid-shift.
   if (!shouldFinalizeAttendance(user, dateKey, currentTime)) return "Working";
 
-  if (record.autoCheckout) return "Auto Checkout";
-
   const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return "Missing Checkout";
 
-  const shift = getUserShift(user, dateKey);
-  let employeeShiftEndTime = bounds.end;
-  if (!shift.off && shift.shiftEnd) {
-    const startIso = karachiDateToIso(dateKey, shift.shiftStart);
-    const endIso = karachiDateToIso(dateKey, shift.shiftEnd);
-    if (endIso) {
-      employeeShiftEndTime = new Date(endIso);
-      if (startIso && employeeShiftEndTime <= new Date(startIso)) {
-        employeeShiftEndTime = new Date(employeeShiftEndTime.getTime() + 86400000);
-      }
-    }
-  }
-
-  // Early Leave beats Late when both apply.
-  if (employeeShiftEndTime && new Date(record.checkOut) < employeeShiftEndTime) return "Early Leave";
+  // Early Leave: before (shift end − checkoutGraceMinutes). Within grace = Present.
+  const earlyLeaveCutoff = bounds.earlyLeaveCutoff || bounds.end;
+  if (earlyLeaveCutoff && new Date(record.checkOut) < earlyLeaveCutoff) return "Early Leave";
   if (late) return "Late";
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
@@ -601,7 +598,10 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  // Always compute live status — ignore stored DB status during active shift
+  // Trust finalized server status (Present / Missing Checkout / etc.) — do not recalculate.
+  if (record.status && record.status !== "Working" && (record.checkOut || record.status === "Missing Checkout")) {
+    return record.status;
+  }
   return computeDayStatus(user, record, holidays, now);
 }
 
@@ -627,7 +627,6 @@ export function effectiveCheckOut(record, user, dateKey = record?.date || todayK
 }
 
 export function dayStatusPill(status, record = null) {
-  if (record?.autoCheckout || status === "Auto Checkout") return { tone: "yellow", label: "Auto Checkout" };
   const map = {
     Present: { tone: "green", label: "Present" },
     Working: { tone: "blue", label: "Working" },
@@ -635,14 +634,17 @@ export function dayStatusPill(status, record = null) {
     Late: { tone: "orange", label: "Late" },
     "Early Leave": { tone: "red", label: "Early Leave" },
     "Short Hours": { tone: "orange", label: "Short Hours" },
-    "Missing Checkout": { tone: "red-outline", label: "Missing Checkout" },
-    "Auto Checkout": { tone: "yellow", label: "Auto Checkout" },
+    "Missing Checkout": { tone: "orange", label: "Missing Checkout" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
     Off: { tone: "slate", label: "Off" },
     "Weekend Off": { tone: "slate", label: "Weekend Off" },
     "Public Holiday": { tone: "blue", label: "Public Holiday" },
   };
+  // Legacy Auto Checkout rows → treat as Missing Checkout visually
+  if (record?.autoCheckout || status === "Auto Checkout") {
+    return map["Missing Checkout"];
+  }
   return map[status] || { tone: "slate", label: status || "—" };
 }
 
@@ -823,7 +825,7 @@ export function canCheckOut(now, user, record) {
   if (record.checkOut) return { ok: false, msg: "You have already checked out." };
   const bounds = getShiftBounds(user, todayKey(now));
   if (!bounds.checkoutDeadline) return { ok: false, msg: "Today is off in your assigned shift." };
-  if (now > bounds.checkoutDeadline) {
+  if (now >= bounds.checkoutDeadline) {
     return { ok: false, msg: `Checkout window closed at ${formatTime(bounds.checkoutDeadline.toISOString())}.` };
   }
   return { ok: true };
@@ -966,6 +968,10 @@ export function removeShortLeaveFromAttendance(attendance, users, request) {
     .filter(r => r && !(r.userId === request.userId && r.date === request.date && !r.checkIn && !r.checkOut && !(r.shortLeaves || []).length));
 }
 
+/**
+ * Client-side finalize helper (no invented auto-checkout).
+ * After finalize window: last_scan → checkout; otherwise Missing Checkout.
+ */
 export function applyAutoCheckouts(attendance, users, holidays = []) {
   const now = new Date();
   let changed = false;
@@ -977,18 +983,10 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
     const bounds = getShiftBounds(user, dateKey);
     if (bounds.off || !bounds.end) return r;
 
-    // Do NOT clear checkOut in persisted state during an active shift.
-    // Premature biometric check-outs are hidden at display time via
-    // effectiveCheckOut / computeDayStatus / formatCheckOutDisplay.
-    // Mutating here caused PUT /api/attendance to overwrite real scans with null.
+    if (!shouldFinalizeAttendance(user, dateKey, now)) return r;
 
-    if (r.checkOut) return r;
-
-    // During active shift — never finalize checkout here
-    if (isAttendanceInProgress(user, r, dateKey, now) && !hasShiftEnded(user, dateKey, now)) return r;
-
-    // Multiple scans: last scan becomes checkout after shift end
-    if (hasExtraScan(r) && hasShiftEnded(user, dateKey, now)) {
+    // Multiple scans: last scan becomes checkout after finalize
+    if (!r.checkOut && hasExtraScan(r)) {
       changed = true;
       let updated = {
         ...r,
@@ -1000,13 +998,19 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
       return finalizeRecord(updated, user, holidays);
     }
 
-    // Single scan only — auto checkout at shift end, 30 min grace
-    if (isAutoCheckoutDue(user, dateKey, now) && !hasExtraScan(r)) {
+    // No checkout scan → Missing Checkout (do NOT invent shift-end checkout)
+    if (!r.checkOut && r.status !== "Missing Checkout") {
       changed = true;
-      let updated = r;
-      const endIso = bounds.end.toISOString();
-      if (isOnBreak(updated)) updated = closeActiveBreak(updated, endIso);
-      return finalizeRecord({ ...updated, checkOut: endIso, autoCheckout: true }, user, holidays);
+      let updated = { ...r, autoCheckout: false };
+      if (isOnBreak(updated)) updated = closeActiveBreak(updated, bounds.end.toISOString());
+      const finalized = finalizeRecord(updated, user, holidays);
+      // Prefer stored workingMs from server; else estimate shift end − check-in
+      let workingMs = finalized.workingMs;
+      if (!r.checkOut && bounds.end) {
+        const gross = Math.max(0, bounds.end - new Date(r.checkIn));
+        workingMs = Math.max(0, gross - calcTotalBreakMs(updated) - calcShortLeaveMs(updated));
+      }
+      return { ...finalized, status: "Missing Checkout", dayStatus: "Missing Checkout", workingMs, autoCheckout: false };
     }
 
     return r;
@@ -1016,12 +1020,21 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
 
 export function displayWorkingHours(record, user, now = new Date()) {
   const dateKey = record?.date || todayKey();
-  if (record?.checkIn && computeDayStatus(user, record, [], now) === "Working") {
+  const status = computeDayStatus(user, record, [], now);
+  if (record?.checkIn && status === "Working") {
     return formatDurationMs(calcLiveWorkingMs(record, now));
   }
   const bounds = getShiftBounds(user, dateKey);
-  if (record?.checkIn && bounds.end && now < bounds.end) {
+  if (record?.checkIn && bounds.end && now < bounds.end && status === "Working") {
     return formatDurationMs(calcLiveWorkingMs(record, now));
+  }
+  // Missing Checkout: use stored workingMs (shift end − check-in − breaks) or estimate
+  if (record?.checkIn && !record?.checkOut && status === "Missing Checkout") {
+    if (record.workingMs != null) return formatDurationMs(record.workingMs);
+    if (bounds.end) {
+      const gross = Math.max(0, bounds.end - new Date(record.checkIn));
+      return formatDurationMs(Math.max(0, gross - calcTotalBreakMs(record) - calcShortLeaveMs(record)));
+    }
   }
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
   if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));

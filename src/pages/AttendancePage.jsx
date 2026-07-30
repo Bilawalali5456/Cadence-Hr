@@ -11,7 +11,7 @@ import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttenda
 function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
   if (mode === "—") return "—";
-  if (mode === "Missing") return <span className="text-red-600 font-medium">Missing</span>;
+  if (mode === "Missing") return <span className="text-orange-600 font-medium">Missing</span>;
   return (
     <>
       {formatTime(record?.checkOut)}

@@ -1,19 +1,19 @@
-import { karachiDateKey, parseZktTime } from "./admsHelpers.js";
+import { karachiDateKey, karachiTimestampText, parseZktTime } from "./admsHelpers.js";
 
 /**
- * Biometric attendance calculation:
- * - First scan of day = Check-in (finalized immediately)
- * - During active shift (until shift end + 30 min): latest scan = last_scan only (NOT check-out)
- * - After shift end + 30 min: last scan = Check-out (if ≥2 scans)
- * - Single scan after finalize window = Auto Checkout at shift end
- * - Working hours during shift = live from check-in to now
+ * Final attendance policy (Pakistan / Asia/Karachi):
+ * - Check-in window: 11:00 AM PKT → first scan = check-in
+ * - Dead zone: 05:00–10:59 AM — scans ignored
+ * - Checkout window: shift end → 05:00 AM next day (last scan = checkout)
+ * - Finalize at shift end + 30 min; no auto-checkout (Missing Checkout instead)
+ * - Early-leave grace: checkoutGraceMinutes (default 20) before shift end
  */
 
 export function hasShiftEnded(user, dateKey, now = new Date()) {
   return now >= getShiftEndDate(user, dateKey);
 }
 
-/** Shift end + 30 minutes — when attendance is finalized / auto-checkout runs. */
+/** Shift end + 30 minutes — when attendance is finalized (NOT auto-checkout). */
 export function isAutoCheckoutDue(user, dateKey, now = new Date()) {
   if (!hasShiftEnded(user, dateKey, now)) return false;
   const shift = getUserShift(user, dateKey);
@@ -30,10 +30,19 @@ function getShiftEndDate(user, dateKey) {
   return end;
 }
 
-/** ISO check-out time at scheduled shift end (for auto-checkout). */
+/** ISO time at scheduled shift end (used only for Missing Checkout working-hours estimate). */
 export function shiftEndIso(user, dateKey) {
-  // Always use overnight-aware end (do not parse shiftEnd on the calendar date alone).
   return getShiftEndDate(user, dateKey).toISOString();
+}
+
+/** Checkout window closes at 05:00 AM PKT the morning after the attendance date. */
+export function getCheckoutDeadline(dateKey) {
+  return parseZktTime(`${getNextDate(dateKey)} 05:00:00`);
+}
+
+/** Check-in window opens at 11:00 AM PKT on the attendance date. */
+export function getCheckInEarliest(dateKey) {
+  return parseZktTime(`${dateKey} 11:00:00`);
 }
 
 export function hasExtraScan(record) {
@@ -57,10 +66,8 @@ export function shouldFinalizeAttendance(user, dateKey, now = new Date()) {
 export function isAttendanceInProgress(user, record, dateKey, now = new Date()) {
   if (!record?.checkIn) return false;
   if (record.manuallyCorrected) return false;
-  if (!shouldFinalizeAttendance(user, dateKey, now)) return true;
-  if (record.checkOut) return false;
-  if (!hasExtraScan(record) && !isAutoCheckoutDue(user, dateKey, now)) return true;
-  return false;
+  // Until finalize window: in progress. After finalize: closed even with Missing Checkout.
+  return !shouldFinalizeAttendance(user, dateKey, now);
 }
 
 export function dateKeyFromDate(d) {
@@ -122,7 +129,7 @@ function enrichUserShift(user) {
       shiftEnd: "18:00",
       graceMinutes: 15,
       breakMinutes: 60,
-      checkoutGraceMinutes: 10,
+      checkoutGraceMinutes: 20,
       weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
     },
   };
@@ -139,7 +146,7 @@ export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
     shiftEnd: daySchedule.shiftEnd || "18:00",
     graceMinutes: s.graceMinutes ?? 15,
     breakMinutes: s.breakMinutes ?? 60,
-    checkoutGraceMinutes: s.checkoutGraceMinutes ?? 10,
+    checkoutGraceMinutes: s.checkoutGraceMinutes ?? 20,
     off: isWeekend || !!daySchedule.off,
     weeklySchedule,
     day,
@@ -170,50 +177,36 @@ function getNextDate(dateKey) {
   return addDaysToDateKey(dateKey, 1);
 }
 
-/** True when scheduled end is on/after midnight relative to start (overnight). */
-function isOvernightShift(user, dateKey) {
-  const shift = getUserShift(user, dateKey);
-  if (shift.off) return false;
-  const start = shiftDateTime(dateKey, shift.shiftStart);
-  const endSameDay = shiftDateTime(dateKey, shift.shiftEnd);
-  if (!start || !endSameDay) return false;
-  return endSameDay <= start;
+/** PKT hour (0–23) from a Date. */
+function pktHour(scanTime) {
+  const text = karachiTimestampText(scanTime);
+  if (!text || text.length < 13) return null;
+  return Number(text.slice(11, 13));
 }
 
 /**
- * Map a punch to the attendance day it belongs to (shift-aware).
- * Post-midnight late checkouts for overnight shifts stay on the previous day.
+ * Map a punch to the attendance day it belongs to.
+ * PKT rules:
+ *   00:00–04:59 → previous day (checkout for yesterday)
+ *   05:00–10:59 → dead zone (ignored — return "")
+ *   11:00–23:59 → calendar day (check-in / mid-shift)
  */
 export function getAttendanceDay(scanTime, user) {
   if (!scanTime || Number.isNaN(scanTime.getTime())) return "";
   const scanDate = karachiDateKey(scanTime);
   if (!scanDate) return "";
-  const prevDate = getPreviousDate(scanDate);
+  const hour = pktHour(scanTime);
+  if (hour == null || Number.isNaN(hour)) return "";
 
-  const prevShift = getUserShift(user, prevDate);
-  if (!prevShift.off) {
-    const prevShiftEnd = getShiftEndDate(user, prevDate);
-    if (prevShiftEnd) {
-      const postShiftWindow = new Date(prevShiftEnd.getTime() + 2 * 60 * 60 * 1000);
-      if (scanTime >= prevShiftEnd && scanTime <= postShiftWindow) {
-        return prevDate;
-      }
-    }
+  // Dead zone: 5:00 AM – 10:59 AM PKT — ghosts, ignore entirely
+  if (hour >= 5 && hour < 11) return "";
+
+  // Early morning checkout window: assign to previous day
+  if (hour < 5) {
+    return getPreviousDate(scanDate);
   }
 
-  const todayShift = getUserShift(user, scanDate);
-  if (!todayShift.off && todayShift.shiftStart) {
-    const todayShiftStart = shiftDateTime(scanDate, todayShift.shiftStart);
-    if (todayShiftStart) {
-      const earliestAllowed = new Date(todayShiftStart.getTime() - 2 * 60 * 60 * 1000);
-      // Too early for today: only reassign when yesterday was overnight so normal
-      // day-shift early scans (e.g. 7 AM before 9 AM) are not pulled backward.
-      if (scanTime < earliestAllowed && isOvernightShift(user, prevDate)) {
-        return prevDate;
-      }
-    }
-  }
-
+  // 11:00 AM – 23:59 → today
   return scanDate;
 }
 
@@ -298,6 +291,17 @@ export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves 
   return Math.max(0, gross - computeBreakMs(breaks, breakStart, breakEnd) - computeShortLeaveMs(shortLeaves));
 }
 
+/**
+ * Working ms when checkout is missing after finalize:
+ * assume worked until shift end.
+ */
+export function computeMissingCheckoutWorkingMs(checkIn, user, dateKey, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null) {
+  if (!checkIn || !user) return null;
+  const shiftEnd = getShiftEndDate(user, dateKey);
+  if (!shiftEnd) return null;
+  return computeNetWorkingMs(checkIn, shiftEnd.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+}
+
 /** Required duty ms = shift window minus unpaid break. */
 export function requiredDutyMs(user, dateKey) {
   const shift = getUserShift(user, dateKey);
@@ -323,18 +327,18 @@ export function isLateCheckIn(checkInIso, user, dateKeyOverride = null) {
 export function isEarlyLeave(checkOutIso, user, dateKeyOverride = null) {
   if (!checkOutIso || !user) return false;
   const d = new Date(checkOutIso);
+  // Prefer attendance dateKey (critical for overnight checkouts after midnight).
   const dateKey = dateKeyOverride || dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
-  return d < getShiftEndDate(user, dateKey);
+  const grace = (shift.checkoutGraceMinutes ?? 20) * 60000;
+  return d < new Date(getShiftEndDate(user, dateKey).getTime() - grace);
 }
 
 export function isShortHours(checkIn, checkOut, user, options = {}) {
   if (!checkIn || !checkOut || !user) return false;
-  const dateKey = dateKeyFromDate(new Date(checkIn));
+  const dateKey = options.dateKey || dateKeyFromDate(new Date(checkIn));
   if (getUserShift(user, dateKey).off) return false;
-  // Only trust a precomputed net when it is an actual number.
-  // (undefined/null must fall through — `!= null` already does, but typeof is clearer.)
   const worked = typeof options.netWorkingMs === "number"
     ? options.netWorkingMs
     : computeNetWorkingMs(
@@ -352,8 +356,9 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
 
 /**
  * Status priority after finalization:
- * Absent → Missing Checkout → Early Leave → Late → Short Hours → Auto Checkout → Present
+ * Absent → Missing Checkout → Early Leave → Late → Short Hours → Present
  * Until shift end + 30 min with check-in: Working
+ * Auto Checkout is removed — never returned.
  */
 export function computeBiometricDayStatus(user, checkIn, checkOut, options = {}) {
   const dateKey = options.dateKey || (checkIn ? dateKeyFromDate(new Date(checkIn)) : dateKeyFromDate(new Date()));
@@ -365,47 +370,68 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
   // Never finalize status during the active window (before shift end + 30 min).
   if (!shouldFinalizeAttendance(user, dateKey, now)) return "Working";
 
-  if (options.autoCheckout) return "Auto Checkout";
-
   const late = isLateCheckIn(checkIn, user, dateKey);
   if (!checkOut) return "Missing Checkout";
   // Early Leave beats Late when both apply.
   if (isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
   if (late) return "Late";
-  if (isShortHours(checkIn, checkOut, user, options)) return "Short Hours";
+  if (isShortHours(checkIn, checkOut, user, { ...options, dateKey })) return "Short Hours";
   return "Present";
 }
 
 /**
- * First scan = check-in. Last scan becomes check-out only after shift end + 30 min.
+ * First scan at/after 11:00 AM PKT = check-in.
+ * Last scan becomes check-out only after shift end + 30 min.
+ * Scans before 11 AM or at/after 5 AM next day are excluded.
  */
 export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
   const sorted = [...(logs || [])].sort(
     (a, b) => parseZktTime(a.punch_time_local || a.punch_time) - parseZktTime(b.punch_time_local || b.punch_time)
   );
-  const shift = getUserShift(user, dateKey);
-  let validScans = sorted;
-  if (!shift.off && shift.shiftStart) {
-    const shiftStart = shiftDateTime(dateKey, shift.shiftStart);
-    const earliestAllowed = new Date(shiftStart.getTime() - 2 * 60 * 60 * 1000);
-    validScans = sorted.filter(scan => {
-      const scanTime = parseZktTime(scan.punch_time_local || scan.punch_time);
-      return scanTime && scanTime >= earliestAllowed;
-    });
-  }
+  const earliestAllowed = getCheckInEarliest(dateKey);
+  const checkoutDeadline = getCheckoutDeadline(dateKey);
+
+  const validScans = sorted.filter(scan => {
+    const scanTime = parseZktTime(scan.punch_time_local || scan.punch_time);
+    if (!scanTime || !earliestAllowed || !checkoutDeadline) return false;
+    // Valid attendance window: 11:00 AM dateKey → before 05:00 AM next day
+    return scanTime >= earliestAllowed && scanTime < checkoutDeadline;
+  });
+
   if (!validScans.length) {
     return {
       checkIn: null, checkOut: null, lastScan: null,
       checkInMethod: null, checkOutMethod: null, lastScanMethod: null, scanCount: 0,
     };
   }
-  const first = validScans[0];
-  const last = validScans[validScans.length - 1];
-  const checkIn = parseZktTime(first.punch_time_local || first.punch_time)?.toISOString();
-  const checkInMethod = methodLabel(first.verify_method);
+
+  // Check-in must be on the attendance calendar day (not a post-midnight checkout-only scan).
+  const checkInScan = validScans.find(scan => {
+    const t = parseZktTime(scan.punch_time_local || scan.punch_time);
+    return t && karachiDateKey(t) === dateKey && t >= earliestAllowed;
+  });
+
+  if (!checkInScan) {
+    return {
+      checkIn: null, checkOut: null, lastScan: null,
+      checkInMethod: null, checkOutMethod: null, lastScanMethod: null, scanCount: 0,
+    };
+  }
+
+  const checkInTime = parseZktTime(checkInScan.punch_time_local || checkInScan.punch_time);
+  const checkIn = checkInTime?.toISOString() || null;
+  const checkInMethod = methodLabel(checkInScan.verify_method);
+
+  // Scans from check-in through checkout deadline (includes post-midnight checkouts).
+  const dayScans = validScans.filter(scan => {
+    const t = parseZktTime(scan.punch_time_local || scan.punch_time);
+    return t && checkInTime && t >= checkInTime && t < checkoutDeadline;
+  });
+
+  const last = dayScans[dayScans.length - 1];
   const lastIso = parseZktTime(last.punch_time_local || last.punch_time)?.toISOString();
   const lastScanMethod = methodLabel(last.verify_method);
-  const scanCount = validScans.length;
+  const scanCount = dayScans.length;
   const finalized = shouldFinalizeAttendance(user, dateKey, now);
 
   if (scanCount === 1) {
@@ -427,6 +453,7 @@ export function aggregateDayScans(logs, user, dateKey, now = new Date()) {
     };
   }
 
+  // Finalized: last scan = checkout (never invent shift-end auto-checkout).
   return {
     checkIn,
     checkOut: lastIso,
@@ -443,11 +470,10 @@ function resolveFinalizedCheckout(user, dateKey, agg, prev, now) {
     return { checkOut: null, checkOutMethod: null, autoCheckout: false, lastScan: agg.lastScan || null };
   }
 
-  const lastScan = agg.lastScan || prev.last_scan || null;
-  const lastScanMethod = agg.lastScanMethod || prev.last_scan_method || null;
+  const lastScan = agg.lastScan || (agg.checkOut && agg.checkOut !== agg.checkIn ? agg.checkOut : null) || prev.last_scan || null;
+  const lastScanMethod = agg.lastScanMethod || agg.checkOutMethod || prev.last_scan_method || null;
 
-  // Extra scan after (or at) shift end → proper checkout (Present / Late).
-  // Extra scan before shift end → early leave checkout.
+  // Extra scan (different from check-in) → checkout = last scan. No auto-checkout.
   if (lastScan && lastScan !== agg.checkIn) {
     return {
       checkOut: lastScan,
@@ -457,28 +483,7 @@ function resolveFinalizedCheckout(user, dateKey, agg, prev, now) {
     };
   }
 
-  // Only check-in exists → auto checkout at shift end once the +30m window is due.
-  if (agg.checkIn && agg.scanCount === 1 && isAutoCheckoutDue(user, dateKey, now)) {
-    return {
-      checkOut: shiftEndIso(user, dateKey),
-      checkOutMethod: null,
-      autoCheckout: true,
-      lastScan: null,
-    };
-  }
-
-  // Day closed with only check-in but auto window somehow not due — still auto-fill.
-  if (agg.checkIn && agg.scanCount === 1 && isAttendanceDayClosed(dateKey, now)) {
-    return {
-      checkOut: shiftEndIso(user, dateKey),
-      checkOutMethod: null,
-      autoCheckout: true,
-      lastScan: null,
-    };
-  }
-
-  // agg.checkOut from aggregateDayScans (finalized multi-scan) — trust it.
-  if (agg.checkOut) {
+  if (agg.checkOut && agg.checkOut !== agg.checkIn) {
     return {
       checkOut: agg.checkOut,
       checkOutMethod: agg.checkOutMethod || lastScanMethod,
@@ -487,7 +492,8 @@ function resolveFinalizedCheckout(user, dateKey, agg, prev, now) {
     };
   }
 
-  return { checkOut: null, checkOutMethod: null, autoCheckout: false, lastScan };
+  // Only check-in → Missing Checkout (checkOut stays null). Never set shift-end time.
+  return { checkOut: null, checkOutMethod: null, autoCheckout: false, lastScan: null };
 }
 
 /**
@@ -518,7 +524,7 @@ export async function syncAttendanceFromLogs(pool) {
     const scanTime = parseZktTime(log.punch_time_local || log.punch_time);
     if (!scanTime) continue;
     const attDay = getAttendanceDay(scanTime, user);
-    if (!attDay) continue;
+    if (!attDay) continue; // dead zone — ignore
     workKeys.set(`${log.employee_id}|${attDay}`, { employeeId: log.employee_id, dateKey: attDay });
     // Also reprocess calendar day so wrongly created "next day" check-ins can be cleared.
     const calDay = karachiDateKey(scanTime);
@@ -560,14 +566,18 @@ export async function syncAttendanceFromLogs(pool) {
       continue;
     }
 
-    function computeRowMetrics(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, autoCheckout = false) {
-      const timeOpts = { breaks, shortLeaves, breakStart, breakEnd, autoCheckout, ...timeOptsBase };
+    function computeRowMetrics(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd) {
+      const timeOpts = { breaks, shortLeaves, breakStart, breakEnd, ...timeOptsBase };
       const inProgress = isAttendanceInProgress(user, { checkIn, checkOut, source: "biometric" }, dateKey, now);
+      const finalized = shouldFinalizeAttendance(user, dateKey, now);
       let workingMs = null;
       if (inProgress && checkIn) {
         workingMs = computeNetWorkingMs(checkIn, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
       } else if (checkIn && checkOut) {
         workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+      } else if (checkIn && !checkOut && finalized) {
+        // Missing Checkout — assume worked until shift end
+        workingMs = computeMissingCheckoutWorkingMs(checkIn, user, dateKey, breaks, shortLeaves, breakStart, breakEnd);
       }
       const status = computeBiometricDayStatus(user, checkIn, checkOut, {
         ...timeOpts,
@@ -581,7 +591,6 @@ export async function syncAttendanceFromLogs(pool) {
     if (existing.rows.length === 0) {
       const finalized = shouldFinalizeAttendance(user, dateKey, now);
       let finalCheckOut = null;
-      let finalAuto = false;
       let outMethod = null;
       let lastScan = agg.lastScan;
       let lastScanMethod = agg.lastScanMethod;
@@ -589,18 +598,15 @@ export async function syncAttendanceFromLogs(pool) {
       if (finalized) {
         const resolved = resolveFinalizedCheckout(user, dateKey, agg, {}, now);
         finalCheckOut = agg.checkOut || resolved.checkOut;
-        finalAuto = resolved.autoCheckout;
-        outMethod = finalAuto ? null : (agg.checkOutMethod || resolved.checkOutMethod);
+        outMethod = agg.checkOutMethod || resolved.checkOutMethod;
         lastScan = resolved.lastScan ?? agg.lastScan;
       } else {
-        // Mid-shift: never write check_out — only track last_scan.
         finalCheckOut = null;
-        finalAuto = false;
         outMethod = null;
       }
 
       const { workingMs, status, late } = computeRowMetrics(
-        agg.checkIn, finalCheckOut, [], [], null, null, finalAuto
+        agg.checkIn, finalCheckOut, [], [], null, null
       );
 
       await pool.query(
@@ -608,10 +614,10 @@ export async function syncAttendanceFromLogs(pool) {
            id, user_id, date, check_in, check_out, last_scan, breaks, short_leaves,
            auto_checkout, working_ms, total_break_ms, status, late, source,
            check_in_method, check_out_method, last_scan_method
-         ) VALUES ($1,$2,$3,$4,$5,$6,'[]','[]',$7,$8,0,$9,$10,'biometric',$11,$12,$13)`,
+         ) VALUES ($1,$2,$3,$4,$5,$6,'[]','[]',false,$7,0,$8,$9,'biometric',$10,$11,$12)`,
         [
           genAttId(), employeeId, dateKey, agg.checkIn, finalCheckOut, lastScan,
-          finalAuto, workingMs, status, late,
+          workingMs, status, late,
           agg.checkInMethod, outMethod,
           lastScanMethod,
         ]
@@ -632,7 +638,6 @@ export async function syncAttendanceFromLogs(pool) {
       let newOutMethod = prev.check_out_method || null;
       let newLastScanMethod = prev.last_scan_method || null;
       let newSource = source;
-      let newAutoCheckout = prev.auto_checkout || false;
 
       if (source === "biometric" || !prev.check_in) {
         newCheckIn = agg.checkIn;
@@ -644,18 +649,15 @@ export async function syncAttendanceFromLogs(pool) {
           const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
           newCheckOut = agg.checkOut || resolved.checkOut;
           newOutMethod = agg.checkOut ? agg.checkOutMethod : resolved.checkOutMethod;
-          newAutoCheckout = resolved.autoCheckout;
           if (resolved.lastScan != null) newLastScan = resolved.lastScan;
         } else {
           // Mid-shift: check_out MUST be NULL; only last_scan is updated.
           newCheckOut = null;
           newOutMethod = null;
-          newAutoCheckout = false;
           if (agg.lastScan) {
             newLastScan = agg.lastScan;
             newLastScanMethod = agg.lastScanMethod;
           } else if (prev.check_out && prev.check_out !== prev.check_in) {
-            // Preserve a premature checkout as last_scan reference.
             newLastScan = prev.last_scan || prev.check_out;
             newLastScanMethod = prev.last_scan_method || prev.check_out_method || null;
           }
@@ -679,19 +681,19 @@ export async function syncAttendanceFromLogs(pool) {
       }
 
       const { workingMs, status, late, totalBreakMs } = computeRowMetrics(
-        newCheckIn, newCheckOut, breaks, shortLeaves, breakStart, breakEnd, newAutoCheckout
+        newCheckIn, newCheckOut, breaks, shortLeaves, breakStart, breakEnd
       );
 
       await pool.query(
         `UPDATE attendance SET
            check_in = $1, check_out = $2, last_scan = $3, working_ms = $4, total_break_ms = $5,
            status = $6, late = $7, source = $8, check_in_method = $9, check_out_method = $10,
-           last_scan_method = $11, auto_checkout = $12
-         WHERE id = $13`,
+           last_scan_method = $11, auto_checkout = false
+         WHERE id = $12`,
         [
           newCheckIn, newCheckOut, newLastScan, workingMs, totalBreakMs,
           status, late, newSource, newInMethod, newOutMethod, newLastScanMethod,
-          newAutoCheckout, prev.id,
+          prev.id,
         ]
       );
       rowsUpdated += 1;
@@ -725,6 +727,8 @@ export async function finalizeOpenAttendance(pool) {
          check_out IS NULL
          OR status = 'Working'
          OR status = 'Early Leave'
+         OR status = 'Auto Checkout'
+         OR status = 'Missing Checkout'
          OR last_scan IS NOT NULL
        )`
   );
@@ -785,53 +789,43 @@ export async function finalizeOpenAttendance(pool) {
       }
       const resolved = resolveFinalizedCheckout(user, dateKey, agg, prev, now);
       const checkOut = agg.checkOut || resolved.checkOut;
-      const autoCheckout = resolved.autoCheckout;
-      const workingMs = checkOut
-        ? computeNetWorkingMs(agg.checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd)
-        : null;
+      let workingMs = null;
+      if (checkOut) {
+        workingMs = computeNetWorkingMs(agg.checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+      } else {
+        workingMs = computeMissingCheckoutWorkingMs(agg.checkIn, user, dateKey, breaks, shortLeaves, breakStart, breakEnd);
+      }
       const status = computeBiometricDayStatus(user, agg.checkIn, checkOut, {
         breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
-        netWorkingMs: workingMs, source: "biometric", autoCheckout,
+        netWorkingMs: workingMs, source: "biometric",
       });
       await pool.query(
         `UPDATE attendance SET
            check_in = $1, check_out = $2, last_scan = $3,
-           working_ms = $4, status = $5, late = $6, auto_checkout = $7,
-           check_in_method = $8, check_out_method = $9, last_scan_method = $10
-         WHERE id = $11`,
+           working_ms = $4, status = $5, late = $6, auto_checkout = false,
+           check_in_method = $7, check_out_method = $8, last_scan_method = $9
+         WHERE id = $10`,
         [
           agg.checkIn, checkOut, resolved.lastScan ?? agg.lastScan, workingMs, status,
-          isLateCheckIn(agg.checkIn, user, dateKey), autoCheckout,
-          agg.checkInMethod, autoCheckout ? null : (agg.checkOutMethod || resolved.checkOutMethod),
+          isLateCheckIn(agg.checkIn, user, dateKey),
+          agg.checkInMethod, checkOut ? (agg.checkOutMethod || resolved.checkOutMethod) : null,
           agg.lastScanMethod, prev.id,
         ]
       );
       rowsUpdated += 1;
-    } else if (!prev.check_out && isAutoCheckoutDue(user, dateKey, now)) {
-      const checkOut = shiftEndIso(user, dateKey);
-      const workingMs = computeNetWorkingMs(prev.check_in, checkOut, breaks, shortLeaves, breakStart, breakEnd);
-      const status = computeBiometricDayStatus(user, prev.check_in, checkOut, {
-        breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
-        netWorkingMs: workingMs, source: prev.source || "manual", autoCheckout: true,
-      });
-      await pool.query(
-        `UPDATE attendance SET check_out = $1, auto_checkout = true, working_ms = $2, status = $3, late = $4
-         WHERE id = $5`,
-        [checkOut, workingMs, status, isLateCheckIn(prev.check_in, user, dateKey), prev.id]
-      );
-      rowsUpdated += 1;
     } else if (!prev.check_out && shouldFinalizeAttendance(user, dateKey, now)) {
-      // Manual row past finalize window with no checkout and no auto-due path.
-      const checkOut = shiftEndIso(user, dateKey);
-      const workingMs = computeNetWorkingMs(prev.check_in, checkOut, breaks, shortLeaves, breakStart, breakEnd);
-      const status = computeBiometricDayStatus(user, prev.check_in, checkOut, {
+      // Manual/WFH row past finalize with no checkout → Missing Checkout (no invented time).
+      const workingMs = computeMissingCheckoutWorkingMs(
+        prev.check_in, user, dateKey, breaks, shortLeaves, breakStart, breakEnd
+      );
+      const status = computeBiometricDayStatus(user, prev.check_in, null, {
         breaks, shortLeaves, breakStart, breakEnd, dateKey, now,
-        netWorkingMs: workingMs, source: prev.source || "manual", autoCheckout: true,
+        netWorkingMs: workingMs, source: prev.source || "manual",
       });
       await pool.query(
-        `UPDATE attendance SET check_out = $1, auto_checkout = true, working_ms = $2, status = $3, late = $4
-         WHERE id = $5`,
-        [checkOut, workingMs, status, isLateCheckIn(prev.check_in, user, dateKey), prev.id]
+        `UPDATE attendance SET check_out = NULL, auto_checkout = false, working_ms = $1, status = $2, late = $3
+         WHERE id = $4`,
+        [workingMs, status, isLateCheckIn(prev.check_in, user, dateKey), prev.id]
       );
       rowsUpdated += 1;
     }
