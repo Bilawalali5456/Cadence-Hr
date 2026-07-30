@@ -356,7 +356,9 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
 
 /**
  * Status priority after finalization:
- * Absent → Missing Checkout → Early Leave → Late → Short Hours → Present
+ * Absent → Missing Checkout → Early Leave → Short Hours → Present
+ * Late check-in alone does NOT set day status to Late when duty is completed
+ * (checkout at/after shift end − grace). The Late badge on check-in covers that.
  * Until shift end + 30 min with check-in: Working
  * Auto Checkout is removed — never returned.
  */
@@ -370,11 +372,10 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
   // Never finalize status during the active window (before shift end + 30 min).
   if (!shouldFinalizeAttendance(user, dateKey, now)) return "Working";
 
-  const late = isLateCheckIn(checkIn, user, dateKey);
   if (!checkOut) return "Missing Checkout";
   // Early Leave beats Late when both apply.
   if (isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
-  if (late) return "Late";
+  // Late check-in + completed shift → Present (or Short Hours). Not "Late".
   if (isShortHours(checkIn, checkOut, user, { ...options, dateKey })) return "Short Hours";
   return "Present";
 }

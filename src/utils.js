@@ -579,13 +579,12 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   // Working until shift end + 30 min (or day closed) — never finalize mid-shift.
   if (!shouldFinalizeAttendance(user, dateKey, currentTime)) return "Working";
 
-  const late = isLateCheckIn(record.checkIn, user, holidays);
   if (!record.checkOut) return "Missing Checkout";
 
   // Early Leave: before (shift end − checkoutGraceMinutes). Within grace = Present.
   const earlyLeaveCutoff = bounds.earlyLeaveCutoff || bounds.end;
   if (earlyLeaveCutoff && new Date(record.checkOut) < earlyLeaveCutoff) return "Early Leave";
-  if (late) return "Late";
+  // Late check-in + completed shift → Present (or Short Hours). Late badge is on check-in only.
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
@@ -598,8 +597,9 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  // Trust finalized server status (Present / Missing Checkout / etc.) — do not recalculate.
-  if (record.status && record.status !== "Working" && (record.checkOut || record.status === "Missing Checkout")) {
+  // Trust finalized server status — except legacy "Late" with a completed checkout
+  // (day status is Present; Late is shown only as the check-in badge).
+  if (record.status && record.status !== "Working" && record.status !== "Late" && (record.checkOut || record.status === "Missing Checkout")) {
     return record.status;
   }
   return computeDayStatus(user, record, holidays, now);
@@ -1547,7 +1547,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
 
   const presentRows = rows.filter(r => r.checkIn && scheduledSet.has(r.date));
   const presentDates = new Set(presentRows.map(r => r.date));
-  const lateDays = presentRows.filter(r => resolveDayStatus(user, r, r.date, holidays) === "Late").length;
+  const lateDays = presentRows.filter(r => isLateCheckIn(r.checkIn, user, holidays)).length;
   const totalWorkingMs = presentRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r) || 0), 0);
   const totalBreakMs = presentRows.reduce((sum, r) => sum + (r.totalBreakMs ?? calcTotalBreakMs(r) ?? 0), 0);
   const totalRequiredMs = scheduledDates
