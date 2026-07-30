@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isExecutiveRole, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -94,11 +94,16 @@ export default function App() {
     ignoreSyncUntilRef.current = Date.now() + 800;
   }
 
+  function canFetchUserRoster(role) {
+    return isHrAdminRole(role) || isExecutiveRole(role);
+  }
+
   /** Refresh only the collections needed for the active tab (no full page reload). */
-  async function refreshModule(routeId) {
+  async function refreshModule(routeId, roleHint = null) {
     const key = routeId || "home";
     if (refreshInFlightRef.current === key) return;
     refreshInFlightRef.current = key;
+    const rosterOk = canFetchUserRoster(roleHint);
     try {
       markRemoteApply();
       if (key === "home" || key === "reports" || key === "attendance" || key === "biometric") {
@@ -114,8 +119,20 @@ export default function App() {
         setShortLeaveRequests(shortLeave);
         setWarnings(warnings);
       }
-      if (key === "people" || key === "executives" || key === "settings" || key === "myprofile") {
-        const [us, warnings] = await Promise.all([apiFetchUsers(), apiFetchWarnings()]);
+      if (key === "people" || key === "executives") {
+        if (rosterOk) {
+          const [us, warnings] = await Promise.all([apiFetchUsers(), apiFetchWarnings()]);
+          markRemoteApply();
+          setUsers(us);
+          setWarnings(warnings);
+        }
+      }
+      if (key === "settings" || key === "myprofile") {
+        // Employees/Managers: self profile only — never GET /api/users (403).
+        const [us, warnings] = await Promise.all([
+          apiFetchUsers({ selfOnly: !rosterOk }),
+          apiFetchWarnings(),
+        ]);
         markRemoteApply();
         setUsers(us);
         setWarnings(warnings);
@@ -162,8 +179,7 @@ export default function App() {
         markRemoteApply();
         setAnnouncements(list);
       }
-      if (key === "biometric") {
-        // attendance already refreshed above; users help PIN mapping
+      if (key === "biometric" && rosterOk) {
         const us = await apiFetchUsers();
         markRemoteApply();
         setUsers(us);
@@ -189,8 +205,10 @@ export default function App() {
         const s = loadSession();
         if (s?.token) {
           try {
+            const rosterOk = canFetchUserRoster(d.currentUser?.role);
             const [us, notifs] = await Promise.all([
-              apiFetchUsers(),
+              // Employees/Managers: never hit GET /api/users (403 in console).
+              rosterOk ? apiFetchUsers() : apiFetchUsers({ selfOnly: true }),
               apiFetchNotifications(),
             ]);
             markRemoteApply();
@@ -199,7 +217,7 @@ export default function App() {
           } catch (e) {
             console.error("Post-bootstrap hydrate failed:", e);
           }
-          await refreshModule("home");
+          await refreshModule("home", d.currentUser?.role);
         }
       })
       .catch(e => {
@@ -211,18 +229,23 @@ export default function App() {
   /* ── On tab change (and after DB ready): fetch that module's APIs ── */
   useEffect(() => {
     if (dbStatus !== "ready" || !session?.token) return;
-    refreshModule(route);
+    const roleHint = users.find(u => u.id === session.userId)?.role || null;
+    refreshModule(route, roleHint);
   }, [route, session?.token, dbStatus]);
 
   /* ── Live poll while Attendance / Biometric / Home tab is open ── */
   useEffect(() => {
     if (dbStatus !== "ready" || !session?.token) return;
     if (route !== "attendance" && route !== "biometric" && route !== "home") return;
+    const roleHint = users.find(u => u.id === session.userId)?.role || null;
     const id = setInterval(() => {
-      refreshModule(route === "biometric" ? "biometric" : route === "home" ? "home" : "attendance");
+      refreshModule(
+        route === "biometric" ? "biometric" : route === "home" ? "home" : "attendance",
+        roleHint
+      );
     }, 20000);
     return () => clearInterval(id);
-  }, [route, session?.token, dbStatus]);
+  }, [route, session?.token, dbStatus, users]);
 
   /* ── Bulk sync disabled: all modules persist via granular REST endpoints ── */
 
@@ -347,6 +370,7 @@ export default function App() {
   }
 
   const role = currentUser.role;
+  const rosterUsers = canFetchUserRoster(role) ? users : [];
   const nav  = NAV.filter(n => {
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return isStaffRole(role);
@@ -447,9 +471,9 @@ export default function App() {
           {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} />}
           {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={(next) => { markRemoteApply(); setAttendance(next); }} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
-          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
+          {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
           {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
-          {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={users} notifications={notifications} setNotifications={setNotifications} />}
+          {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
           {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} warnings={warnings} setWarnings={setWarnings} />}
           {route === "settings"      && <SettingsPage   currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} company={company} setCompany={setCompany} roles={roles} />}
         </main>

@@ -50,19 +50,21 @@ async function apiGetJson(path) {
   return res.json();
 }
 
-export async function apiFetchUsers() {
-  // HR/Admin: GET /api/users returns full roster.
-  // Employee: fallback to GET /api/users/:id (own profile only).
-  try {
-    const res = await apiFetch(`${API_URL}/users`, { headers: authHeaders() });
-    if (res.ok) return await res.json();
-    if (res.status !== 401 && res.status !== 403) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${res.status}`);
+export async function apiFetchUsers({ selfOnly = false } = {}) {
+  // HR Admin / Executive: GET /api/users returns full roster.
+  // Employee / Manager: never call the roster endpoint (403) — fetch own profile only.
+  if (!selfOnly) {
+    try {
+      const res = await apiFetch(`${API_URL}/users`, { headers: authHeaders() });
+      if (res.ok) return await res.json();
+      if (res.status !== 401 && res.status !== 403) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      // 403/401: fall through to own profile (avoids throwing; browser may still log 403 if we hit roster)
+    } catch (e) {
+      // Network / parse errors — try own profile next
     }
-  } catch (e) {
-    // If we can't fetch full roster, try own profile.
-    // (Some auth failures might still be retried by the caller via refreshModule.)
   }
   const s = loadSession();
   if (!s?.userId) throw new Error("Missing session for fetching own user");
