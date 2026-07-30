@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Users, Clock, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
+import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
 import { isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
@@ -331,7 +331,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
 
   const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && !effectiveCheckOut(r, u, r?.date || todayKey()); });
   const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
-  const autoToday = (attendance || []).filter(r => r && r.date === todayKey() && r.autoCheckout && visibleIds.has(r.userId));
   const absentTodayCount = liveRoster.filter(u => {
     const r = getUserTodayRecord(attendance, u.id, u);
     return resolveDayStatus(u, r, r?.date || today, holidays) === "Absent";
@@ -416,11 +415,10 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
         </Card>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
-          { label: "Auto checkouts", value: autoToday.length, icon: Clock },
           { label: "Absent today", value: absentTodayCount, icon: Users },
           { label: `${period} hours`, value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
         ].map(k => (

@@ -13,7 +13,6 @@ import {
   isAttendanceInProgress,
   resolveDayStatus,
   dayStatusPill,
-  hasShiftEnded,
   performCheckIn,
   performCheckOut,
   displayWorkingHours,
@@ -165,17 +164,9 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
             <div className="text-xs text-blue-600">Check out</div>
             <div className="font-semibold text-blue-800 tabular-nums mt-1">
-              {!hasShiftEnded(user, key, now)
-                ? (today?.lastScan && today.lastScan !== today?.checkIn
-                  ? formatTime(today.lastScan)
-                  : "—")
+              {daySt.label === "Working"
+                ? "—"
                 : formatTime(today?.checkOut)}
-              {!hasShiftEnded(user, key, now) && today?.checkIn && (
-                <span className="block text-[10px] text-blue-500 mt-0.5">In progress</span>
-              )}
-              {hasShiftEnded(user, key, now) && today?.autoCheckout && (
-                <span className="block text-[10px] text-blue-500 mt-0.5">Auto</span>
-              )}
             </div>
           </div>
           <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-center">
@@ -235,10 +226,9 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
           </div>
         )}
 
-        {!dayOff && today?.checkOut && (
+        {!dayOff && today?.checkOut && daySt.label !== "Working" && (
           <div className="text-sm text-center text-slate-500 mt-2">
             Shift complete · <b>{displayWorkingHours(today, user)}</b> net working time
-            {today.autoCheckout && <span className="text-amber-600"> · Auto checkout applied</span>}
           </div>
         )}
       </Card>
