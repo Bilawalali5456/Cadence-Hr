@@ -91,7 +91,7 @@ export function registerBadgesRoutes(app, pool, requireAuth) {
         badges.attendance = await countOne(
           pool,
           `SELECT COUNT(*)::int AS c FROM attendance
-           WHERE date = $2 AND updated_at > ${seenSql("attendance")}`,
+           WHERE date = $2 AND created_at > ${seenSql("attendance")}`,
           [userId, today]
         );
         badges.warnings = await countOne(
@@ -117,21 +117,21 @@ export function registerBadgesRoutes(app, pool, requireAuth) {
           pool,
           `SELECT COUNT(*)::int AS c FROM leave_requests
            WHERE user_id = $1 AND status != 'pending'
-             AND updated_at > ${seenSql("leave")}`,
+             AND status_changed_at > ${seenSql("leave")}`,
           [userId]
         );
         badges.shortLeave = await countOne(
           pool,
           `SELECT COUNT(*)::int AS c FROM short_leave_requests
            WHERE user_id = $1 AND status != 'pending'
-             AND updated_at > ${seenSql("shortLeave")}`,
+             AND status_changed_at > ${seenSql("shortLeave")}`,
           [userId]
         );
         badges.attendance = await countOne(
           pool,
           `SELECT COUNT(*)::int AS c FROM attendance
            WHERE user_id = $1 AND date = $2
-             AND updated_at > ${seenSql("attendance")}`,
+             AND created_at > ${seenSql("attendance")}`,
           [userId, today]
         );
         badges.warnings = await countOne(

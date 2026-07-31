@@ -26,7 +26,11 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
          reason = EXCLUDED.reason,
          status = EXCLUDED.status,
          submitted = EXCLUDED.submitted,
-         updated_at = NOW()`,
+         updated_at = NOW(),
+         status_changed_at = CASE
+           WHEN short_leave_requests.status IS DISTINCT FROM EXCLUDED.status THEN NOW()
+           ELSE short_leave_requests.status_changed_at
+         END`,
       [
         id,
         r.userId,
