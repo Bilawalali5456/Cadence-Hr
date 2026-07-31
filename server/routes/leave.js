@@ -26,7 +26,8 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
          submitted = EXCLUDED.submitted,
          paid_days = EXCLUDED.paid_days,
          unpaid_days = EXCLUDED.unpaid_days,
-         pay_tag = EXCLUDED.pay_tag`,
+         pay_tag = EXCLUDED.pay_tag,
+         updated_at = NOW()`,
       [
         id,
         l.userId,

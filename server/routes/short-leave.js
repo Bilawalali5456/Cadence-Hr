@@ -25,7 +25,8 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
          minutes = EXCLUDED.minutes,
          reason = EXCLUDED.reason,
          status = EXCLUDED.status,
-         submitted = EXCLUDED.submitted`,
+         submitted = EXCLUDED.submitted,
+         updated_at = NOW()`,
       [
         id,
         r.userId,

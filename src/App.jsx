@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
@@ -59,6 +59,27 @@ const TITLES = {
   settings:      ["Settings",        "Account, security, preferences"],
 };
 
+/** Sidebar route id → badge response key (omit Home, Reports, Profile, Settings, Executives) */
+const TAB_BADGE_MAP = {
+  leave: "leave",
+  shortleave: "shortLeave",
+  attendance: "attendance",
+  announcements: "announcements",
+  policies: "policies",
+  payroll: "payroll",
+  assets: "assets",
+  holidays: "holidays",
+};
+
+function NavBadge({ count }) {
+  if (!count) return null;
+  return (
+    <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[1.25rem] h-5 px-1 flex items-center justify-center shrink-0">
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+}
+
 export default function App() {
   const [users,         setUsers]         = useState([]);
   const [attendance,    setAttendance]    = useState([]);
@@ -86,6 +107,7 @@ export default function App() {
   const [roleMenu,      setRoleMenu]      = useState(false);
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
   const [syncBanner,    setSyncBanner]    = useState(null);
+  const [badges,        setBadges]        = useState({});
   const loadedRef = useRef(false);
   const ignoreSyncUntilRef = useRef(0);
   const refreshInFlightRef = useRef(null);
@@ -277,6 +299,28 @@ export default function App() {
     return () => clearInterval(id);
   }, [session]);
 
+  useEffect(() => {
+    if (!session?.token) {
+      setBadges({});
+      return;
+    }
+    let cancelled = false;
+    async function fetchBadges() {
+      try {
+        const data = await apiFetchBadges();
+        if (!cancelled && data && typeof data === "object") setBadges(data);
+      } catch {
+        /* ignore poll errors */
+      }
+    }
+    fetchBadges();
+    const id = setInterval(fetchBadges, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [session?.token]);
+
   /* ── Session stays in browser localStorage (never persist temporary passwords) ── */
   useEffect(() => {
     if (session) {
@@ -314,7 +358,14 @@ export default function App() {
     });
     setRoute("home");
   }
-  function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); }
+  function handleLogout()  { setSession(null); setRoute("home"); setRoleMenu(false); setBadges({}); }
+  function handleNavClick(tabId) {
+    setRoute(tabId);
+    const badgeKey = TAB_BADGE_MAP[tabId];
+    if (!badgeKey) return;
+    setBadges(prev => ({ ...prev, [badgeKey]: 0 }));
+    apiMarkBadgeSeen(tabId).catch(() => {});
+  }
   function handleFirstLoginDone() {
     setSession(s => (s ? { userId: s.userId, token: s.token } : null));
     setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
@@ -393,13 +444,14 @@ export default function App() {
         </div>
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {nav.map(n => (
-            <button key={n.id} onClick={() => setRoute(n.id)}
+            <button key={n.id} onClick={() => handleNavClick(n.id)}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors"
               style={route === n.id
                 ? { background: "rgba(255,255,255,0.15)", color: B.white, fontWeight: 600 }
                 : { color: "rgba(255,255,255,0.6)" }}>
               <n.icon size={16} className="shrink-0" />
-              <span className="hidden lg:inline">{n.label}</span>
+              <span className="hidden lg:inline flex-1 text-left">{n.label}</span>
+              <NavBadge count={badges[TAB_BADGE_MAP[n.id]] || 0} />
             </button>
           ))}
         </nav>

@@ -440,3 +440,71 @@ WHERE bm.employee_id IS NOT NULL
   AND bm.employee_id != ''
   AND bm.biometric_pin ~ '^[0-9]+$'
 ON CONFLICT (device_serial_number, device_user_id) DO NOTHING;
+
+-- Sidebar notification badges: last-seen tracking per user per tab
+CREATE TABLE IF NOT EXISTS tab_seen (
+  user_id TEXT NOT NULL,
+  tab_name TEXT NOT NULL,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, tab_name)
+);
+
+-- Timestamp columns for badge counts (new since last visit)
+ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE short_leave_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE short_leave_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE announcements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE announcements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE warnings ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE payroll ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- policies/assets already have TEXT created_at/updated_at; add TIMESTAMPTZ siblings
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS ts_created TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS ts_updated TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS ts_created TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS ts_updated TIMESTAMPTZ DEFAULT NOW();
+
+CREATE OR REPLACE FUNCTION touch_updated_at_column() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION touch_ts_updated_column() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.ts_updated = NOW();
+  IF TG_OP = 'INSERT' THEN
+    NEW.ts_created = COALESCE(NEW.ts_created, NOW());
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_leave_requests_updated_at ON leave_requests;
+CREATE TRIGGER trg_leave_requests_updated_at
+  BEFORE UPDATE ON leave_requests
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+DROP TRIGGER IF EXISTS trg_short_leave_updated_at ON short_leave_requests;
+CREATE TRIGGER trg_short_leave_updated_at
+  BEFORE UPDATE ON short_leave_requests
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+DROP TRIGGER IF EXISTS trg_attendance_updated_at ON attendance;
+CREATE TRIGGER trg_attendance_updated_at
+  BEFORE UPDATE ON attendance
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+DROP TRIGGER IF EXISTS trg_policies_ts_updated ON policies;
+CREATE TRIGGER trg_policies_ts_updated
+  BEFORE INSERT OR UPDATE ON policies
+  FOR EACH ROW EXECUTE PROCEDURE touch_ts_updated_column();
+
+DROP TRIGGER IF EXISTS trg_assets_ts_updated ON assets;
+CREATE TRIGGER trg_assets_ts_updated
+  BEFORE INSERT OR UPDATE ON assets
+  FOR EACH ROW EXECUTE PROCEDURE touch_ts_updated_column();

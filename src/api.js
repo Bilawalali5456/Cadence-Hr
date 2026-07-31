@@ -307,6 +307,25 @@ export async function apiFetchWarnings() {
   return sanitizeWarnings(await apiGetJson("/warnings"));
 }
 
+export async function apiFetchBadges() {
+  const res = await apiFetch(`${API_URL}/badges`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("API error " + res.status);
+  return res.json();
+}
+
+export async function apiMarkBadgeSeen(tab) {
+  const res = await apiFetch(`${API_URL}/badges/seen`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ tab }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Mark badge seen failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function apiGetWarnings(params = {}) {
   const q = new URLSearchParams();
   if (params.userId) q.set("userId", params.userId);
