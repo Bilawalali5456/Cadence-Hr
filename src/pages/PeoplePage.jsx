@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
@@ -394,6 +394,7 @@ export function PeoplePage({
                 <td className="px-4 py-3 hidden lg:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
+                    if (!hasOwnAttendance(u.role)) return <span className="text-slate-400">—</span>;
                     const r = getUserTodayRecord(attendance, u.id);
                     const ds = dayStatusPill(resolveDayStatus(u, r, r?.date ?? todayKey(), holidays));
                     return <Pill tone={ds.tone}>{ds.label}</Pill>;
@@ -401,7 +402,7 @@ export function PeoplePage({
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
-                    {canEditPerson(currentUser, u, roles) && (
+                    {canEditPerson(currentUser, u, roles) && !isHrAdminRole(u.role) && (
                       <>
                         {canResetPersonCredentials(currentUser, u, roles) && (
                           <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset credentials"><RefreshCw size={14} /></button>
@@ -775,6 +776,12 @@ export function PeoplePage({
               )}
               {selTab === "Attendance" && readOnly && (
                 <div className="space-y-3">
+                  {!hasOwnAttendance(sel.role) ? (
+                    <p className="text-sm text-slate-400 p-4 rounded-lg bg-slate-50 text-center">
+                      Attendance is not tracked for {sel.role} accounts.
+                    </p>
+                  ) : (
+                  <>
                   <div className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                     <div className="font-medium text-slate-700 mb-1">Today's schedule · {formatShiftRange(sel, todayKey())}</div>
                     {(() => {
@@ -824,6 +831,8 @@ export function PeoplePage({
                       </tbody>
                     </table>
                   </div>
+                  </>
+                  )}
                 </div>
               )}
             </div>

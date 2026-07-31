@@ -76,7 +76,8 @@ export function isHrAdminRequest(req, users) {
 }
 
 export function canSelfSubmitLeave(role) {
-  return isStaffRole(role) || isHrAdminRole(role) || isHrEmployeeRole(role);
+  // Admin / Executive do not apply for leave — they approve others.
+  return isStaffRole(role) || isHrEmployeeRole(role);
 }
 
 export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
