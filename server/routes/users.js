@@ -141,6 +141,9 @@ function buildUserInsertValues(u, { passwordHash, firstLogin, existing } = {}) {
 }
 
 export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
+  // Note: DELETE /api/users/:userId lives in server/index.js and blocks id=u-admin
+  // ("System admin account cannot be deleted").
+
   // HR Admin/Executive: list all users (password/temp never returned).
   app.get("/api/users", requireHrAdmin, async (_req, res) => {
     try {

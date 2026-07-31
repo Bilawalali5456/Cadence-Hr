@@ -8,6 +8,9 @@ import { deleteMappingsForEmployee } from "./pinMapping.js";
 
 export async function deleteEmployeeCascade(pool, userId, actor = null) {
   if (!userId) return { ok: false, error: "Employee id is required." };
+  if (userId === "u-admin") {
+    return { ok: false, error: "System admin account cannot be deleted" };
+  }
 
   const client = await pool.connect();
   const counts = {};

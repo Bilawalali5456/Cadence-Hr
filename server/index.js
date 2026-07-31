@@ -478,6 +478,11 @@ app.delete("/api/users/:userId", requireHrAdmin, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
 
+    // Permanent system admin — never delete.
+    if (userId === "u-admin") {
+      return res.status(403).json({ error: "System admin account cannot be deleted" });
+    }
+
     const actor = req.authUser;
     const { rows: targetRows } = await pool.query("SELECT id, role, name FROM users WHERE id = $1", [userId]);
     if (!targetRows[0]) return res.status(404).json({ error: "Employee not found." });
@@ -490,7 +495,10 @@ app.delete("/api/users/:userId", requireHrAdmin, async (req, res) => {
 
     const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
     const result = await deleteEmployeeCascade(pool, userId, actor);
-    if (!result.ok) return res.status(404).json({ error: result.error });
+    if (!result.ok) {
+      const status = result.error?.includes("cannot be deleted") ? 403 : 404;
+      return res.status(status).json({ error: result.error });
+    }
 
     res.json({
       ok: true,

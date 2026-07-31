@@ -202,6 +202,7 @@ export function canEditPerson(actor, target, roles) {
 
 export function canDeletePerson(actor, target, roles) {
   if (!actor || !target || actor.id === target.id) return false;
+  if (target.id === "u-admin") return false;
   if (isExecutiveRole(target.role)) return false;
   if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
   if (isHrEmployeeRole(target.role)) {

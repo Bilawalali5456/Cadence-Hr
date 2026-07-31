@@ -123,6 +123,11 @@ export function ExecutivesPage({
 
   async function confirmDel() {
     if (delBusy) return;
+    if (delTgt?.id === "u-admin") {
+      setPageErr("System admin account cannot be deleted");
+      setDelOpen(false);
+      return;
+    }
     setDelBusy(true);
     setPageErr("");
     try {
@@ -222,7 +227,9 @@ export function ExecutivesPage({
                     </button>
                     <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400" title="Reset password"><RefreshCw size={14} /></button>
                     <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400" title="Edit"><Edit2 size={14} /></button>
-                    <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
+                    {u.id !== "u-admin" && (
+                      <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
+                    )}
                   </div>
                 </td>
               </tr>

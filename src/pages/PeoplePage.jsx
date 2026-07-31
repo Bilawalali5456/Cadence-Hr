@@ -158,6 +158,11 @@ export function PeoplePage({
 
   async function confirmDel() {
     if (!canDeletePerson(currentUser, delTgt, roles) || delBusy) return;
+    if (delTgt?.id === "u-admin") {
+      setPageErr("System admin account cannot be deleted");
+      setDelOpen(false);
+      return;
+    }
     setDelBusy(true);
     setPageErr("");
     try {
@@ -420,7 +425,9 @@ export function PeoplePage({
                       <>
                         <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset credentials"><RefreshCw size={14} /></button>
                         <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600" title="Edit HR Admin"><Edit2 size={14} /></button>
-                        <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Remove HR Admin"><Trash2 size={14} /></button>
+                        {u.id !== "u-admin" && (
+                          <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Remove HR Admin"><Trash2 size={14} /></button>
+                        )}
                       </>
                     )}
                   </div>
@@ -526,7 +533,7 @@ export function PeoplePage({
                   {canResetPersonCredentials(currentUser, sel, roles) && (
                     <button onClick={() => openReset(sel)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400" title="Reset credentials"><RefreshCw size={15} /></button>
                   )}
-                  {canDeletePerson(currentUser, sel, roles) && (
+                  {canDeletePerson(currentUser, sel, roles) && sel.id !== "u-admin" && (
                     <button onClick={() => openDel(sel)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Remove"><Trash2 size={15} /></button>
                   )}
                   <button onClick={() => setSel(null)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={16} /></button>
