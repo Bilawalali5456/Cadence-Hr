@@ -1409,8 +1409,8 @@ export function cnicDigitsForUser(user) {
 
 export const LOGIN_ROLES = [
   {
-    id: "HR Admin",
-    label: "HR Admin",
+    id: "Admin",
+    label: "Admin",
     icon: Shield,
     color: B.red,
     description: "Manage employees, payroll, attendance & settings",
@@ -1447,6 +1447,8 @@ export const LOGIN_ROLES = [
 
 export function loginRoleMatchesSelection(selectedRole, actualRole) {
   if (selectedRole === actualRole) return true;
+  // Login card shows "Admin"; DB role remains "HR Admin".
+  if (selectedRole === "Admin" && actualRole === "HR Admin") return true;
   // Managers use the employee portal; Employee card still accepts Manager accounts.
   if (selectedRole === "Employee" && actualRole === "Manager") return true;
   return false;
