@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Send, Trash2, Plus, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
+import { can, isHrOpsRole, isExecutiveRole } from "../utils.js";
 import { buildAnnouncementNotifications, sendAnnouncementEmails } from "../notifications.js";
 import { Card, Modal, TextInput, Btn } from "../components/ui.jsx";
 import { apiCreateAnnouncement, apiUpdateAnnouncement, apiDeleteAnnouncement } from "../api.js";
@@ -10,7 +10,7 @@ export function AnnouncementsPage({ currentUser, anns = [], setAnns, roles, user
   const list = (anns || []).filter(a => a && a.id);
   const canManage =
     can(currentUser.role, "manage_announcements", roles) ||
-    isHrAdminRole(currentUser.role) ||
+    isHrOpsRole(currentUser.role) ||
     isExecutiveRole(currentUser.role);
   const [addOpen, setAddOpen] = useState(false);
   const [nt, setNt] = useState("");

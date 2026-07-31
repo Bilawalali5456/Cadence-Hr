@@ -102,7 +102,34 @@ export async function cleanupExpiredSessions(pool) {
   await pool.query("DELETE FROM user_sessions WHERE expires_at <= NOW()");
 }
 
-export const HR_ADMIN_ROLES = ["HR Admin", "Executive"];
+export const HR_ADMIN_ROLES = ["HR Admin", "Executive", "HR Employee"];
+
+/** Hierarchy rank: Executive > HR Admin > HR Employee > Manager/Employee */
+export function roleAuthorityRank(role) {
+  if (role === "Executive") return 40;
+  if (role === "HR Admin") return 30;
+  if (role === "HR Employee") return 20;
+  if (role === "Manager" || role === "Employee") return 10;
+  return 0;
+}
+
+/** True when actor may manage (edit/delete) a user with targetRole. */
+export function canManageTargetRole(actorRole, targetRole) {
+  if (!actorRole || !targetRole) return false;
+  return roleAuthorityRank(actorRole) > roleAuthorityRank(targetRole);
+}
+
+/** Roles the actor is allowed to assign when creating/updating users. */
+export function canAssignRole(actorRole, newRole) {
+  if (!actorRole || !newRole) return false;
+  if (newRole === "Executive") return actorRole === "Executive";
+  if (newRole === "HR Admin") return actorRole === "Executive";
+  if (newRole === "HR Employee") return actorRole === "HR Admin" || actorRole === "Executive";
+  if (newRole === "Employee" || newRole === "Manager") {
+    return HR_ADMIN_ROLES.includes(actorRole);
+  }
+  return false;
+}
 
 function authFailPayload(req, reason) {
   const token = extractSessionToken(req);
@@ -135,7 +162,7 @@ export function createRequireAuth(pool) {
   };
 }
 
-/** Require HR Admin or Executive role. Sets req.authUser. */
+/** Require HR Admin, HR Employee, or Executive role. Sets req.authUser. */
 export function createRequireHrAdmin(pool) {
   return async function requireHrAdmin(req, res, next) {
     try {
@@ -148,7 +175,7 @@ export function createRequireHrAdmin(pool) {
         return res.status(401).json(authFailPayload(req, "invalid_or_expired_session"));
       }
       if (!HR_ADMIN_ROLES.includes(user.role)) {
-        return res.status(403).json({ error: "Forbidden — HR Admin or Executive only" });
+        return res.status(403).json({ error: "Forbidden — HR Admin, HR Employee, or Executive only" });
       }
       req.authUser = user;
       next();

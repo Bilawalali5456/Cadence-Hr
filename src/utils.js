@@ -1,4 +1,4 @@
-import { Users, Briefcase, Check, User, Shield } from "lucide-react";
+import { Users, Briefcase, Check, User, Shield, ShieldCheck } from "lucide-react";
 import { B } from "./brand.jsx";
 
 export const DEFAULT_COMPANY = { officeStart: "09:00", graceMinutes: 15, currency: "PKR" };
@@ -21,16 +21,53 @@ export function isHrAdminRole(role) {
   return role === "HR Admin";
 }
 
+export function isHrEmployeeRole(role) {
+  return role === "HR Employee";
+}
+
+/** Admin powers without necessarily being classic HR Admin (includes HR Employee). */
+export function isHrOpsRole(role) {
+  return isHrAdminRole(role) || isHrEmployeeRole(role);
+}
+
 export function isExecutiveRole(role) {
   return role === "Executive";
 }
 
+/** Roles that clock in/out and appear on attendance rosters. */
+export function hasOwnAttendance(role) {
+  return isStaffRole(role) || isHrEmployeeRole(role);
+}
+
+/** Admin portal (People, Reports, Biometric, org attendance, etc.). */
+export function hasAdminPortalAccess(role) {
+  return isHrOpsRole(role) || isExecutiveRole(role);
+}
+
+export function roleAuthorityRank(role) {
+  if (isExecutiveRole(role)) return 40;
+  if (isHrAdminRole(role)) return 30;
+  if (isHrEmployeeRole(role)) return 20;
+  if (isStaffRole(role)) return 10;
+  return 0;
+}
+
+export function canManageTargetRole(actorRole, targetRole) {
+  if (!actorRole || !targetRole) return false;
+  return roleAuthorityRank(actorRole) > roleAuthorityRank(targetRole);
+}
+
+/** Attendance-tracked people: Employee, Manager, HR Employee. */
 export function employeeRoster(users) {
-  return users.filter(u => isStaffRole(u.role));
+  return users.filter(u => hasOwnAttendance(u.role));
 }
 
 export function hrAdminRoster(users) {
   return users.filter(u => isHrAdminRole(u.role));
+}
+
+export function hrEmployeeRoster(users) {
+  return users.filter(u => isHrEmployeeRole(u.role));
 }
 
 export function isHrAdminRequest(req, users) {
@@ -39,14 +76,14 @@ export function isHrAdminRequest(req, users) {
 }
 
 export function canSelfSubmitLeave(role) {
-  return isStaffRole(role) || isHrAdminRole(role);
+  return isStaffRole(role) || isHrAdminRole(role) || isHrEmployeeRole(role);
 }
 
 export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
   const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
   if (isExecutiveRole(role)) return list;
-  if (isHrAdminRole(role)) {
+  if (isHrOpsRole(role)) {
     return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
   if (can(role, "approve_short_leave", roles)) {
@@ -59,7 +96,7 @@ export function visibleLeaveRequests(requests, currentUser, users, roles) {
   const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
   if (isExecutiveRole(role)) return list;
-  if (isHrAdminRole(role)) {
+  if (isHrOpsRole(role)) {
     return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
   if (can(role, "approve_leave", roles)) {
@@ -73,7 +110,7 @@ export function canApproveShortLeaveRequest(approver, req, users, roles) {
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_short_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
+  return isHrOpsRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
 }
 
 export function canApproveLeaveRequest(approver, req, users, roles) {
@@ -81,7 +118,7 @@ export function canApproveLeaveRequest(approver, req, users, roles) {
   if (req.userId === approver.id) return false;
   if (!can(approver.role, "approve_leave", roles)) return false;
   if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrAdminRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
+  return isHrOpsRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
 }
 
 /** Executive super-authority: reverse or change any leave decision after HR/others have acted. */
@@ -89,10 +126,10 @@ export function canOverrideLeaveDecision(actor) {
   return !!actor && isExecutiveRole(actor.role);
 }
 
-/** Authority tier for approval hierarchy: Executive (2) > Admin/Manager (1). */
+/** Authority tier for approval hierarchy: Executive (2) > Admin/HR Employee/Manager (1). */
 export function approvalAuthorityTier(role) {
   if (isExecutiveRole(role)) return 2;
-  if (isHrAdminRole(role) || role === "Manager") return 1;
+  if (isHrOpsRole(role) || role === "Manager") return 1;
   return 0;
 }
 
@@ -148,20 +185,41 @@ export function canManageHrAdmin(actor, target, roles) {
 
 export function canEditPerson(actor, target, roles) {
   if (!actor || !target) return false;
-  if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) return true;
-  return canManageHrAdmin(actor, target, roles);
+  if (actor.id === target.id) return false;
+  if (isExecutiveRole(target.role)) return false;
+  if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
+  if (isHrEmployeeRole(target.role)) {
+    // Only Admin / Executive may manage HR Employee (not peers, not self).
+    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
+      && can(actor.role, "manage_employees", roles);
+  }
+  if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) {
+    return canManageTargetRole(actor.role, target.role) || isHrOpsRole(actor.role) || isExecutiveRole(actor.role);
+  }
+  return false;
 }
 
 export function canDeletePerson(actor, target, roles) {
   if (!actor || !target || actor.id === target.id) return false;
+  if (isExecutiveRole(target.role)) return false;
+  if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
+  if (isHrEmployeeRole(target.role)) {
+    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
+      && can(actor.role, "manage_employees", roles);
+  }
   if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) return true;
-  return canManageHrAdmin(actor, target, roles);
+  return false;
 }
 
 export function canResetPersonCredentials(actor, target, roles) {
   if (!actor || !target) return false;
+  if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
+  if (isHrEmployeeRole(target.role)) {
+    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
+      && can(actor.role, "manage_employees", roles);
+  }
   if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) return true;
-  return canManageHrAdmin(actor, target, roles);
+  return false;
 }
 
 export function canDeleteLeaveRecord(actor, req, users, roles) {
@@ -171,7 +229,7 @@ export function canDeleteLeaveRecord(actor, req, users, roles) {
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRole(requester?.role)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_leave", roles)) return false;
-  return isHrAdminRole(actor.role) || actor.role === "Manager";
+  return isHrOpsRole(actor.role) || actor.role === "Manager";
 }
 
 export function canDeleteShortLeaveRecord(actor, req, users, roles) {
@@ -181,37 +239,55 @@ export function canDeleteShortLeaveRecord(actor, req, users, roles) {
   const requester = users.find(u => u.id === req.userId);
   if (isHrAdminRequest(req, users)) return canManageHrAdmin(actor, requester, roles);
   if (!can(actor.role, "approve_short_leave", roles)) return false;
-  return isHrAdminRole(actor.role) || actor.role === "Manager";
+  return isHrOpsRole(actor.role) || actor.role === "Manager";
 }
 
 export function sortHrAdminFirst(users) {
   return [...users].sort((a, b) => {
-    const aHr = isHrAdminRole(a.role) ? 0 : 1;
-    const bHr = isHrAdminRole(b.role) ? 0 : 1;
-    return aHr - bHr || (a.name || "").localeCompare(b.name || "");
+    const rank = (r) => {
+      if (isHrAdminRole(r)) return 0;
+      if (isHrEmployeeRole(r)) return 1;
+      return 2;
+    };
+    return rank(a.role) - rank(b.role) || (a.name || "").localeCompare(b.name || "");
   });
 }
 
 export function attendanceVisibleUserIds(users, viewerRole) {
-  const ids = employeeRoster(users).map(u => u.id);
+  const tracked = employeeRoster(users).map(u => u.id);
   if (isExecutiveRole(viewerRole)) {
-    return new Set([...ids, ...hrAdminRoster(users).map(u => u.id)]);
+    return new Set([...tracked, ...hrAdminRoster(users).map(u => u.id)]);
   }
-  return new Set(ids);
+  // HR Admin & HR Employee see all attendance-tracked users (incl. HR Employees).
+  return new Set(tracked);
 }
 
-/** Staff roster for People / profile lists — executives also see HR Admin accounts (HR Admin first). */
+/** Staff roster for People / profile lists. */
 export function peopleRoster(users, viewerRole) {
-  const staff = employeeRoster(users);
   if (isExecutiveRole(viewerRole)) {
-    return sortHrAdminFirst([...hrAdminRoster(users), ...staff]);
+    return sortHrAdminFirst([
+      ...hrAdminRoster(users),
+      ...hrEmployeeRoster(users),
+      ...users.filter(u => isStaffRole(u.role)),
+    ]);
   }
-  return staff;
+  if (isHrAdminRole(viewerRole)) {
+    // Admin manages HR Employees + staff (not other Admins).
+    return sortHrAdminFirst([
+      ...hrEmployeeRoster(users),
+      ...users.filter(u => isStaffRole(u.role)),
+    ]);
+  }
+  if (isHrEmployeeRole(viewerRole)) {
+    // HR Employee manages Manager + Employee only.
+    return users.filter(u => isStaffRole(u.role));
+  }
+  return users.filter(u => isStaffRole(u.role));
 }
 
 /** Active users included in live attendance & payroll views for the current role. */
 export function activeAttendanceRoster(users, viewerRole) {
-  return peopleRoster(users, viewerRole).filter(u => u.status === "active");
+  return peopleRoster(users, viewerRole).filter(u => u.status === "active" && hasOwnAttendance(u.role));
 }
 
 export function activePayrollRoster(users, viewerRole) {
@@ -687,7 +763,7 @@ export function wasCorrectedByExecutive(record) {
 
 export function canCorrectAttendance(actor, record) {
   if (!actor) return false;
-  if (!isHrAdminRole(actor.role) && !isExecutiveRole(actor.role)) return false;
+  if (!isHrOpsRole(actor.role) && !isExecutiveRole(actor.role)) return false;
   if (isExecutiveRole(actor.role)) return true;
   return !wasCorrectedByExecutive(record);
 }
@@ -1336,6 +1412,13 @@ export const LOGIN_ROLES = [
     icon: Shield,
     color: B.red,
     description: "Manage employees, payroll, attendance & settings",
+  },
+  {
+    id: "HR Employee",
+    label: "HR Employee",
+    icon: ShieldCheck,
+    color: "#6366f1",
+    description: "HR with attendance tracking",
   },
   {
     id: "Employee",

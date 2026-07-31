@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Search, Trash2, Edit2, Save, Plus, Phone, Package } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isStaffRole, isHrAdminRole, todayKey } from "../utils.js";
+import { can, isStaffRole, isHrAdminRole, isHrEmployeeRole, todayKey } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { apiCreateAsset, apiUpdateAsset, apiDeleteAsset } from "../api.js";
 
@@ -26,7 +26,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
 
   const employeeOptions = [
     { value: "", label: "Unassigned (available)" },
-    ...users.filter(u => u.status === "active" && (isStaffRole(u.role) || isHrAdminRole(u.role))).map(u => ({ value: u.id, label: `${u.name} · ${u.dept || u.role}` })),
+    ...users.filter(u => u.status === "active" && (isStaffRole(u.role) || isHrAdminRole(u.role) || isHrEmployeeRole(u.role))).map(u => ({ value: u.id, label: `${u.name} · ${u.dept || u.role}` })),
   ];
 
   const visible = canViewAll

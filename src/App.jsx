@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isExecutiveRole, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -31,8 +31,8 @@ const NAV = [
   { id: "shortleave",    label: "Short Leave",    icon: Timer,           permission: "view_leave" },
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
-  { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Admin", "Executive"] },
-  { id: "biometric",     label: "Biometric",      icon: Fingerprint,     roles: ["HR Admin", "Executive"] },
+  { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Admin", "HR Employee", "Executive"] },
+  { id: "biometric",     label: "Biometric",      icon: Fingerprint,     roles: ["HR Admin", "HR Employee", "Executive"] },
   { id: "holidays",      label: "Holidays",       icon: Calendar,        permission: null },
   { id: "policies",      label: "Policies",       icon: FileText,        permission: "view_policies" },
   { id: "assets",        label: "Assets",         icon: Package,         permission: "view_assets" },
@@ -95,7 +95,7 @@ export default function App() {
   }
 
   function canFetchUserRoster(role) {
-    return isHrAdminRole(role) || isExecutiveRole(role);
+    return hasAdminPortalAccess(role);
   }
 
   /** Refresh only the collections needed for the active tab (no full page reload). */
@@ -373,7 +373,7 @@ export default function App() {
   const rosterUsers = canFetchUserRoster(role) ? users : [];
   const nav  = NAV.filter(n => {
     if (n.roles) return n.roles.includes(role);
-    if (n.id === "myprofile") return isStaffRole(role);
+    if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;
     return can(role, n.permission, roles);
   });

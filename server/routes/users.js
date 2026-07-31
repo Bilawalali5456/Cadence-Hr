@@ -1,5 +1,5 @@
 import bcryptjs from "bcryptjs";
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_ADMIN_ROLES, canManageTargetRole, canAssignRole } from "../lib/auth.js";
 
 function isBcryptHash(pw) {
   return typeof pw === "string" && (pw.startsWith("$2a$") || pw.startsWith("$2b$"));
@@ -176,15 +176,21 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
   // HR only: create user with initial temp password + first_login=true.
   app.post("/api/users", requireHrAdmin, async (req, res) => {
     try {
+      const actor = req.authUser;
       const u = req.body || {};
       if (!u.id || !u.name || !u.email || !u.password) {
         return res.status(400).json({ error: "id, name, email, and password are required" });
       }
 
+      const newRole = u.role || "Employee";
+      if (!canAssignRole(actor.role, newRole)) {
+        return res.status(403).json({ error: `Forbidden — cannot create users with role ${newRole}` });
+      }
+
       const passwordHash = hashPasswordIfNeeded(u.password);
       const firstLogin = !!u.firstLogin;
 
-      const values = buildUserInsertValues(u, { passwordHash, firstLogin, existing: null });
+      const values = buildUserInsertValues({ ...u, role: newRole }, { passwordHash, firstLogin, existing: null });
 
       await pool.query(
         `INSERT INTO users (
@@ -248,12 +254,35 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       }
 
       const bodyRaw = req.body || {};
-      const body = canHr ? bodyRaw : pickAllowedSelfFields(bodyRaw);
 
       const { rows: existingRows } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [targetId]);
       if (!existingRows[0]) return res.status(404).json({ error: "User not found" });
 
       const existing = userRowToJs(existingRows[0]);
+
+      let body;
+      if (!canHr) {
+        body = pickAllowedSelfFields(bodyRaw);
+      } else if (actor.id === targetId) {
+        // HR Admin / HR Employee cannot change own role or salary via this endpoint.
+        body = { ...bodyRaw };
+        delete body.role;
+        delete body.salary;
+        if (actor.role === "HR Employee" || actor.role === "HR Admin") {
+          // Keep password reset for self via settings elsewhere; strip elevated fields.
+          delete body.password;
+        }
+      } else {
+        if (!canManageTargetRole(actor.role, existing.role)) {
+          return res.status(403).json({ error: "Forbidden — cannot manage this user (role hierarchy)" });
+        }
+        body = { ...bodyRaw };
+        if (body.role !== undefined && body.role !== existing.role) {
+          if (!canAssignRole(actor.role, body.role)) {
+            return res.status(403).json({ error: `Forbidden — cannot assign role ${body.role}` });
+          }
+        }
+      }
 
       const passwordHash = body.password !== undefined
         ? hashPasswordIfNeeded(body.password)

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
@@ -18,6 +18,16 @@ export function PeoplePage({
 }) {
   const canManage = can(currentUser.role, "manage_employees", roles);
   const readOnly = !canManage;
+  const formRoleOptions = (isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role))
+    ? [
+        { value: "Employee", label: "Employee" },
+        { value: "Manager", label: "Manager" },
+        { value: "HR Employee", label: "HR Employee" },
+      ]
+    : [
+        { value: "Employee", label: "Employee" },
+        { value: "Manager", label: "Manager" },
+      ];
   const [q,         setQ]         = useState("");
   const [sel,       setSel]       = useState(null);
   const [selTab,    setSelTab]    = useState("Overview");
@@ -71,7 +81,7 @@ export function PeoplePage({
   function openDel(u)   { setDelTgt(u);  setDelOpen(true); }
   function openReset(u) { setResetTgt(u); setResetResult(""); setNewEmail(""); setResetOpen(true); }
   function openWarning(u, defaultReason = "") {
-    if (!u || !canManage || !isStaffRole(u.role)) return;
+    if (!u || !canManage || !(isStaffRole(u.role) || isHrEmployeeRole(u.role))) return;
     setWarnTgt(u);
     setWarnDefaultReason(defaultReason || "");
     setWarnOpen(true);
@@ -212,7 +222,7 @@ export function PeoplePage({
   function managingSel() {
     if (!sel) return false;
     if (canManageHrAdmin(currentUser, sel, roles)) return true;
-    // HR Admin / Executive with manage_employees: full control over staff profiles
+    if (canEditPerson(currentUser, sel, roles)) return true;
     if (canManage && isStaffRole(sel.role) && sel.id !== currentUser.id) return true;
     return false;
   }
@@ -231,7 +241,7 @@ export function PeoplePage({
 
   async function issueWarning({ type, reason, date }) {
     const emp = warnTgt;
-    if (!emp || !canManage || !isStaffRole(emp.role) || !setWarnings) return;
+    if (!emp || !canManage || !(isStaffRole(emp.role) || isHrEmployeeRole(emp.role)) || !setWarnings) return;
     const warning = {
       id: genId(),
       userId: emp.id,
@@ -391,14 +401,16 @@ export function PeoplePage({
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1 justify-end">
-                    {canManage && isStaffRole(u.role) && (
+                    {canEditPerson(currentUser, u, roles) && (
                       <>
-                        <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset credentials"><RefreshCw size={14} /></button>
+                        {canResetPersonCredentials(currentUser, u, roles) && (
+                          <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset credentials"><RefreshCw size={14} /></button>
+                        )}
                         <button onClick={() => openEdit(u)}  className="p-1.5 rounded-lg hover:bg-blue-50  text-slate-400 hover:text-blue-600"  title="Edit"><Edit2 size={14} /></button>
-                        {u.id !== currentUser.id && (
+                        {canDeletePerson(currentUser, u, roles) && (
                           <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
                         )}
-                        {u.id !== currentUser.id && (
+                        {u.id !== currentUser.id && (isStaffRole(u.role) || isHrEmployeeRole(u.role)) && (
                           <button onClick={() => openWarning(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-amber-500 hover:text-orange-600" title="Issue warning"><AlertTriangle size={14} /></button>
                         )}
                       </>
@@ -423,7 +435,7 @@ export function PeoplePage({
 
       {/* Add */}
       <Modal open={addOpen} onClose={() => !emailSending && setAddOpen(false)} title="Add new employee" wide>
-        <EmployeeForm form={form} setForm={setForm} ferr="" />
+        <EmployeeForm form={form} setForm={setForm} ferr="" roleOptions={formRoleOptions} />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
           A temporary password will be generated and emailed to the work address above (login URL: https://hrms.adforcesolutions.com). They must change it on first login.
         </div>
@@ -436,7 +448,7 @@ export function PeoplePage({
 
       {/* Edit */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={isHrAdminRole(editTgt?.role) ? "Edit HR Admin" : "Edit employee"} wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} roleOptions={formRoleOptions} />
         <div className="flex gap-2 mt-4">
           <Btn onClick={saveEdit}><Save size={14} />Save changes</Btn>
           <Btn variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Btn>
@@ -542,7 +554,7 @@ export function PeoplePage({
                       <span className="font-medium text-slate-800">{v}</span>
                     </div>
                   ))}
-                  {canManage && isStaffRole(sel.role) && sel.id !== currentUser.id && (
+                  {canManage && (isStaffRole(sel.role) || isHrEmployeeRole(sel.role)) && sel.id !== currentUser.id && (
                     <Btn size="sm" variant="ghost" onClick={() => openWarning(sel)}>
                       <AlertTriangle size={13} />Issue warning
                     </Btn>
@@ -551,7 +563,7 @@ export function PeoplePage({
               )}
               {selTab === "Warnings" && (
                 <div className="space-y-3">
-                  {canManage && isStaffRole(sel.role) && sel.id !== currentUser.id && (
+                  {canManage && (isStaffRole(sel.role) || isHrEmployeeRole(sel.role)) && sel.id !== currentUser.id && (
                     <Btn size="sm" onClick={() => openWarning(sel)}>
                       <AlertTriangle size={13} />Issue warning
                     </Btn>

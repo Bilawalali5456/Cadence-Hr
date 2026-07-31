@@ -40,12 +40,15 @@ export function unreadCountForUser(notifications, userId) {
 
 export function activeEmployeesAndManagers(users) {
   return (users || []).filter(u =>
-    u && u.status === "active" && (u.role === "Employee" || u.role === "Manager")
+    u && u.status === "active" && (u.role === "Employee" || u.role === "Manager" || u.role === "HR Employee")
   );
 }
 
 export function activeEmployees(users) {
-  return (users || []).filter(u => u && u.status === "active" && isStaffRole(u.role));
+  // Staff + HR Employee (tracked attendance / receive policy emails).
+  return (users || []).filter(u =>
+    u && u.status === "active" && (isStaffRole(u.role) || u.role === "HR Employee")
+  );
 }
 
 export function buildAnnouncementNotifications(users, announcementTitle) {

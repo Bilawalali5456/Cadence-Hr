@@ -3,7 +3,7 @@ import { Clock, User, Shield, Phone, Mail, Landmark } from "lucide-react";
 import { SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, DEFAULT_WEEKLY_SCHEDULE, formatCnicInput } from "../utils.js";
 import { TextInput, SelectInput, ErrBox } from "./ui.jsx";
 
-export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
+export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOptions = null }) {
   const monThuSame = useMemo(() => {
     const days = ["monday", "tuesday", "wednesday", "thursday"];
     const first = form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday;
@@ -59,11 +59,15 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false }) {
         {lockRole ? (
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Role</label>
-            <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700">HR Admin</div>
+            <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700">{form.role || "HR Admin"}</div>
           </div>
         ) : (
           <SelectInput label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })}
-            options={[{ value: "Employee", label: "Employee" }, { value: "Manager", label: "Manager" }]} />
+            options={roleOptions || [
+              { value: "Employee", label: "Employee" },
+              { value: "Manager", label: "Manager" },
+              { value: "HR Employee", label: "HR Employee" },
+            ]} />
         )}
         <SelectInput label="Employment type" value={form.type} onChange={v => setForm({ ...form, type: v })}
           options={[{ value: "Full-time", label: "Full-time" }, { value: "Part-time", label: "Part-time" }, { value: "Contractor", label: "Contractor" }]} />

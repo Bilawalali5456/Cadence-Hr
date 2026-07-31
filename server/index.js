@@ -28,7 +28,7 @@ import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
   revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
-  HR_ADMIN_ROLES, setSessionCookie, clearSessionCookie,
+  HR_ADMIN_ROLES, canManageTargetRole, setSessionCookie, clearSessionCookie,
 } from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
@@ -479,6 +479,14 @@ app.delete("/api/users/:userId", requireHrAdmin, async (req, res) => {
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
 
     const actor = req.authUser;
+    const { rows: targetRows } = await pool.query("SELECT id, role, name FROM users WHERE id = $1", [userId]);
+    if (!targetRows[0]) return res.status(404).json({ error: "Employee not found." });
+    if (actor.id === userId) {
+      return res.status(403).json({ error: "Forbidden — cannot delete your own account" });
+    }
+    if (!canManageTargetRole(actor.role, targetRows[0].role)) {
+      return res.status(403).json({ error: "Forbidden — cannot delete this user (role hierarchy)" });
+    }
 
     const backup = await createDatabaseBackup(pool, `pre-delete-${userId}`);
     const result = await deleteEmployeeCascade(pool, userId, actor);

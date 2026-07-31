@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Search, Trash2, Edit2, Save, Plus, FileText } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isHrAdminRole, isExecutiveRole } from "../utils.js";
+import { can, isHrOpsRole, isExecutiveRole } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { buildPolicyNotifications, sendPolicyEmails } from "../notifications.js";
 import { apiCreatePolicy, apiUpdatePolicy, apiDeletePolicy } from "../api.js";
@@ -13,7 +13,7 @@ export const POLICY_CATEGORIES = [
 export function PoliciesPage({ currentUser, policies, setPolicies, roles, users = [], notifications, setNotifications }) {
   const canManage =
     can(currentUser.role, "manage_policies", roles) ||
-    isHrAdminRole(currentUser.role) ||
+    isHrOpsRole(currentUser.role) ||
     isExecutiveRole(currentUser.role);
   const [catFilter, setCatFilter] = useState("All");
   const [q, setQ] = useState("");

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
@@ -299,13 +299,17 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
 
   return (
     <div className="space-y-5">
-      {isHrAdminRole(role) && (
+      {(isHrAdminRole(role) || isHrEmployeeRole(role)) && (
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
       )}
       <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
         <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
         <div className="text-sm opacity-70 mt-0.5">
-          {role === "Executive" ? `${me.title || "Executive"} · Executive Portal` : "Adforce Solutions · HR Admin Portal"}
+          {role === "Executive"
+            ? `${me.title || "Executive"} · Executive Portal`
+            : role === "HR Employee"
+              ? "Adforce Solutions · HR Employee Portal"
+              : "Adforce Solutions · HR Admin Portal"}
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -433,7 +437,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
         </Card>
       )}
 
-      {isHrAdminRole(role) && staffRoster.length === 0 && (
+      {isHrOpsRole(role) && staffRoster.length === 0 && (
         <Card className="p-8 text-center">
           <UserPlus size={36} className="mx-auto mb-3 text-slate-300" />
           <div className="text-slate-600 font-medium mb-1">No employees yet</div>
