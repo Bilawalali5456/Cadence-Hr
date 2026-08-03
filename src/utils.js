@@ -273,16 +273,13 @@ export function peopleRoster(users, viewerRole) {
       ...users.filter(u => isStaffRole(u.role)),
     ]);
   }
-  if (isHrAdminRole(viewerRole)) {
-    // Admin manages HR Employees + staff (not other Admins).
+  if (isHrAdminRole(viewerRole) || isHrEmployeeRole(viewerRole)) {
+    // Admin & HR Employee: same People visibility (HR Employees + staff). Peer HR Employee
+    // edits stay blocked by canEditPerson; Super Authority (manage HR Admin) stays Executive-only.
     return sortHrAdminFirst([
       ...hrEmployeeRoster(users),
       ...users.filter(u => isStaffRole(u.role)),
     ]);
-  }
-  if (isHrEmployeeRole(viewerRole)) {
-    // HR Employee manages Manager + Employee only.
-    return users.filter(u => isStaffRole(u.role));
   }
   return users.filter(u => isStaffRole(u.role));
 }
@@ -1420,7 +1417,7 @@ export const LOGIN_ROLES = [
     label: "HR Employee",
     icon: ShieldCheck,
     color: "#6366f1",
-    description: "HR with attendance tracking",
+    description: "Full HR admin access with own attendance tracking",
   },
   {
     id: "Employee",

@@ -122,8 +122,13 @@ export function canManageTargetRole(actorRole, targetRole) {
 /** Roles the actor is allowed to assign when creating/updating users. */
 export function canAssignRole(actorRole, newRole) {
   if (!actorRole || !newRole) return false;
-  if (newRole === "Executive") return actorRole === "Executive";
+  // Super Authority: only Executive may create/promote to HR Admin.
   if (newRole === "HR Admin") return actorRole === "Executive";
+  // Admin + HR Employee share manage_executives (not Super Authority).
+  if (newRole === "Executive") {
+    return actorRole === "HR Admin" || actorRole === "HR Employee" || actorRole === "Executive";
+  }
+  // Only Admin / Executive may create HR Employee accounts.
   if (newRole === "HR Employee") return actorRole === "HR Admin" || actorRole === "Executive";
   if (newRole === "Employee" || newRole === "Manager") {
     return HR_ADMIN_ROLES.includes(actorRole);

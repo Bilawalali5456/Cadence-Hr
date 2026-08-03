@@ -1,4 +1,5 @@
--- Ensure HR Employee role exists (safe to re-run on existing databases)
+-- Ensure HR Employee role exists with the same authorities as HR Admin
+-- (does NOT include Super Authority: manage_hr_admin — Executive only)
 INSERT INTO roles (id, name, permissions) VALUES
 ('HR Employee', 'HR Employee', '[
   "view_dashboard","view_people","manage_employees","manage_executives",
