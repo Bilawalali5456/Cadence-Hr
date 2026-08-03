@@ -8,6 +8,28 @@ import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionMod
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
 import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance } from "../api.js";
 
+/** Load attendance for the UI selection; re-poll so App refresh never replaces with "today/month". */
+function useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance) {
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const params = viewMode === "monthly" ? { month } : { date: selectedDate };
+        const list = await apiFetchAttendance(params);
+        if (!cancelled) setAttendance?.(list);
+      } catch (e) {
+        console.error("Failed to fetch attendance:", e?.message || e);
+      }
+    }
+    load();
+    const id = setInterval(load, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [viewMode, month, selectedDate, setAttendance]);
+}
+
 function CheckOutCell({ record, user, dateKey, now = new Date() }) {
   const mode = formatCheckOutDisplay(record, user, dateKey, now);
   if (mode === "—") return "—";
@@ -71,19 +93,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), monthOptions));
   const [now, setNow] = useState(() => new Date());
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const params = viewMode === "monthly" ? { month } : { date: selectedDate };
-        const list = await apiFetchAttendance(params);
-        if (!cancelled) setAttendance?.(list);
-      } catch (e) {
-        console.error("Failed to fetch attendance:", e?.message || e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [viewMode, month, selectedDate, setAttendance]);
+  useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
@@ -259,20 +269,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const params = viewMode === "monthly" ? { month } : { date: selectedDate };
-        const list = await apiFetchAttendance(params);
-        if (cancelled) return;
-        setAttendance(list);
-      } catch (e) {
-        console.error("Failed to fetch attendance:", e?.message || e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [viewMode, month, selectedDate, setAttendance]);
+  useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);

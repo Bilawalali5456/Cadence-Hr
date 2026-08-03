@@ -128,7 +128,7 @@ export default function App() {
     const rosterOk = canFetchUserRoster(roleHint);
     try {
       markRemoteApply();
-      if (key === "home" || key === "reports" || key === "attendance" || key === "biometric") {
+      if (key === "home" || key === "reports" || key === "biometric") {
         const [att, leave, shortLeave, warnings] = await Promise.all([
           apiFetchAttendance({ month: monthKey() }),
           apiFetchLeave(),
@@ -137,6 +137,18 @@ export default function App() {
         ]);
         markRemoteApply();
         setAttendance(att);
+        setLeaveRequests(leave);
+        setShortLeaveRequests(shortLeave);
+        setWarnings(warnings);
+      }
+      if (key === "attendance") {
+        // AttendancePage owns date/month-scoped fetches — never overwrite with current-month data
+        const [leave, shortLeave, warnings] = await Promise.all([
+          apiFetchLeave(),
+          apiFetchShortLeave(),
+          apiFetchWarnings(),
+        ]);
+        markRemoteApply();
         setLeaveRequests(leave);
         setShortLeaveRequests(shortLeave);
         setWarnings(warnings);
