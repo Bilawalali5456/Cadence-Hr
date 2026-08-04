@@ -1123,6 +1123,8 @@ export function displayWorkingHours(record, user, now = new Date()) {
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
   if (!record?.checkIn) return "—";
+  // Trust server-finalized checkout — don't recalculate client-side.
+  if (record.checkOut && record.status !== "Working") return null;
   if (computeDayStatus(user, record, [], now) === "Working") return "—";
   if (effectiveCheckOut(record, user, dateKey, now)) return null;
   return "Missing";
