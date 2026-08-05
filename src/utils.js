@@ -667,6 +667,8 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 }
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
+  // Trust server On Leave status
+  if (record?.status === "On Leave") return "On Leave";
   // Trust server-finalized status
   if (record?.status && record.status !== "Working" && record.checkOut)
     return record.status;
@@ -715,6 +717,7 @@ export function dayStatusPill(status, record = null) {
     "Missing Checkout": { tone: "orange", label: "Missing Checkout" },
     "Half Day": { tone: "red", label: "Short Hours" },
     Absent: { tone: "slate", label: "Absent" },
+    "On Leave": { tone: "blue", label: "On Leave" },
     Off: { tone: "slate", label: "Off" },
     "Weekend Off": { tone: "slate", label: "Weekend Off" },
     "Public Holiday": { tone: "blue", label: "Public Holiday" },
