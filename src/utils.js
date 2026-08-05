@@ -667,6 +667,9 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 }
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
+  // Trust server-finalized status
+  if (record?.status && record.status !== "Working" && record.checkOut)
+    return record.status;
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
   const bounds = getShiftBounds(user, dateKey);
@@ -1122,6 +1125,9 @@ export function displayWorkingHours(record, user, now = new Date()) {
  * Returns "—" | "Missing" | null (show finalized check-out time).
  */
 export function formatCheckOutDisplay(record, user, dateKey = record?.date || todayKey(), now = new Date()) {
+  // Trust server checkOut
+  if (record?.checkOut && record?.status && record.status !== "Working")
+    return null;
   if (!record?.checkIn) return "—";
   // Trust server-finalized checkout — don't recalculate client-side.
   if (record.checkOut && record.status !== "Working") return null;
