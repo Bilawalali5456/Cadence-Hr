@@ -13,8 +13,6 @@ import {
   isAttendanceInProgress,
   resolveDayStatus,
   dayStatusPill,
-  performCheckIn,
-  performCheckOut,
   displayWorkingHours,
   todayKey,
   getPublicHoliday,
@@ -24,13 +22,13 @@ import {
   isApprovedWfhDay,
   isWfhAttendance,
 } from "../utils.js";
-import { apiStartBreak, apiEndBreak, apiBreakStatus } from "../api.js";
+import { apiStartBreak, apiEndBreak, apiBreakStatus, apiWfhCheckin, apiWfhCheckout } from "../api.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
 
 function upsertAttendanceRecord(list, record) {
   if (!record?.id) return list || [];
   const arr = list || [];
-  const idx = arr.findIndex(r => r?.id === record.id);
+  const idx = arr.findIndex(r => r?.id === record.id || (r?.userId === record.userId && r?.date === record.date));
   if (idx >= 0) {
     const next = [...arr];
     next[idx] = record;
@@ -77,12 +75,26 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
     return () => clearInterval(id);
   }, [checkedIn, onBreak, today?.breakStart]);
 
-  function run(action) {
+  async function handleWfhCheckin() {
     setErr("");
-    const result = action();
-    if (result.error) { setErr(result.error); return; }
-    setNow(new Date());
-    setAttendance(result.attendance);
+    try {
+      const record = await apiWfhCheckin();
+      setNow(new Date());
+      setAttendance(prev => upsertAttendanceRecord(prev, record));
+    } catch (e) {
+      setErr(e.message || "WFH check-in failed");
+    }
+  }
+
+  async function handleWfhCheckout() {
+    setErr("");
+    try {
+      const record = await apiWfhCheckout();
+      setNow(new Date());
+      setAttendance(prev => upsertAttendanceRecord(prev, record));
+    } catch (e) {
+      setErr(e.message || "WFH check-out failed");
+    }
   }
 
   async function handleBreakToggle() {
@@ -180,13 +192,13 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         {!dayOff && showManualCheckIn && (checkedIn || !today?.checkIn) && (
           <div className="flex flex-wrap gap-2 justify-center mb-3">
             {!checkedIn && (
-              <Btn onClick={() => run(() => performCheckIn(attendance, user.id, user, new Date(), holidays, leaveRequests))}>
-                <LogIn size={14} />Check in
+              <Btn onClick={handleWfhCheckin}>
+                <LogIn size={14} />Check-in (WFH)
               </Btn>
             )}
             {checkedIn && !onBreak && (
-              <Btn onClick={() => run(() => performCheckOut(attendance, user.id, user, new Date(), holidays))} variant="danger">
-                <LogOut size={14} />Check out
+              <Btn onClick={handleWfhCheckout} variant="danger">
+                <LogOut size={14} />Check-out (WFH)
               </Btn>
             )}
           </div>

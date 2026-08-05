@@ -242,7 +242,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         <Pill tone={ds.tone}>{ds.label}</Pill>
-                        {isWfhAttendance(r, user.id, r.date, leaveRequests, holidays, user) && <Pill tone="blue">WFH</Pill>}
+                        {(r?.source === "wfh" || isWfhAttendance(r, user.id, r.date, leaveRequests, holidays, user)) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
                   </tr>
@@ -561,7 +561,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r?.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
-                        {isWfhAttendance(r, u.id, rowDate, leaveRequests, holidays, u) && <Pill tone="blue">WFH</Pill>}
+                        {(r?.source === "wfh" || isWfhAttendance(r, u.id, rowDate, leaveRequests, holidays, u)) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
                     {canManageCorrections && (
@@ -647,7 +647,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
-                        {isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user) && <Pill tone="blue">WFH</Pill>}
+                        {(r?.source === "wfh" || isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user)) && <Pill tone="blue">WFH</Pill>}
                       </span>
                     </td>
                     {canManageCorrections && (

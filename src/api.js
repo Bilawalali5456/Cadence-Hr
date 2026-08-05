@@ -493,6 +493,28 @@ export async function apiEndBreak(date) {
   return data;
 }
 
+export async function apiWfhCheckin() {
+  const res = await apiFetch(`${API_URL}/attendance/wfh-checkin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `WFH check-in failed (${res.status})`);
+  const list = sanitizeAttendance([data]);
+  return list[0] || data;
+}
+
+export async function apiWfhCheckout() {
+  const res = await apiFetch(`${API_URL}/attendance/wfh-checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `WFH check-out failed (${res.status})`);
+  const list = sanitizeAttendance([data]);
+  return list[0] || data;
+}
+
 export async function apiBreakStatus(date) {
   const q = date ? `?date=${encodeURIComponent(date)}` : "";
   const res = await apiFetch(`${API_URL}/attendance/break/status${q}`, {

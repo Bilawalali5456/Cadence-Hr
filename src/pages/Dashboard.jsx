@@ -1,13 +1,104 @@
 import React, { useState } from "react";
-import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn } from "lucide-react";
+import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
-import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
-import { Pill, Avatar, Card, STitle, Btn } from "../components/ui.jsx";
+import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout } from "../api.js";
+import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 import { IssueWarningModal, warningTypeLabel } from "../components/IssueWarningModal.jsx";
+
+function upsertAtt(list, record) {
+  if (!record?.id) return list || [];
+  const arr = list || [];
+  const idx = arr.findIndex(r => r?.id === record.id || (r?.userId === record.userId && r?.date === record.date));
+  if (idx >= 0) {
+    const next = [...arr];
+    next[idx] = record;
+    return next;
+  }
+  return [...arr, record];
+}
+
+/** WFH portal check-in / check-out for Employee, Manager, HR Employee on approved WFH days. */
+function WfhPortalActions({ user, attendance, setAttendance, leaveRequests }) {
+  const [wfhLoading, setWfhLoading] = useState(false);
+  const [wfhMsg, setWfhMsg] = useState("");
+  const role = user?.role;
+  const canWfhRole = role === "Employee" || role === "Manager" || role === "HR Employee";
+  const today = todayKey();
+  const myToday = getUserTodayRecord(attendance, user.id, user);
+  const hasWfhToday = (leaveRequests || []).some(r =>
+    r && r.userId === user.id && r.type === "WFH" && r.status === "approved"
+    && r.from && r.to && r.from <= today && r.to >= today
+  );
+  const showWfhCheckin = canWfhRole && hasWfhToday
+    && myToday?.source !== "biometric"
+    && (!myToday || (myToday.source === "wfh" && !myToday.checkIn && !myToday.checkOut));
+  const showWfhCheckout = canWfhRole
+    && myToday?.source === "wfh"
+    && !!myToday.checkIn
+    && !myToday.checkOut;
+
+  if (!showWfhCheckin && !showWfhCheckout) return null;
+
+  async function handleWfhCheckin() {
+    setWfhMsg("");
+    setWfhLoading(true);
+    try {
+      const record = await apiWfhCheckin();
+      setAttendance(prev => upsertAtt(prev, record));
+      setWfhMsg("ok:WFH check-in recorded.");
+      setTimeout(() => setWfhMsg(""), 4000);
+    } catch (e) {
+      setWfhMsg(`error:${e.message || "Check-in failed"}`);
+    } finally {
+      setWfhLoading(false);
+    }
+  }
+
+  async function handleWfhCheckout() {
+    setWfhMsg("");
+    setWfhLoading(true);
+    try {
+      const record = await apiWfhCheckout();
+      setAttendance(prev => upsertAtt(prev, record));
+      setWfhMsg("ok:WFH check-out recorded.");
+      setTimeout(() => setWfhMsg(""), 4000);
+    } catch (e) {
+      setWfhMsg(`error:${e.message || "Check-out failed"}`);
+    } finally {
+      setWfhLoading(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <div>
+          <div className="text-sm font-semibold" style={{ color: B.dark }}>Work from Home</div>
+          <div className="text-xs text-slate-500">Approved WFH day — check in/out from the portal</div>
+        </div>
+        <Pill tone="blue">WFH</Pill>
+      </div>
+      {wfhMsg.startsWith("ok:") && <OkBox msg={wfhMsg.slice(3)} />}
+      {wfhMsg.startsWith("error:") && <ErrBox msg={wfhMsg.slice(6)} />}
+      <div className="flex flex-wrap gap-2 mt-2">
+        {showWfhCheckin && (
+          <Btn disabled={wfhLoading} onClick={handleWfhCheckin}>
+            <LogIn size={14} />{wfhLoading ? "Checking in…" : "Check-in (WFH)"}
+          </Btn>
+        )}
+        {showWfhCheckout && (
+          <Btn variant="danger" disabled={wfhLoading} onClick={handleWfhCheckout}>
+            <LogOut size={14} />{wfhLoading ? "Checking out…" : "Check-out (WFH)"}
+          </Btn>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 export function HrAdminOversightPanel({
   users, attendance, shortLeaveRequests, leaveRequests,
@@ -182,6 +273,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           <div className="text-sm opacity-70 mt-0.5">{me.title || me.role} · Shift {formatShiftRange(me)}</div>
         </div>
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
+        <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
         <div className="grid grid-cols-1 gap-4 max-w-xs">
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
@@ -300,7 +392,10 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   return (
     <div className="space-y-5">
       {(isHrEmployeeRole(role)) && (
-        <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
+        <>
+          <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
+          <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
+        </>
       )}
       <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
         <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>

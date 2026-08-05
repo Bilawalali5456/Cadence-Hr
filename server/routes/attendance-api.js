@@ -5,7 +5,18 @@ import {
   hasShiftEnded,
   computeNetWorkingMs,
   computeBreakMs,
+  getCheckInEarliest,
+  isLateCheckIn,
+  computeBiometricDayStatus,
 } from "../lib/attendanceSync.js";
+
+function genAttId() {
+  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function roleHasNoAttendance(role) {
+  return role === "HR Admin" || role === "Executive";
+}
 
 function attToJs(r) {
   return {
@@ -411,6 +422,180 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       });
     } catch (e) {
       console.error("POST /api/attendance/break/end error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── WFH portal check-in / check-out ───
+  app.post("/api/attendance/wfh-checkin", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      if (roleHasNoAttendance(actor.role)) {
+        return res.status(403).json({ error: "Not applicable" });
+      }
+
+      const now = new Date();
+      const today = karachiDateKey(now);
+      const earliest = getCheckInEarliest(today);
+      if (earliest && now < earliest) {
+        return res.status(400).json({ error: "Check-in not allowed before 11:00 AM" });
+      }
+
+      const { rows: wfhRows } = await pool.query(
+        `SELECT id FROM leave_requests
+         WHERE user_id = $1 AND type = 'WFH' AND status = 'approved'
+           AND from_date <= $2 AND to_date >= $2
+         LIMIT 1`,
+        [actor.id, today]
+      );
+      if (!wfhRows[0]) {
+        return res.status(403).json({ error: "No approved WFH leave for today" });
+      }
+
+      const { rows: existing } = await pool.query(
+        `SELECT * FROM attendance WHERE user_id = $1 AND date = $2 LIMIT 1`,
+        [actor.id, today]
+      );
+      if (existing[0]?.check_in) {
+        return res.status(400).json({ error: "Already checked in today" });
+      }
+
+      const { rows: userRows } = await pool.query(
+        `SELECT id, name, role, shift, status FROM users WHERE id = $1 LIMIT 1`,
+        [actor.id]
+      );
+      const dbUser = userRows[0];
+      if (!dbUser || dbUser.status !== "active") {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = { id: dbUser.id, name: dbUser.name, role: dbUser.role, shift: dbUser.shift };
+      const checkInIso = now.toISOString();
+      const late = isLateCheckIn(checkInIso, user, today);
+
+      let inserted;
+      if (existing[0] && !existing[0].check_in) {
+        const { rows: updated } = await pool.query(
+          `UPDATE attendance SET
+             check_in = $1,
+             check_out = NULL,
+             status = 'Present',
+             late = $2,
+             source = 'wfh',
+             check_in_method = 'wfh',
+             check_out_method = NULL,
+             total_break_ms = COALESCE(total_break_ms, 0),
+             breaks = COALESCE(breaks, '[]'::jsonb)
+           WHERE id = $3 AND user_id = $4
+           RETURNING *`,
+          [checkInIso, late, existing[0].id, actor.id]
+        );
+        inserted = updated[0];
+      } else {
+        const { rows: created } = await pool.query(
+          `INSERT INTO attendance (
+             id, user_id, date, check_in, check_out, breaks, short_leaves,
+             auto_checkout, working_ms, total_break_ms, status, late, source,
+             check_in_method, check_out_method
+           ) VALUES ($1,$2,$3,$4,NULL,'[]'::jsonb,'[]'::jsonb,false,NULL,0,'Present',$5,'wfh','wfh',NULL)
+           RETURNING *`,
+          [genAttId(), actor.id, today, checkInIso, late]
+        );
+        inserted = created[0];
+      }
+
+      res.json(attToJs(inserted));
+    } catch (e) {
+      console.error("POST /api/attendance/wfh-checkin error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/attendance/wfh-checkout", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      if (roleHasNoAttendance(actor.role)) {
+        return res.status(403).json({ error: "Not applicable" });
+      }
+
+      const now = new Date();
+      const today = karachiDateKey(now);
+
+      const { rows } = await pool.query(
+        `SELECT * FROM attendance
+         WHERE user_id = $1 AND date = $2 AND source = 'wfh'
+         LIMIT 1`,
+        [actor.id, today]
+      );
+      const row = rows[0];
+      if (!row?.check_in) {
+        return res.status(404).json({ error: "No WFH check-in found for today" });
+      }
+      if (row.check_out) {
+        return res.status(400).json({ error: "Already checked out" });
+      }
+
+      const { rows: userRows } = await pool.query(
+        `SELECT id, name, role, shift, status FROM users WHERE id = $1 LIMIT 1`,
+        [actor.id]
+      );
+      const dbUser = userRows[0];
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = { id: dbUser.id, name: dbUser.name, role: dbUser.role, shift: dbUser.shift };
+
+      const checkOutIso = now.toISOString();
+      let breaks = parseJsonArray(row.breaks);
+      let breakStart = row.break_start || null;
+      // Close an open break at checkout so working_ms is accurate.
+      if (breakStart && !row.break_end) {
+        breaks = [...breaks, { start: breakStart, end: checkOutIso }];
+        breakStart = null;
+      }
+      const shortLeaves = parseJsonArray(row.short_leaves);
+      const totalBreakMs = computeBreakMs(breaks);
+      const workingMs = computeNetWorkingMs(
+        row.check_in,
+        checkOutIso,
+        breaks,
+        shortLeaves,
+        null,
+        null
+      );
+      const status = computeBiometricDayStatus(user, row.check_in, checkOutIso, {
+        dateKey: today,
+        now,
+        breaks,
+        shortLeaves,
+        netWorkingMs: workingMs,
+      });
+
+      const { rows: updated } = await pool.query(
+        `UPDATE attendance SET
+           check_out = $1,
+           check_out_method = 'wfh',
+           working_ms = $2,
+           total_break_ms = $3,
+           breaks = $4,
+           break_start = NULL,
+           break_end = NULL,
+           status = $5
+         WHERE id = $6 AND user_id = $7
+         RETURNING *`,
+        [
+          checkOutIso,
+          workingMs,
+          totalBreakMs,
+          JSON.stringify(breaks),
+          status,
+          row.id,
+          actor.id,
+        ]
+      );
+
+      res.json(attToJs(updated[0]));
+    } catch (e) {
+      console.error("POST /api/attendance/wfh-checkout error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
