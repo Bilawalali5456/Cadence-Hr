@@ -6,6 +6,8 @@ function assetToJs(r) {
     name: r.name,
     assetType: r.asset_type,
     serialNumber: r.serial_number || "",
+    brand: r.brand || "",
+    specifications: r.specifications || "",
     condition: r.condition || "Good",
     remarks: r.remarks || "",
     assignedTo: r.assigned_to || null,
@@ -22,13 +24,15 @@ async function upsertAsset(pool, a) {
 
   const { rows } = await pool.query(
     `INSERT INTO assets (
-       id, name, asset_type, serial_number, condition, remarks,
+       id, name, asset_type, serial_number, brand, specifications, condition, remarks,
        assigned_to, assigned_date, return_date, status, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        asset_type = EXCLUDED.asset_type,
        serial_number = EXCLUDED.serial_number,
+       brand = EXCLUDED.brand,
+       specifications = EXCLUDED.specifications,
        condition = EXCLUDED.condition,
        remarks = EXCLUDED.remarks,
        assigned_to = EXCLUDED.assigned_to,
@@ -42,6 +46,8 @@ async function upsertAsset(pool, a) {
       a.name,
       a.assetType || "Other",
       a.serialNumber || "",
+      a.brand || "",
+      a.specifications || "",
       a.condition || "Good",
       a.remarks || "",
       a.assignedTo || null,

@@ -19,7 +19,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
   const [editId, setEditId] = useState(null);
   const [ferr, setFerr] = useState("");
   const blank = {
-    name: "", assetType: "Laptop", serialNumber: "", condition: "Good", remarks: "",
+    name: "", brand: "", specifications: "", assetType: "Laptop", serialNumber: "", condition: "Good", remarks: "",
     assignedTo: "", assignedDate: "", returnDate: "",
   };
   const [form, setForm] = useState(blank);
@@ -37,7 +37,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     .filter(a => statusFilter === "All" || a.status === statusFilter)
     .filter(a => {
       const assignee = users.find(u => u.id === a.assignedTo);
-      return (a.name + a.serialNumber + a.assetType + (assignee?.name || "")).toLowerCase().includes(q.toLowerCase());
+      return (a.name + (a.brand || "") + a.serialNumber + a.assetType + (assignee?.name || "")).toLowerCase().includes(q.toLowerCase());
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -52,6 +52,8 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     setEditId(a.id);
     setForm({
       name: a.name,
+      brand: a.brand || "",
+      specifications: a.specifications || "",
       assetType: a.assetType || "Other",
       serialNumber: a.serialNumber || "",
       condition: a.condition || "Good",
@@ -80,6 +82,8 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     const now = new Date().toLocaleString();
     const payload = {
       name: form.name.trim(),
+      brand: form.brand.trim(),
+      specifications: form.specifications.trim(),
       assetType: form.assetType,
       serialNumber: form.serialNumber.trim(),
       condition: form.condition,
@@ -194,6 +198,8 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
                     <tr key={a.id} className="border-b border-slate-100 align-top">
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">{a.name}</div>
+                        {a.brand && <div className="text-xs text-slate-500 mt-0.5">{a.brand}</div>}
+                        {a.specifications && <div className="text-xs text-slate-400 mt-0.5">{a.specifications}</div>}
                         {a.remarks && <div className="text-xs text-slate-400 mt-0.5">{a.remarks}</div>}
                       </td>
                       <td className="px-4 py-3">
@@ -232,6 +238,15 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
           <ErrBox msg={ferr} />
           <div className="grid grid-cols-2 gap-3">
             <TextInput label="Asset name" value={form.name} onChange={v => setForm({ ...form, name: v })} required placeholder="e.g. Dell Latitude 5540" />
+            <TextInput label="Brand" value={form.brand} onChange={v => setForm({ ...form, brand: v })} placeholder="e.g. Dell, HP, Apple" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Specifications</label>
+            <textarea value={form.specifications} onChange={e => setForm({ ...form, specifications: e.target.value })} rows={3}
+              placeholder="e.g. Intel i7, 16GB RAM, 512GB SSD"
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <SelectInput label="Asset type" value={form.assetType} onChange={v => setForm({ ...form, assetType: v })}
               options={ASSET_TYPES.map(t => ({ value: t, label: t }))} required />
             <TextInput label="Asset ID / serial number" value={form.serialNumber} onChange={v => setForm({ ...form, serialNumber: v })} required placeholder="e.g. SN-ABC-12345" />

@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS assets (
   name            TEXT NOT NULL,
   asset_type      TEXT NOT NULL DEFAULT 'Other',
   serial_number   TEXT DEFAULT '',
+  brand           TEXT DEFAULT '',
+  specifications  TEXT DEFAULT '',
   condition       TEXT DEFAULT 'Good',
   remarks         TEXT DEFAULT '',
   assigned_to     TEXT,
@@ -150,6 +152,9 @@ CREATE TABLE IF NOT EXISTS assets (
   status          TEXT DEFAULT 'available',
   updated_at      TEXT
 );
+
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS brand TEXT DEFAULT '';
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS specifications TEXT DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS holidays (
   id    TEXT PRIMARY KEY,
