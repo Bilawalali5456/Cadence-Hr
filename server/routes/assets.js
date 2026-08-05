@@ -18,9 +18,23 @@ function assetToJs(r) {
   };
 }
 
+/** Always derive status from assignment (ignore client-sent status). */
+function statusFromAssignment(assignedTo, returnDate) {
+  const hasAssignee = assignedTo != null && String(assignedTo).trim() !== "";
+  if (returnDate && String(returnDate).trim()) return "returned";
+  if (hasAssignee) return "assigned";
+  return "available";
+}
+
 async function upsertAsset(pool, a) {
   const id = a?.id;
   if (!id) throw new Error("asset.id is required");
+
+  const assignedTo = a.assignedTo != null && String(a.assignedTo).trim() !== ""
+    ? a.assignedTo
+    : null;
+  const returnDate = a.returnDate || "";
+  const status = statusFromAssignment(assignedTo, returnDate);
 
   const { rows } = await pool.query(
     `INSERT INTO assets (
@@ -50,10 +64,10 @@ async function upsertAsset(pool, a) {
       a.specifications || "",
       a.condition || "Good",
       a.remarks || "",
-      a.assignedTo || null,
+      assignedTo,
       a.assignedDate || "",
-      a.returnDate || "",
-      a.status || "available",
+      returnDate,
+      status,
       a.updatedAt || "",
     ],
   );

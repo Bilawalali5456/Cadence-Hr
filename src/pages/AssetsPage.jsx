@@ -20,7 +20,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
   const [ferr, setFerr] = useState("");
   const blank = {
     name: "", brand: "", specifications: "", assetType: "Laptop", serialNumber: "", condition: "Good", remarks: "",
-    assignedTo: "", assignedDate: "", returnDate: "",
+    assignedTo: "", assignedDate: "", returnDate: "", status: "available",
   };
   const [form, setForm] = useState(blank);
 
@@ -61,6 +61,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
       assignedTo: a.assignedTo || "",
       assignedDate: a.assignedDate || "",
       returnDate: a.returnDate || "",
+      status: a.assignedTo ? "assigned" : (a.returnDate ? "returned" : "available"),
     });
     setFerr("");
     setOpen(true);
@@ -252,8 +253,16 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
             <TextInput label="Asset ID / serial number" value={form.serialNumber} onChange={v => setForm({ ...form, serialNumber: v })} required placeholder="e.g. SN-ABC-12345" />
             <SelectInput label="Condition" value={form.condition} onChange={v => setForm({ ...form, condition: v })}
               options={ASSET_CONDITIONS.map(c => ({ value: c, label: c }))} />
-            <SelectInput label="Assigned to" value={form.assignedTo} onChange={v => setForm({ ...form, assignedTo: v })}
-              options={employeeOptions} />
+            <SelectInput
+              label="Assigned to"
+              value={form.assignedTo}
+              onChange={v => setForm({
+                ...form,
+                assignedTo: v,
+                status: v ? "assigned" : "available",
+              })}
+              options={employeeOptions}
+            />
             <TextInput label="Assignment date" type="date" value={form.assignedDate} onChange={v => setForm({ ...form, assignedDate: v })} />
             <TextInput label="Return date" type="date" value={form.returnDate} onChange={v => setForm({ ...form, returnDate: v })} />
           </div>
