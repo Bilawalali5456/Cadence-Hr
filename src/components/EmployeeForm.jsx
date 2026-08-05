@@ -3,6 +3,20 @@ import { Clock, User, Shield, Phone, Mail, Landmark } from "lucide-react";
 import { SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, DEFAULT_WEEKLY_SCHEDULE, formatCnicInput } from "../utils.js";
 import { TextInput, SelectInput, ErrBox } from "./ui.jsx";
 
+/** Returns an error message if any weekday has end_time === start_time; otherwise null. */
+export function validateShiftDayTimes(weeklySchedule) {
+  for (const day of SHIFT_WEEKDAYS) {
+    const def = DEFAULT_WEEKLY_SCHEDULE[day];
+    const row = weeklySchedule?.[day] || {};
+    const start = row.shiftStart || def.shiftStart;
+    const end = row.shiftEnd || def.shiftEnd;
+    if (start && end && start === end) {
+      return `End time cannot equal start time for ${SHIFT_DAY_LABELS[day]}`;
+    }
+  }
+  return null;
+}
+
 export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOptions = null }) {
   const monThuSame = useMemo(() => {
     const days = ["monday", "tuesday", "wednesday", "thursday"];
@@ -14,40 +28,69 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
   }, [form.weeklySchedule]);
 
   const [customizeEachDay, setCustomizeEachDay] = useState(() => !monThuSame);
+  const [shiftErr, setShiftErr] = useState("");
 
   useEffect(() => {
     if (!monThuSame) setCustomizeEachDay(true);
   }, [monThuSame]);
 
+  useEffect(() => {
+    setShiftErr(validateShiftDayTimes(form.weeklySchedule) || "");
+  }, [form.weeklySchedule]);
+
   function updateDay(day, field, value) {
-    setForm({
-      ...form,
+    // Functional update avoids stale form overwriting a previous day edit.
+    setForm(prev => ({
+      ...prev,
       weeklySchedule: {
-        ...(form.weeklySchedule || {}),
+        ...(prev.weeklySchedule || {}),
         [day]: {
-          ...(form.weeklySchedule?.[day] || {}),
+          ...(prev.weeklySchedule?.[day] || {}),
           off: false,
           [field]: value,
         },
       },
-    });
+    }));
   }
 
   function updateMonThu(field, value) {
-    const next = { ...(form.weeklySchedule || {}) };
-    ["monday", "tuesday", "wednesday", "thursday"].forEach((day) => {
-      next[day] = {
-        ...(next[day] || {}),
-        off: false,
-        [field]: value,
-      };
+    setForm(prev => {
+      const next = { ...(prev.weeklySchedule || {}) };
+      ["monday", "tuesday", "wednesday", "thursday"].forEach((day) => {
+        next[day] = {
+          ...(next[day] || {}),
+          off: false,
+          [field]: value,
+        };
+      });
+      return { ...prev, weeklySchedule: next };
     });
-    setForm({ ...form, weeklySchedule: next });
+  }
+
+  function handleCustomizeToggle(checked) {
+    setCustomizeEachDay(checked);
+    // Turning customize off: re-sync Mon–Thu from Monday so leftover per-day edits
+    // don't leave a mixed schedule that looks like "all days copied" on next open.
+    if (!checked) {
+      setForm(prev => {
+        const mon = prev.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday;
+        const next = { ...(prev.weeklySchedule || {}) };
+        ["monday", "tuesday", "wednesday", "thursday"].forEach((day) => {
+          next[day] = {
+            ...(next[day] || {}),
+            off: false,
+            shiftStart: mon.shiftStart || DEFAULT_WEEKLY_SCHEDULE.monday.shiftStart,
+            shiftEnd: mon.shiftEnd || DEFAULT_WEEKLY_SCHEDULE.monday.shiftEnd,
+          };
+        });
+        return { ...prev, weeklySchedule: next };
+      });
+    }
   }
 
   return (
     <div className="space-y-3">
-      <ErrBox msg={ferr} />
+      <ErrBox msg={ferr || shiftErr} />
       <div className="grid grid-cols-2 gap-3">
         <TextInput label="Full name"  value={form.name}   onChange={v => setForm({ ...form, name: v })}   required Icon={User} />
         <TextInput label="Work email" type="email" value={form.email}  onChange={v => setForm({ ...form, email: v })}  required Icon={Mail} />
@@ -84,43 +127,49 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
           <Clock size={13} />Work schedule
         </div>
         <div className="space-y-3 rounded-lg border border-slate-200 p-3">
-          <div className="grid grid-cols-[96px_1fr_16px_1fr] gap-2 items-center text-sm">
-            <div className="font-medium text-slate-700">Mon - Thu</div>
-            <input
-              type="time"
-              value={(form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday).shiftStart}
-              onChange={e => updateMonThu("shiftStart", e.target.value)}
-              className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-            />
-            <div className="text-center text-slate-400">-</div>
-            <input
-              type="time"
-              value={(form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday).shiftEnd}
-              onChange={e => updateMonThu("shiftEnd", e.target.value)}
-              className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-            />
-          </div>
-          <div className="grid grid-cols-[96px_1fr_16px_1fr] gap-2 items-center text-sm">
-            <div className="font-medium text-slate-700">Friday</div>
-            <input
-              type="time"
-              value={(form.weeklySchedule?.friday || DEFAULT_WEEKLY_SCHEDULE.friday).shiftStart}
-              onChange={e => updateDay("friday", "shiftStart", e.target.value)}
-              className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-            />
-            <div className="text-center text-slate-400">-</div>
-            <input
-              type="time"
-              value={(form.weeklySchedule?.friday || DEFAULT_WEEKLY_SCHEDULE.friday).shiftEnd}
-              onChange={e => updateDay("friday", "shiftEnd", e.target.value)}
-              className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-            />
-          </div>
+          {/* Shared Mon–Thu / Friday rows only when NOT customizing — otherwise they
+              overwrite per-day values and can copy Monday's times onto every day. */}
+          {!customizeEachDay && (
+            <>
+              <div className="grid grid-cols-[96px_1fr_16px_1fr] gap-2 items-center text-sm">
+                <div className="font-medium text-slate-700">Mon - Thu</div>
+                <input
+                  type="time"
+                  value={(form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday).shiftStart}
+                  onChange={e => updateMonThu("shiftStart", e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+                />
+                <div className="text-center text-slate-400">-</div>
+                <input
+                  type="time"
+                  value={(form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday).shiftEnd}
+                  onChange={e => updateMonThu("shiftEnd", e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+                />
+              </div>
+              <div className="grid grid-cols-[96px_1fr_16px_1fr] gap-2 items-center text-sm">
+                <div className="font-medium text-slate-700">Friday</div>
+                <input
+                  type="time"
+                  value={(form.weeklySchedule?.friday || DEFAULT_WEEKLY_SCHEDULE.friday).shiftStart}
+                  onChange={e => updateDay("friday", "shiftStart", e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+                />
+                <div className="text-center text-slate-400">-</div>
+                <input
+                  type="time"
+                  value={(form.weeklySchedule?.friday || DEFAULT_WEEKLY_SCHEDULE.friday).shiftEnd}
+                  onChange={e => updateDay("friday", "shiftEnd", e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+                />
+              </div>
+            </>
+          )}
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input
               type="checkbox"
               checked={customizeEachDay}
-              onChange={e => setCustomizeEachDay(e.target.checked)}
+              onChange={e => handleCustomizeToggle(e.target.checked)}
             />
             Customize each day
           </label>

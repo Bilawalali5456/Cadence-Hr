@@ -7,7 +7,7 @@ import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../com
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
 import { IssueWarningModal, warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
-import { EmployeeForm } from "../components/EmployeeForm.jsx";
+import { EmployeeForm, validateShiftDayTimes } from "../components/EmployeeForm.jsx";
 
 export function PeoplePage({
   users, setUsers, currentUser, attendance, setAttendance,
@@ -90,6 +90,8 @@ export function PeoplePage({
   async function saveAdd() {
     const email = form.email.trim();
     if (!form.name.trim() || !email) { setFerr("Full name and work email are required."); return; }
+    const shiftTimeErr = validateShiftDayTimes(form.weeklySchedule);
+    if (shiftTimeErr) { setFerr(shiftTimeErr); return; }
     if (!isValidCnic(form.cnic)) { setFerr("A valid 13-digit CNIC is required (format: XXXXX-XXXXXXX-X)."); return; }
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits)) { setFerr("This CNIC is already registered to another employee."); return; }
@@ -134,6 +136,8 @@ export function PeoplePage({
   async function saveEdit() {
     if (!canEditPerson(currentUser, editTgt, roles)) { setFerr("You do not have permission to edit this account."); return; }
     if (!form.name || !form.email) { setFerr("Full name and work email are required."); return; }
+    const shiftTimeErr = validateShiftDayTimes(form.weeklySchedule);
+    if (shiftTimeErr) { setFerr(shiftTimeErr); return; }
     if (!isValidCnic(form.cnic)) { setFerr("A valid 13-digit CNIC is required (format: XXXXX-XXXXXXX-X)."); return; }
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
@@ -443,7 +447,7 @@ export function PeoplePage({
 
       {/* Add */}
       <Modal open={addOpen} onClose={() => !emailSending && setAddOpen(false)} title="Add new employee" wide>
-        <EmployeeForm form={form} setForm={setForm} ferr="" roleOptions={formRoleOptions} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} roleOptions={formRoleOptions} />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
           A temporary password will be generated and emailed to the work address above (login URL: https://hrms.adforcesolutions.com). They must change it on first login.
         </div>
