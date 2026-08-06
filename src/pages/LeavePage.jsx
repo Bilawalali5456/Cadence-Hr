@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import { Check, X, Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision, monthKey } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
-import { apiCreateLeaveRequest, apiUpdateLeaveRequest, apiDeleteLeaveRequest, apiUpdateUser } from "../api.js";
+import { apiCreateLeaveRequest, apiUpdateLeaveRequest, apiDeleteLeaveRequest, apiUpdateUser, apiFetchLeave, apiFetchAttendance } from "../api.js";
 
-export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications }) {
+export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications, setAttendance }) {
   const [form, setForm] = useState({ type: "Annual", from: "", to: "", note: "" });
   const [msg,  setMsg]  = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);
@@ -33,6 +33,14 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
       // If permissions don’t allow direct user updates yet, we rely on existing App sync.
       console.error("Persist leaveBalance failed:", e.message || e);
     }
+  }
+
+  async function refreshLeaveData() {
+    const tasks = [apiFetchLeave()];
+    if (setAttendance) tasks.push(apiFetchAttendance({ month: monthKey() }));
+    const results = await Promise.all(tasks);
+    setRequests(results[0]);
+    if (setAttendance && results[1]) setAttendance(results[1]);
   }
 
   async function submitLeave() {
@@ -90,7 +98,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
       if (prev === "approved" && newStatus !== "approved")  await adjustBalanceAndPersist(req.userId, req.type, +paid);
 
       await apiUpdateLeaveRequest(id, nextReq);
-      setRequests(p => p.map(r => r.id === id ? { ...r, ...patch } : r));
+      await refreshLeaveData();
     } catch (e) {
       setMsg(`error:${e.message || e}`);
     }
@@ -103,7 +111,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     try {
       await apiDeleteLeaveRequest(id);
       if (req.status === "approved") await adjustBalanceAndPersist(req.userId, req.type, +leavePaidDays(req));
-      setRequests(p => p.filter(r => r.id !== id));
+      await refreshLeaveData();
     } catch (e) {
       setMsg(`error:${e.message || e}`);
     }

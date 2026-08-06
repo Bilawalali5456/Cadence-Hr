@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { Check, X, Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, applyApprovedShortLeave, removeShortLeaveFromAttendance, todayKey, formatDate, buildApprovalDecision } from "../utils.js";
+import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, todayKey, monthKey, formatDate, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
-import { apiCreateShortLeaveRequest, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest } from "../api.js";
+import { apiCreateShortLeaveRequest, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchShortLeave, apiFetchAttendance } from "../api.js";
 
 export function ShortLeavePage({ currentUser, requests = [], setRequests, users, attendance, setAttendance, roles }) {
   const [form, setForm] = useState({ date: todayKey(), from: "", to: "", reason: "" });
@@ -12,6 +12,15 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
   const canSubmit = canSelfSubmitLeave(currentUser.role);
   const visibleReqs = visibleShortLeaveRequests(requests, currentUser, users, roles);
   const listHasApprovals = visibleReqs.some(r => canChangeShortLeaveRequestStatus(currentUser, r, users, roles));
+
+  async function refreshShortLeaveData() {
+    const [shortLeave, att] = await Promise.all([
+      apiFetchShortLeave(),
+      apiFetchAttendance({ month: monthKey() }),
+    ]);
+    setRequests(shortLeave);
+    setAttendance(att);
+  }
 
   async function changeStatus(id, newStatus) {
     const req = requests.find(r => r.id === id);
@@ -22,13 +31,7 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
     const nextReq = { ...req, ...patch, status: newStatus };
     try {
       await apiUpdateShortLeaveRequest(id, nextReq);
-      if (newStatus === "approved" && prev !== "approved") {
-        setAttendance(a => applyApprovedShortLeave(a, users, req));
-      }
-      if (prev === "approved" && newStatus !== "approved") {
-        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      }
-      setRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+      await refreshShortLeaveData();
     } catch (e) {
       setMsg(`error:${e.message || e}`);
     }
@@ -40,8 +43,7 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
     try {
       await apiDeleteShortLeaveRequest(id);
-      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      setRequests(rs => rs.filter(r => r.id !== id));
+      await refreshShortLeaveData();
     } catch (e) {
       setMsg(`error:${e.message || e}`);
     }

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
+import { isHrAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
-import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance } from "../api.js";
+import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave } from "../api.js";
 
 /** Load attendance for the UI selection; re-poll so App refresh never replaces with "today/month". */
 function useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance) {
@@ -281,9 +281,20 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const today = todayKey();
   const isSelectedToday = selectedDate === today;
   const pendingShort = (shortLeaveRequests || []).filter(r =>
-    r && canChangeShortLeaveRequestStatus(currentUser, r, users, roles)
+    r && r.status === "pending"
+    && canChangeShortLeaveRequestStatus(currentUser, r, users, roles)
     && !(isExecutiveRole(currentUser.role) && isHrAdminRequest(r, users))
   );
+
+  async function refreshShortLeaveAndAttendance() {
+    const params = viewMode === "monthly" ? { month } : { date: selectedDate };
+    const [shortLeave, att] = await Promise.all([
+      apiFetchShortLeave(),
+      apiFetchAttendance(params),
+    ]);
+    setShortLeaveRequests(shortLeave);
+    setAttendance(att);
+  }
 
   async function changeShortStatus(id, newStatus) {
     const req = shortLeaveRequests.find(r => r.id === id);
@@ -294,13 +305,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     const nextReq = { ...req, ...patch, status: newStatus };
     try {
       await apiUpdateShortLeaveRequest(id, nextReq);
-      if (newStatus === "approved" && prev !== "approved") {
-        setAttendance(a => applyApprovedShortLeave(a, users, req));
-      }
-      if (prev === "approved" && newStatus !== "approved") {
-        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      }
-      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+      await refreshShortLeaveAndAttendance();
     } catch (e) {
       console.error("Short leave approval persist failed:", e.message || e);
     }
@@ -312,8 +317,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
     try {
       await apiDeleteShortLeaveRequest(id);
-      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+      await refreshShortLeaveAndAttendance();
     } catch (e) {
       console.error("Short leave delete failed:", e.message || e);
     }
@@ -410,7 +414,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
           { label: "Absent today", value: absentTodayCount, icon: Users },
-          { label: `${period} hours`, value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
+          { label: period === "daily" ? "Total hours today" : period === "weekly" ? "Weekly hours" : "Monthly hours", value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
             <div className="flex items-center justify-between mb-2">

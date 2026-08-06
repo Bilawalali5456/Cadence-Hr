@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Clock, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
-import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout } from "../api.js";
+import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout, apiFetchShortLeave, apiFetchLeave, apiFetchAttendance } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
@@ -130,13 +130,12 @@ export function HrAdminOversightPanel({
     const nextReq = { ...req, ...patch, status: newStatus };
     try {
       await apiUpdateShortLeaveRequest(id, nextReq);
-      if (newStatus === "approved" && prev !== "approved") {
-        setAttendance(a => applyApprovedShortLeave(a, users, req));
-      }
-      if (prev === "approved" && newStatus !== "approved") {
-        setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      }
-      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+      const [shortLeave, att] = await Promise.all([
+        apiFetchShortLeave(),
+        apiFetchAttendance({ month: monthKey() }),
+      ]);
+      setShortLeaveRequests(shortLeave);
+      setAttendance(att);
     } catch (e) {
       console.error("Short leave approval persist failed:", e.message || e);
     }
@@ -149,13 +148,19 @@ export function HrAdminOversightPanel({
     if (prev === newStatus) return;
     const paid = leavePaidDays(req);
     const patch = buildApprovalDecision(currentUser, newStatus);
+    const nextReq = { ...req, ...patch, status: newStatus };
     const note = buildLeaveStatusNotification(req, newStatus);
     if (note && setNotifications) setNotifications(prev => [...prev, note]);
     try {
       if (newStatus === "approved" && prev !== "approved") await adjustBalanceAndPersist(req.userId, req.type, -paid);
       if (prev === "approved" && newStatus !== "approved") await adjustBalanceAndPersist(req.userId, req.type, +paid);
-      await apiUpdateLeaveRequest(id, { ...req, ...patch, status: newStatus });
-      setLeaveRequests(p => p.map(r => r.id === id ? { ...r, ...patch } : r));
+      await apiUpdateLeaveRequest(id, nextReq);
+      const [leave, att] = await Promise.all([
+        apiFetchLeave(),
+        apiFetchAttendance({ month: monthKey() }),
+      ]);
+      setLeaveRequests(leave);
+      setAttendance(att);
     } catch (e) {
       console.error("Leave approval persist failed:", e.message || e);
     }
@@ -167,8 +172,12 @@ export function HrAdminOversightPanel({
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
     try {
       await apiDeleteShortLeaveRequest(id);
-      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+      const [shortLeave, att] = await Promise.all([
+        apiFetchShortLeave(),
+        apiFetchAttendance({ month: monthKey() }),
+      ]);
+      setShortLeaveRequests(shortLeave);
+      setAttendance(att);
     } catch (e) {
       console.error("Short leave delete failed:", e.message || e);
     }
@@ -333,9 +342,12 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     const nextReq = { ...req, ...patch, status };
     try {
       await apiUpdateShortLeaveRequest(id, nextReq);
-      if (status === "approved" && prev !== "approved") setAttendance(a => applyApprovedShortLeave(a, users, req));
-      if (prev === "approved" && status !== "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      setShortLeaveRequests(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+      const [shortLeave, att] = await Promise.all([
+        apiFetchShortLeave(),
+        apiFetchAttendance({ month: monthKey() }),
+      ]);
+      setShortLeaveRequests(shortLeave);
+      setAttendance(att);
     } catch (e) {
       console.error("Short leave approval persist failed:", e.message || e);
     }
@@ -347,8 +359,12 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
     if (!window.confirm(`Delete this short leave record for ${req.empName}?`)) return;
     try {
       await apiDeleteShortLeaveRequest(id);
-      if (req.status === "approved") setAttendance(a => removeShortLeaveFromAttendance(a, users, req));
-      setShortLeaveRequests(rs => rs.filter(r => r.id !== id));
+      const [shortLeave, att] = await Promise.all([
+        apiFetchShortLeave(),
+        apiFetchAttendance({ month: monthKey() }),
+      ]);
+      setShortLeaveRequests(shortLeave);
+      setAttendance(att);
     } catch (e) {
       console.error("Short leave delete failed:", e.message || e);
     }
