@@ -434,7 +434,13 @@ export default function App() {
 
   const role = currentUser.role;
   const rosterUsers = canFetchUserRoster(role) ? users : [];
+  // Employee and Manager share the same portal sidebar (ignore RBAC gaps like missing view_attendance).
+  const STAFF_PORTAL_IDS = new Set([
+    "home", "attendance", "shortleave", "payroll", "leave",
+    "holidays", "policies", "assets", "announcements", "myprofile", "settings",
+  ]);
   const nav  = NAV.filter(n => {
+    if (role === "Employee" || role === "Manager") return STAFF_PORTAL_IDS.has(n.id);
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;

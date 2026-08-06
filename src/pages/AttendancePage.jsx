@@ -51,13 +51,6 @@ function getRecordForDate(attendance, userId, user, dateKey, now = new Date()) {
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
-  if (currentUser.role === "Manager") {
-    return (
-      <div className="max-w-lg mx-auto p-6 text-center text-sm text-slate-600">
-        Attendance reports are only available to HR Admin and Executive roles.
-      </div>
-    );
-  }
 
   const isAdminView =
     isHrOpsRole(currentUser.role) ||
