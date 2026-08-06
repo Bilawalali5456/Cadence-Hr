@@ -86,13 +86,13 @@ function prevDateKey(dateKey) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
-const STUCK_BREAK_MS = 2 * 60 * 60 * 1000;
+const STUCK_BREAK_MS = 60 * 60 * 1000; // 60 minutes
 
 function isActiveBreak(row) {
   return !!(row?.break_start && !row?.break_end);
 }
 
-/** Open break_start older than 2 hours — treated as a forgotten break end. */
+/** Open break_start older than 60 minutes — treated as a forgotten break end. */
 function isStuckBreak(row, now = new Date()) {
   if (!isActiveBreak(row)) return false;
   const startMs = new Date(row.break_start).getTime();
@@ -372,7 +372,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
           record: null,
         });
       }
-      // Forgotten break: auto-end after 2h and report not on break.
+      // Forgotten break: auto-end after 60 minutes and report not on break.
       if (isStuckBreak(row)) {
         row = await finalizeOpenBreak(pool, row, actor.id, forgottenBreakEndIso(row.break_start));
       }
