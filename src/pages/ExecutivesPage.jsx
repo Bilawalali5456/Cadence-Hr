@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Briefcase, Search, UserPlus, Trash2, Edit2, User, Save, Phone, Mail, RefreshCw, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser } from "../api.js";
-import { todayKey, genId, genTempPw } from "../utils.js";
+import { todayKey, genId, genTempPw, canResetPersonCredentials } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, SelectInput, PwInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 
 export const EXECUTIVE_POSITIONS = [
@@ -10,6 +10,8 @@ export const EXECUTIVE_POSITIONS = [
 ];
 
 export function ExecutivesPage({
+  currentUser,
+  roles = [],
   users, setUsers,
   attendance, setAttendance,
   payroll, setPayroll,
@@ -147,6 +149,10 @@ export function ExecutivesPage({
   }
 
   async function doPasswordReset() {
+    if (!canResetPersonCredentials(currentUser, resetTgt, roles)) {
+      setResetResult("You do not have permission to reset this executive's password.");
+      return;
+    }
     const tempPw = genTempPw();
     setEmailSending(true);
     setResetResult("");
@@ -154,18 +160,21 @@ export function ExecutivesPage({
       const updated = await apiUpdateUser(resetTgt.id, { password: tempPw, firstLogin: true });
       setUsers(p => p.map(u => u.id === resetTgt.id ? updated.user : u));
 
-      await apiSendCredentials({
-        to: resetTgt.email,
-        name: resetTgt.name,
-        email: resetTgt.email,
-        password: tempPw,
-        role: "Executive",
-        isReset: true,
-      });
-
-      setResetResult(`A new temporary password was emailed to ${resetTgt.email}.`);
+      try {
+        await apiSendCredentials({
+          to: resetTgt.email,
+          name: resetTgt.name,
+          email: resetTgt.email,
+          password: tempPw,
+          role: "Executive",
+          isReset: true,
+        });
+        setResetResult(`A new temporary password was emailed to ${resetTgt.email}. They must change it on next login.`);
+      } catch (mailErr) {
+        setResetResult(`Password was reset, but the email could not be sent: ${mailErr.message || mailErr}`);
+      }
     } catch (e) {
-      setResetResult(`Password was reset, but the email could not be sent: ${e.message || e}`);
+      setResetResult(e.message || "Failed to reset password.");
     } finally {
       setEmailSending(false);
     }
@@ -225,7 +234,9 @@ export function ExecutivesPage({
                     <button onClick={() => toggleStatus(u)} className="px-2 py-1 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500" title={u.status === "active" ? "Deactivate" : "Activate"}>
                       {u.status === "active" ? "Deactivate" : "Activate"}
                     </button>
-                    <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400" title="Reset password"><RefreshCw size={14} /></button>
+                    {canResetPersonCredentials(currentUser, u, roles) && (
+                      <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset password"><RefreshCw size={14} /></button>
+                    )}
                     <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400" title="Edit"><Edit2 size={14} /></button>
                     {u.id !== "u-admin" && (
                       <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>

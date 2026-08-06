@@ -276,7 +276,13 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
           delete body.password;
         }
       } else {
-        if (!canManageTargetRole(actor.role, existing.role)) {
+        // Executives outrank HR Admin, but admins with manage_executives may still
+        // update executive accounts (including password reset) — same as create.
+        const mayManageExecutive =
+          existing.role === "Executive"
+          && actor.id !== targetId
+          && canAssignRole(actor.role, "Executive");
+        if (!canManageTargetRole(actor.role, existing.role) && !mayManageExecutive) {
           return res.status(403).json({ error: "Forbidden — cannot manage this user (role hierarchy)" });
         }
         body = { ...bodyRaw };

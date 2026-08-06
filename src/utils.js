@@ -215,6 +215,10 @@ export function canDeletePerson(actor, target, roles) {
 
 export function canResetPersonCredentials(actor, target, roles) {
   if (!actor || !target) return false;
+  if (actor.id === target.id) return false;
+  if (isExecutiveRole(target.role)) {
+    return can(actor.role, "manage_executives", roles);
+  }
   if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
   if (isHrEmployeeRole(target.role)) {
     return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
