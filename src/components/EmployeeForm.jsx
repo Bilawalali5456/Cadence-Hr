@@ -118,8 +118,6 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
         <TextInput label="Salary"    value={form.salary}  onChange={v => setForm({ ...form, salary: v })}  placeholder="e.g. 80,000 PKR" />
         <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
           options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
-        <SelectInput label="Marital status" value={form.maritalStatus || ""} onChange={v => setForm({ ...form, maritalStatus: v })}
-          options={[{ value: "", label: "Select…" }, { value: "Married", label: "Married" }, { value: "Unmarried", label: "Unmarried" }]} />
       </div>
 
       <div className="pt-2 border-t border-slate-100">

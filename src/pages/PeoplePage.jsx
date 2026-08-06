@@ -52,7 +52,7 @@ export function PeoplePage({
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
     status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
-    guardianName: "", maritalStatus: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
+    guardianName: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 20,
     weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
   };
@@ -98,7 +98,7 @@ export function PeoplePage({
     if (users.find(u => u.email.trim().toLowerCase() === email.toLowerCase())) { setFerr("This email already exists."); return; }
     const tempPw = genTempPw();
     const role = form.role || "Employee";
-    const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, ...rest } = form;
+    const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, ...rest } = form;
     const newUser = {
       ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
       shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
@@ -142,7 +142,7 @@ export function PeoplePage({
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already used by another account."); return; }
-    const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, ...rest } = form;
+    const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, ...rest } = form;
     const updated = {
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
@@ -560,7 +560,7 @@ export function PeoplePage({
             <div className="flex-1 overflow-y-auto p-5 text-sm">
               {selTab === "Overview" && (
                 <div className="space-y-3">
-                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Marital status", sel.maritalStatus || "—"], ["Role", sel.role], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
+                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Role", sel.role], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-slate-50 pb-2">
                       <span className="text-slate-400">{k}</span>
                       <span className="font-medium text-slate-800">{v}</span>

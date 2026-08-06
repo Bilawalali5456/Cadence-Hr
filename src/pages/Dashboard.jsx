@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Building, LogIn, LogOut } from "lucide-react";
+import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Clock, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, applyApprovedShortLeave, removeShortLeaveFromAttendance, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
@@ -311,9 +311,18 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   });
 
   const pendingShort = (shortLeaveRequests || []).filter(r =>
-    r && canChangeShortLeaveRequestStatus(me, r, users, roles)
+    r && r.status === "pending"
+    && canChangeShortLeaveRequestStatus(me, r, users, roles)
     && !(isExecutiveRole(role) && isHrAdminRequest(r, users))
   );
+
+  const totalHoursTodayMs = todayRoster.reduce((sum, u) => {
+    const r = getUserTodayRecord(attendance, u.id, u);
+    if (!r?.checkIn) return sum;
+    if (r.workingMs != null) return sum + Number(r.workingMs);
+    if (r.checkOut) return sum + (calcNetWorkingMs(r) || 0);
+    return sum + (calcLiveWorkingMs(r) || 0);
+  }, 0);
 
   async function approveShort(id, status) {
     const req = shortLeaveRequests.find(r => r.id === id);
@@ -409,10 +418,10 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Total employees",  value: staffRoster.length,                                    icon: Users },
-          { label: "Checked in now",   value: checkedInNow.length,                             icon: LogIn },
-          { label: "Departments",      value: [...new Set(staffRoster.map(u => u.dept).filter(Boolean))].length, icon: Building },
-          { label: "Pending setup",    value: staffRoster.filter(u => u.firstLogin).length,          icon: AlertTriangle },
+          { label: "Total employees",   value: staffRoster.length,                           icon: Users },
+          { label: "Checked in now",    value: checkedInNow.length,                          icon: LogIn },
+          { label: "Total hours today", value: formatDurationMs(totalHoursTodayMs),          icon: Clock },
+          { label: "Pending setup",     value: staffRoster.filter(u => u.firstLogin).length, icon: AlertTriangle },
         ].map(k => (
           <Card key={k.label} className="p-4">
             <div className="flex items-center justify-between mb-2">
