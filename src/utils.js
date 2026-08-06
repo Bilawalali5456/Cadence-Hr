@@ -1653,7 +1653,10 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
     .filter(d => !leaveDates.has(d))
     .reduce((sum, d) => sum + requiredMsForShiftDay(user, d), 0);
   const approvedLeaveDays = leaveDates.size;
-  const absentDays = scheduledDates.filter(d => !presentDates.has(d) && !leaveDates.has(d)).length;
+  // No assigned shift → do not treat missed weekdays as Absent (defaults would otherwise apply).
+  const absentDays = !user?.shift
+    ? 0
+    : scheduledDates.filter(d => !presentDates.has(d) && !leaveDates.has(d)).length;
 
   return {
     month,
