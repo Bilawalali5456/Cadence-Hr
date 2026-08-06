@@ -86,8 +86,52 @@ function prevDateKey(dateKey) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
+const STUCK_BREAK_MS = 2 * 60 * 60 * 1000;
+
 function isActiveBreak(row) {
   return !!(row?.break_start && !row?.break_end);
+}
+
+/** Open break_start older than 2 hours — treated as a forgotten break end. */
+function isStuckBreak(row, now = new Date()) {
+  if (!isActiveBreak(row)) return false;
+  const startMs = new Date(row.break_start).getTime();
+  if (Number.isNaN(startMs)) return false;
+  return now.getTime() - startMs > STUCK_BREAK_MS;
+}
+
+function forgottenBreakEndIso(breakStart) {
+  return new Date(new Date(breakStart).getTime() + STUCK_BREAK_MS).toISOString();
+}
+
+/** Close an open break into the breaks[] array and clear break_start / break_end. */
+async function finalizeOpenBreak(pool, row, actorId, breakEndIso) {
+  const breakStart = row.break_start;
+  const breaks = parseJsonArray(row.breaks);
+  breaks.push({ start: breakStart, end: breakEndIso });
+  const shortLeaves = parseJsonArray(row.short_leaves);
+  const totalBreakMs = computeBreakMs(breaks);
+  const endForWorking = row.check_out || breakEndIso;
+  const workingMs = computeNetWorkingMs(
+    row.check_in,
+    endForWorking,
+    breaks,
+    shortLeaves,
+    null,
+    null
+  );
+  const { rows: updated } = await pool.query(
+    `UPDATE attendance SET
+       breaks = $1,
+       break_start = NULL,
+       break_end = NULL,
+       total_break_ms = $2,
+       working_ms = $3
+     WHERE id = $4 AND user_id = $5
+     RETURNING *`,
+    [JSON.stringify(breaks), totalBreakMs, workingMs, row.id, actorId]
+  );
+  return updated[0] || null;
 }
 
 async function loadUserForBreak(pool, userId) {
@@ -318,7 +362,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       const date = String(req.query.date || req.body?.date || "").slice(0, 10) || karachiDateKey(new Date());
       const user = await loadUserForBreak(pool, actor.id);
       if (!user) return res.status(404).json({ error: "User not found" });
-      const row = await findAttendanceForBreak(pool, actor.id, user, date);
+      let row = await findAttendanceForBreak(pool, actor.id, user, date);
       if (!row) {
         return res.json({
           activeBreak: false,
@@ -327,6 +371,10 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
           totalBreakMs: 0,
           record: null,
         });
+      }
+      // Forgotten break: auto-end after 2h and report not on break.
+      if (isStuckBreak(row)) {
+        row = await finalizeOpenBreak(pool, row, actor.id, forgottenBreakEndIso(row.break_start));
       }
       res.json(breakStatusPayload(row));
     } catch (e) {
@@ -342,7 +390,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       const user = await loadUserForBreak(pool, actor.id);
       if (!user) return res.status(404).json({ error: "User not found" });
 
-      const row = await findAttendanceForBreak(pool, actor.id, user, date);
+      let row = await findAttendanceForBreak(pool, actor.id, user, date);
       if (!row?.check_in) {
         return res.status(400).json({ error: "You must check in first" });
       }
@@ -350,7 +398,12 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         return res.status(400).json({ error: "Cannot start a break after check-out" });
       }
       if (isActiveBreak(row)) {
-        return res.status(400).json({ error: "Break already active" });
+        if (isStuckBreak(row)) {
+          // Forgotten break end — close the stuck break, then allow a new start.
+          row = await finalizeOpenBreak(pool, row, actor.id, forgottenBreakEndIso(row.break_start));
+        } else {
+          return res.status(400).json({ error: "Break already active" });
+        }
       }
 
       const breakStart = new Date().toISOString();
@@ -386,38 +439,12 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       const breakEnd = new Date().toISOString();
       const breakStart = row.break_start;
       const breakDuration = Math.max(0, new Date(breakEnd) - new Date(breakStart));
-      const breaks = parseJsonArray(row.breaks);
-      breaks.push({ start: breakStart, end: breakEnd });
-
-      const shortLeaves = parseJsonArray(row.short_leaves);
-      const totalBreakMs = computeBreakMs(breaks);
-      const endForWorking = row.check_out || breakEnd;
-      const workingMs = computeNetWorkingMs(
-        row.check_in,
-        endForWorking,
-        breaks,
-        shortLeaves,
-        null,
-        null
-      );
-
-      const { rows: updated } = await pool.query(
-        `UPDATE attendance SET
-           breaks = $1,
-           break_start = NULL,
-           break_end = NULL,
-           total_break_ms = $2,
-           working_ms = $3
-         WHERE id = $4 AND user_id = $5
-         RETURNING *`,
-        [JSON.stringify(breaks), totalBreakMs, workingMs, row.id, actor.id]
-      );
-      const next = updated[0];
+      const next = await finalizeOpenBreak(pool, row, actor.id, breakEnd);
       res.json({
         ok: true,
         breakEnd,
         breakDuration,
-        totalBreakMs,
+        totalBreakMs: next?.total_break_ms != null ? Number(next.total_break_ms) : 0,
         record: attToJs(next),
       });
     } catch (e) {
