@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from "react";
-import { Calendar, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { B } from "../brand.jsx";
 import { isHrOpsRole, isExecutiveRole, todayKey, formatDate, getHolidayOnDate, upcomingHolidays, remainingPublicHolidaysThisYear, filterValidHolidays, normalizeHolidayType } from "../utils.js";
 import { Pill, Card, STitle, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
-import { apiCreateHoliday, apiDeleteHoliday } from "../api.js";
+import { apiCreateHoliday, apiUpdateHoliday, apiDeleteHoliday } from "../api.js";
 
 const TYPE_OPTIONS = [
   { value: "public", label: "Public Holiday" },
@@ -136,6 +136,7 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
   const year = new Date().getFullYear();
 
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [ferr, setFerr] = useState("");
   const [form, setForm] = useState({ title: "", date: "", type: "public" });
   const [calMonth, setCalMonth] = useState(() => new Date());
@@ -155,8 +156,26 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
   );
   const remainingCount = remainingPublicHolidaysThisYear(safeHolidays, year);
 
+  function closeModal() {
+    setOpen(false);
+    setEditingId(null);
+    setFerr("");
+  }
+
   function openAdd() {
+    setEditingId(null);
     setForm({ title: "", date: "", type: "public" });
+    setFerr("");
+    setOpen(true);
+  }
+
+  function openEdit(h) {
+    setEditingId(h.id);
+    setForm({
+      title: h.title || "",
+      date: h.date || "",
+      type: normalizeHolidayType(h.type),
+    });
     setFerr("");
     setOpen(true);
   }
@@ -165,24 +184,29 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
     setFerr("");
     if (!form.title.trim()) { setFerr("Holiday title is required."); return; }
     if (!form.date) { setFerr("Date is required."); return; }
-    if (safeHolidays.some(h => h.date === form.date && h.title.toLowerCase() === form.title.trim().toLowerCase())) {
+    if (safeHolidays.some(h =>
+      h.id !== editingId
+      && h.date === form.date
+      && h.title.toLowerCase() === form.title.trim().toLowerCase()
+    )) {
       setFerr("A holiday with this title and date already exists.");
       return;
     }
     const payload = {
-      id: "hol-" + Date.now(),
       title: form.title.trim(),
       date: form.date,
       type: normalizeHolidayType(form.type),
     };
     try {
-      const saved = await apiCreateHoliday(payload);
-      if (!saved) throw new Error("Holiday was not saved.");
+      const saved = editingId
+        ? await apiUpdateHoliday(editingId, payload)
+        : await apiCreateHoliday({ id: "hol-" + Date.now(), ...payload });
+      if (!saved) throw new Error(editingId ? "Holiday was not updated." : "Holiday was not saved.");
       setHolidays(prev => [
         ...filterValidHolidays(prev).filter(h => h.id !== saved.id),
         saved,
       ]);
-      setOpen(false);
+      closeModal();
     } catch (e) {
       setFerr(e?.message || String(e));
     }
@@ -238,7 +262,11 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
                       <td className="px-4 py-3 tabular-nums text-slate-600 whitespace-nowrap">{formatDate(h.date)}</td>
                       <td className={`px-4 py-3 font-medium ${past ? "text-slate-500" : "text-slate-800"}`}>{h.title}</td>
                       <td className="px-4 py-3"><Pill tone={typeTone(h.type)}>{typeLabel(h.type)}</Pill></td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <button type="button" onClick={() => openEdit(h)}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Edit">
+                          <Pencil size={14} />
+                        </button>
                         <button type="button" onClick={() => deleteHoliday(h.id)}
                           className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete">
                           <Trash2 size={14} />
@@ -252,15 +280,15 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
           </div>
         </Card>
 
-        <Modal open={open} onClose={() => setOpen(false)} title="Add Holiday">
+        <Modal open={open} onClose={closeModal} title={editingId ? "Edit Holiday" : "Add Holiday"}>
           <div className="space-y-4">
             <TextInput label="Title" value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g. Independence Day" />
             <TextInput label="Date" type="date" value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} />
             <SelectInput label="Type" value={form.type} onChange={v => setForm(f => ({ ...f, type: normalizeHolidayType(v) }))} options={TYPE_OPTIONS} />
             <ErrBox msg={ferr} />
             <div className="flex gap-2 justify-end pt-2">
-              <Btn variant="ghost" onClick={() => setOpen(false)}>Cancel</Btn>
-              <Btn onClick={saveHoliday}>Save holiday</Btn>
+              <Btn variant="ghost" onClick={closeModal}>Cancel</Btn>
+              <Btn onClick={saveHoliday}>{editingId ? "Save changes" : "Save holiday"}</Btn>
             </div>
           </div>
         </Modal>
