@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Search, Trash2, Edit2, Save, Plus, Phone, Package } from "lucide-react";
+import { Search, Trash2, Edit2, Save, Plus, Package } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isStaffRole, isHrAdminRole, isHrEmployeeRole, todayKey } from "../utils.js";
+import { can, isStaffRole, isHrAdminRole, isHrEmployeeRole, todayKey, formatDate } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { apiCreateAsset, apiUpdateAsset, apiDeleteAsset } from "../api.js";
 
@@ -9,6 +9,15 @@ export const ASSET_TYPES = [
   "Laptop", "PC", "Monitor", "Keyboard", "Mouse", "Headphones", "Mobile Phone", "Access Card", "Other",
 ];
 export const ASSET_CONDITIONS = ["New", "Good", "Fair", "Poor", "Damaged"];
+
+function buildReturnLog(userId, userName, returnDate) {
+  if (!userId || !returnDate) return null;
+  return {
+    returned_by: userId,
+    returned_by_name: userName || "",
+    return_date: returnDate,
+  };
+}
 
 export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
   const canManage = can(currentUser.role, "manage_assets", roles);
@@ -23,6 +32,8 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     assignedTo: "", assignedDate: "", returnDate: "", status: "available",
   };
   const [form, setForm] = useState(blank);
+  /** Snapshot of assignee when opening edit — used to build return_log if cleared. */
+  const [editPrevAssignee, setEditPrevAssignee] = useState(null);
 
   const employeeOptions = [
     { value: "", label: "Unassigned (available)" },
@@ -37,12 +48,14 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     .filter(a => statusFilter === "All" || a.status === statusFilter)
     .filter(a => {
       const assignee = users.find(u => u.id === a.assignedTo);
-      return (a.name + (a.brand || "") + a.serialNumber + a.assetType + (assignee?.name || "")).toLowerCase().includes(q.toLowerCase());
+      const returnedBy = a.returnLog?.returned_by_name || "";
+      return (a.name + (a.brand || "") + a.serialNumber + a.assetType + (assignee?.name || "") + returnedBy).toLowerCase().includes(q.toLowerCase());
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
   function openAdd() {
     setEditId(null);
+    setEditPrevAssignee(null);
     setForm({ ...blank, assignedDate: todayKey() });
     setFerr("");
     setOpen(true);
@@ -50,6 +63,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
 
   function openEdit(a) {
     setEditId(a.id);
+    setEditPrevAssignee(a.assignedTo ? { id: a.assignedTo, name: users.find(u => u.id === a.assignedTo)?.name || "" } : null);
     setForm({
       name: a.name,
       brand: a.brand || "",
@@ -61,16 +75,14 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
       assignedTo: a.assignedTo || "",
       assignedDate: a.assignedDate || "",
       returnDate: a.returnDate || "",
-      status: a.assignedTo ? "assigned" : (a.returnDate ? "returned" : "available"),
+      status: a.assignedTo ? "assigned" : "available",
     });
     setFerr("");
     setOpen(true);
   }
 
-  function deriveStatus(assignedTo, returnDate) {
-    if (returnDate) return "returned";
-    if (assignedTo) return "assigned";
-    return "available";
+  function deriveStatus(assignedTo) {
+    return assignedTo ? "assigned" : "available";
   }
 
   async function saveAsset() {
@@ -79,8 +91,15 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
     const assignedTo = form.assignedTo || null;
     if (assignedTo && !form.assignedDate) { setFerr("Assignment date is required when assigning an asset."); return; }
     setFerr("");
-    const status = deriveStatus(assignedTo, form.returnDate);
+    const status = deriveStatus(assignedTo);
     const now = new Date().toLocaleString();
+
+    let returnLog = undefined;
+    // Clearing assignee with a return date → record return history from previous holder.
+    if (!assignedTo && form.returnDate && editPrevAssignee?.id) {
+      returnLog = buildReturnLog(editPrevAssignee.id, editPrevAssignee.name, form.returnDate);
+    }
+
     const payload = {
       name: form.name.trim(),
       brand: form.brand.trim(),
@@ -90,10 +109,11 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
       condition: form.condition,
       remarks: form.remarks.trim(),
       assignedTo,
-      assignedDate: assignedTo || form.returnDate ? form.assignedDate : "",
+      assignedDate: assignedTo ? form.assignedDate : "",
       returnDate: form.returnDate || "",
       status,
       updatedAt: now,
+      ...(returnLog ? { returnLog } : {}),
     };
     try {
       if (editId) {
@@ -125,12 +145,16 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
   async function markReturned(a) {
     const returnDate = todayKey();
     const now = new Date().toLocaleString();
+    const assignee = users.find(u => u.id === a.assignedTo);
     setFerr("");
     try {
       const saved = await apiUpdateAsset(a.id, {
         ...a,
+        assignedTo: null,
+        assignedDate: "",
         returnDate,
-        status: "returned",
+        returnLog: buildReturnLog(a.assignedTo, assignee?.name || "", returnDate),
+        status: "available",
         updatedAt: now,
       });
       if (!saved) throw new Error("Update failed.");
@@ -141,9 +165,18 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
   }
 
   function statusTone(status) {
-    if (status === "assigned") return "green";
-    if (status === "returned") return "blue";
+    if (status === "available") return "green";
+    if (status === "assigned") return "blue";
+    if (status === "returned") return "slate";
     return "slate";
+  }
+
+  function returnHistoryLine(a) {
+    const log = a.returnLog;
+    if (!log?.returned_by_name && !log?.return_date) return null;
+    const name = log.returned_by_name || "Unknown";
+    const date = log.return_date ? formatDate(log.return_date) : "—";
+    return `Returned by ${name} on ${date}`;
   }
 
   return (
@@ -195,6 +228,7 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
               <tbody>
                 {list.map(a => {
                   const assignee = users.find(u => u.id === a.assignedTo);
+                  const history = returnHistoryLine(a);
                   return (
                     <tr key={a.id} className="border-b border-slate-100 align-top">
                       <td className="px-4 py-3">
@@ -202,6 +236,9 @@ export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
                         {a.brand && <div className="text-xs text-slate-500 mt-0.5">{a.brand}</div>}
                         {a.specifications && <div className="text-xs text-slate-400 mt-0.5">{a.specifications}</div>}
                         {a.remarks && <div className="text-xs text-slate-400 mt-0.5">{a.remarks}</div>}
+                        {history && (
+                          <div className="text-xs text-emerald-700 mt-1">{history}</div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div>{a.assetType}</div>

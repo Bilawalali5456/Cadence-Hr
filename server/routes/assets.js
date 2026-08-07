@@ -1,5 +1,19 @@
 import { HR_ADMIN_ROLES } from "../lib/auth.js";
 
+function parseReturnLog(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function assetToJs(r) {
   return {
     id: r.id,
@@ -13,21 +27,68 @@ function assetToJs(r) {
     assignedTo: r.assigned_to || null,
     assignedDate: r.assigned_date || "",
     returnDate: r.return_date || "",
+    returnLog: parseReturnLog(r.return_log),
     status: r.status || "available",
     updatedAt: r.updated_at || "",
   };
 }
 
 /** Always derive status from assignment (ignore client-sent status).
- * Only assigned_to drives status: assigned if set, otherwise available.
- * A leftover return_date must not mark an unassigned asset as returned. */
-function statusFromAssignment(assignedTo, _returnDate) {
+ * Only assigned_to drives status: assigned if set, otherwise available. */
+function statusFromAssignment(assignedTo) {
   const hasAssignee = assignedTo != null && String(assignedTo).trim() !== "";
   if (hasAssignee) return "assigned";
   return "available";
 }
 
-async function upsertAsset(pool, a) {
+async function resolveUserName(pool, userId) {
+  if (!userId) return "";
+  const { rows } = await pool.query(
+    `SELECT name FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  return rows[0]?.name || "";
+}
+
+/**
+ * When clearing assigned_to with a return_date, record who returned it.
+ * Prefer client-provided returnLog; otherwise build from previous assignee.
+ */
+async function resolveReturnLog(pool, { assignedTo, returnDate, returnLog, existing }) {
+  const hasAssignee = assignedTo != null && String(assignedTo).trim() !== "";
+  const hasReturnDate = !!(returnDate && String(returnDate).trim());
+  const existingJs = existing ? assetToJs(existing) : null;
+  const prevAssignee = existingJs?.assignedTo || null;
+
+  // Still assigned — keep prior log if any; client may also send one.
+  if (hasAssignee) {
+    return parseReturnLog(returnLog) || existingJs?.returnLog || null;
+  }
+
+  // Unassigned + return date → write/update return history from previous holder.
+  if (hasReturnDate) {
+    if (returnLog && returnLog.returned_by) {
+      return {
+        returned_by: returnLog.returned_by,
+        returned_by_name: returnLog.returned_by_name || (await resolveUserName(pool, returnLog.returned_by)),
+        return_date: returnLog.return_date || returnDate,
+      };
+    }
+    const returnedBy = prevAssignee || returnLog?.returned_by || null;
+    if (returnedBy) {
+      return {
+        returned_by: returnedBy,
+        returned_by_name: returnLog?.returned_by_name || existingJs?.returnLog?.returned_by_name || (await resolveUserName(pool, returnedBy)),
+        return_date: returnDate,
+      };
+    }
+    return parseReturnLog(returnLog) || existingJs?.returnLog || null;
+  }
+
+  return parseReturnLog(returnLog) || existingJs?.returnLog || null;
+}
+
+async function upsertAsset(pool, a, existing = null) {
   const id = a?.id;
   if (!id) throw new Error("asset.id is required");
 
@@ -35,13 +96,19 @@ async function upsertAsset(pool, a) {
     ? a.assignedTo
     : null;
   const returnDate = a.returnDate || "";
-  const status = statusFromAssignment(assignedTo, returnDate);
+  const status = statusFromAssignment(assignedTo);
+  const returnLog = await resolveReturnLog(pool, {
+    assignedTo,
+    returnDate,
+    returnLog: a.returnLog,
+    existing,
+  });
 
   const { rows } = await pool.query(
     `INSERT INTO assets (
        id, name, asset_type, serial_number, brand, specifications, condition, remarks,
-       assigned_to, assigned_date, return_date, status, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       assigned_to, assigned_date, return_date, return_log, status, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        asset_type = EXCLUDED.asset_type,
@@ -53,6 +120,7 @@ async function upsertAsset(pool, a) {
        assigned_to = EXCLUDED.assigned_to,
        assigned_date = EXCLUDED.assigned_date,
        return_date = EXCLUDED.return_date,
+       return_log = EXCLUDED.return_log,
        status = EXCLUDED.status,
        updated_at = EXCLUDED.updated_at
      RETURNING *`,
@@ -68,6 +136,7 @@ async function upsertAsset(pool, a) {
       assignedTo,
       a.assignedDate || "",
       returnDate,
+      returnLog ? JSON.stringify(returnLog) : null,
       status,
       a.updatedAt || "",
     ],
@@ -104,7 +173,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
     if (!serialNumber) return res.status(400).json({ error: "serialNumber is required" });
 
     try {
-      const asset = await upsertAsset(pool, { ...r, id, name, serialNumber });
+      const asset = await upsertAsset(pool, { ...r, id, name, serialNumber }, null);
       res.json({ asset });
     } catch (e) {
       console.error("POST /api/assets error:", e.message);
@@ -139,13 +208,14 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
         ? { ...r, name, serialNumber }
         : {
             ...assetToJs(existing),
+            assignedTo: null,
             returnDate: r.returnDate ?? existing.return_date ?? "",
-            status: r.status ?? existing.status ?? "assigned",
+            returnLog: r.returnLog,
             remarks: r.remarks ?? existing.remarks ?? "",
             updatedAt: r.updatedAt || new Date().toLocaleString(),
           };
 
-      const asset = await upsertAsset(pool, payload);
+      const asset = await upsertAsset(pool, payload, existing);
       res.json({ asset });
     } catch (e) {
       console.error("PUT /api/assets/:id error:", e.message);
