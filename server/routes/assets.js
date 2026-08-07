@@ -18,10 +18,11 @@ function assetToJs(r) {
   };
 }
 
-/** Always derive status from assignment (ignore client-sent status). */
-function statusFromAssignment(assignedTo, returnDate) {
+/** Always derive status from assignment (ignore client-sent status).
+ * Only assigned_to drives status: assigned if set, otherwise available.
+ * A leftover return_date must not mark an unassigned asset as returned. */
+function statusFromAssignment(assignedTo, _returnDate) {
   const hasAssignee = assignedTo != null && String(assignedTo).trim() !== "";
-  if (returnDate && String(returnDate).trim()) return "returned";
   if (hasAssignee) return "assigned";
   return "available";
 }
