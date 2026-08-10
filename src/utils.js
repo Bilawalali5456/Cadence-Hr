@@ -783,8 +783,10 @@ export function wasCorrectedByExecutive(record) {
 
 export function canCorrectAttendance(actor, record) {
   if (!actor) return false;
-  if (!isHrOpsRole(actor.role) && !isExecutiveRole(actor.role)) return false;
-  if (isExecutiveRole(actor.role)) return true;
+  // HR Admin / Executive may always open correction (including re-correcting prior edits).
+  if (isHrAdminRole(actor.role) || isExecutiveRole(actor.role)) return true;
+  if (!isHrOpsRole(actor.role)) return false;
+  // HR Employee: may correct unless an Executive already locked the record.
   return !wasCorrectedByExecutive(record);
 }
 

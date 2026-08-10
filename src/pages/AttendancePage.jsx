@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, canCorrectAttendance, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -563,16 +563,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     </td>
                     {canManageCorrections && (
                       <td className="px-4 py-3">
-                        {canCorrectAttendance(currentUser, r) && (
-                          <button
-                            type="button"
-                            onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: rowDate })}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
-                            title="Edit attendance"
-                          >
-                            <Pencil size={12} />Edit
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: rowDate })}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                          title="Edit attendance"
+                        >
+                          <Pencil size={12} />Edit
+                        </button>
                       </td>
                     )}
                   </tr>
@@ -649,16 +647,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     </td>
                     {canManageCorrections && (
                       <td className="px-4 py-3">
-                        {canCorrectAttendance(currentUser, r) && (
-                          <button
-                            type="button"
-                            onClick={() => setCorrectionTarget({ user: r.user, record: r, dateKey: r.date })}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
-                            title="Edit attendance"
-                          >
-                            <Pencil size={12} />Edit
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCorrectionTarget({ user: r.user, record: r, dateKey: r.date })}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                          title="Edit attendance"
+                        >
+                          <Pencil size={12} />Edit
+                        </button>
                       </td>
                     )}
                   </tr>
