@@ -754,17 +754,50 @@ export function finalizeRecord(record, user, holidays = []) {
 
 export function isoFromDateAndTime(dateKey, hhmm) {
   if (!dateKey || !hhmm) return null;
-  return karachiDateToIso(dateKey, hhmm);
+  const normalized = normalizeTimeTo24Hour(hhmm);
+  if (!normalized) return null;
+  return karachiDateToIso(dateKey, normalized);
+}
+
+/**
+ * Normalize a time string to 24-hour "HH:MM".
+ * Handles <input type="time"> values and 12-hour strings with AM/PM:
+ *   12:00 AM → 00:00, 12:00 PM → 12:00, 1:00 PM → 13:00, 1:00 AM → 01:00
+ */
+export function normalizeTimeTo24Hour(raw) {
+  if (raw == null) return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+  const ampmMatch = /\b(am|pm)\b/i.exec(s);
+  const m = /(\d{1,2}):(\d{2})/.exec(s);
+  if (!m) return "";
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (Number.isNaN(hour) || Number.isNaN(minute) || minute < 0 || minute > 59) return "";
+
+  // Some Intl locales report midnight as 24:00
+  if (hour === 24 && minute === 0) hour = 0;
+
+  if (ampmMatch) {
+    const isPm = ampmMatch[1].toLowerCase() === "pm";
+    if (!isPm && hour === 12) hour = 0;          // 12:00 AM → 00:00
+    else if (isPm && hour !== 12) hour = hour + 12; // 1:00 PM → 13:00
+    else if (isPm && hour === 12) hour = 12;     // 12:00 PM → 12:00
+    // AM and hour !== 12 → keep hour (1:00 AM → 01:00)
+  } else if (hour === 24) {
+    hour = 0;
+  }
+
+  if (hour < 0 || hour > 23) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 /** Checkout times from midnight through 05:00 AM belong to the overnight window (next calendar morning). */
 function isOvernightCheckoutTime(hhmm) {
-  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || "").trim());
+  const normalized = normalizeTimeTo24Hour(hhmm);
+  const m = /^(\d{2}):(\d{2})$/.exec(normalized);
   if (!m) return false;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (Number.isNaN(h) || Number.isNaN(min)) return false;
-  const totalMins = h * 60 + min;
+  const totalMins = Number(m[1]) * 60 + Number(m[2]);
   return totalMins >= 0 && totalMins <= 5 * 60;
 }
 
@@ -772,7 +805,8 @@ export function timeInputFromIso(iso) {
   if (!iso) return "";
   const parts = karachiParts(iso);
   if (!parts) return "";
-  return `${parts.hour}:${parts.minute}`;
+  // Always emit zero-padded 24h for <input type="time"> (00:00 = midnight, not 12).
+  return normalizeTimeTo24Hour(`${parts.hour}:${parts.minute}`);
 }
 
 export function wasCorrectedByExecutive(record) {
@@ -805,8 +839,10 @@ export function formatCorrectionChangeSummary(changes) {
  */
 export function isoForAttendanceCorrectionTime(dateKey, hhmm, { overnightCheckout = false } = {}) {
   if (!dateKey || !hhmm) return null;
+  const normalized = normalizeTimeTo24Hour(hhmm);
+  if (!normalized) return null;
   const key = overnightCheckout ? addDaysToDateKey(dateKey, 1) : dateKey;
-  return isoFromDateAndTime(key, hhmm);
+  return isoFromDateAndTime(key, normalized);
 }
 
 export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason }, holidays = []) {
@@ -814,11 +850,14 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
   const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
   const prevCheckIn = existing?.checkIn || null;
   const prevCheckOut = existing?.checkOut || null;
-  const newCheckIn = checkInTime ? isoForAttendanceCorrectionTime(dateKey, checkInTime) : null;
-  // Overnight checkout (00:00–05:00) → next calendar day ISO (PKT → UTC).
-  const overnightOut = !!(checkOutTime && isOvernightCheckoutTime(checkOutTime));
-  const newCheckOut = checkOutTime
-    ? isoForAttendanceCorrectionTime(dateKey, checkOutTime, { overnightCheckout: overnightOut })
+
+  const in24 = checkInTime ? normalizeTimeTo24Hour(checkInTime) : "";
+  const out24 = checkOutTime ? normalizeTimeTo24Hour(checkOutTime) : "";
+  const newCheckIn = in24 ? isoForAttendanceCorrectionTime(dateKey, in24) : null;
+  // Overnight checkout (00:00–05:00 / 12:00 AM–5:00 AM) → next calendar day ISO (PKT → UTC).
+  const overnightOut = !!(out24 && isOvernightCheckoutTime(out24));
+  const newCheckOut = out24
+    ? isoForAttendanceCorrectionTime(dateKey, out24, { overnightCheckout: overnightOut })
     : null;
 
   if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };

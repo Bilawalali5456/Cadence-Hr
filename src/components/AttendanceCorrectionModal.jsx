@@ -6,6 +6,7 @@ import {
   formatCorrectionChangeSummary,
   formatDate,
   timeInputFromIso,
+  normalizeTimeTo24Hour,
 } from "../utils.js";
 import { Modal, Btn, ErrBox } from "./ui.jsx";
 
@@ -33,14 +34,22 @@ export function AttendanceCorrectionModal({
 
   useEffect(() => {
     if (!open || !target) return;
-    setCheckInTime(timeInputFromIso(record?.checkIn));
-    setCheckOutTime(timeInputFromIso(record?.checkOut));
+    setCheckInTime(normalizeTimeTo24Hour(timeInputFromIso(record?.checkIn)));
+    setCheckOutTime(normalizeTimeTo24Hour(timeInputFromIso(record?.checkOut)));
     setReason("");
     setErr("");
     setBusy(false);
   }, [open, target, record?.checkIn, record?.checkOut]);
 
   if (!open || !target || !user) return null;
+
+  function onCheckInChange(v) {
+    setCheckInTime(normalizeTimeTo24Hour(v) || v);
+  }
+
+  function onCheckOutChange(v) {
+    setCheckOutTime(normalizeTimeTo24Hour(v) || v);
+  }
 
   async function save() {
     if (!canEdit || busy) return;
@@ -51,7 +60,11 @@ export function AttendanceCorrectionModal({
       dateKey,
       user,
       currentUser,
-      { checkInTime, checkOutTime, reason },
+      {
+        checkInTime: normalizeTimeTo24Hour(checkInTime),
+        checkOutTime: normalizeTimeTo24Hour(checkOutTime),
+        reason,
+      },
       holidays,
     );
     if (result.error) {
@@ -124,7 +137,7 @@ export function AttendanceCorrectionModal({
             <input
               type="time"
               value={checkInTime}
-              onChange={e => setCheckInTime(e.target.value)}
+              onChange={e => onCheckInChange(e.target.value)}
               disabled={!canEdit || busy}
               className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 disabled:bg-slate-100"
             />
@@ -134,11 +147,11 @@ export function AttendanceCorrectionModal({
             <input
               type="time"
               value={checkOutTime}
-              onChange={e => setCheckOutTime(e.target.value)}
+              onChange={e => onCheckOutChange(e.target.value)}
               disabled={!canEdit || busy}
               className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 disabled:bg-slate-100"
             />
-            <p className="text-[11px] text-slate-400 mt-1">Overnight checkout 12:00 AM–5:00 AM is saved as next morning.</p>
+            <p className="text-[11px] text-slate-400 mt-1">12:00 AM = midnight (00:00). Overnight 12:00 AM–5:00 AM is saved as next morning.</p>
           </div>
         </div>
         <div>
