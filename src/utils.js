@@ -757,6 +757,17 @@ export function isoFromDateAndTime(dateKey, hhmm) {
   return karachiDateToIso(dateKey, hhmm);
 }
 
+/** Checkout times from midnight through 05:00 AM belong to the overnight window (next calendar morning). */
+function isOvernightCheckoutTime(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || "").trim());
+  if (!m) return false;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (Number.isNaN(h) || Number.isNaN(min)) return false;
+  const totalMins = h * 60 + min;
+  return totalMins >= 0 && totalMins <= 5 * 60;
+}
+
 export function timeInputFromIso(iso) {
   if (!iso) return "";
   const parts = karachiParts(iso);
@@ -795,11 +806,15 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
   const prevCheckIn = existing?.checkIn || null;
   const prevCheckOut = existing?.checkOut || null;
   const newCheckIn = checkInTime ? isoFromDateAndTime(dateKey, checkInTime) : null;
-  const newCheckOut = checkOutTime ? isoFromDateAndTime(dateKey, checkOutTime) : null;
+  // Overnight checkout (00:00–05:00) is next morning relative to the attendance date.
+  const overnightOut = !!(checkOutTime && isOvernightCheckoutTime(checkOutTime));
+  const checkOutDateKey = overnightOut ? addDaysToDateKey(dateKey, 1) : dateKey;
+  const newCheckOut = checkOutTime ? isoFromDateAndTime(checkOutDateKey, checkOutTime) : null;
 
   if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };
   if (!newCheckIn && !newCheckOut) return { attendance: list, error: "Enter at least a check-in or check-out time." };
-  if (newCheckIn && newCheckOut && new Date(newCheckOut) <= new Date(newCheckIn)) {
+  // Overnight 12AM–5AM checkout is always valid; do not compare as same-day times.
+  if (newCheckIn && newCheckOut && !overnightOut && new Date(newCheckOut) <= new Date(newCheckIn)) {
     return { attendance: list, error: "Check-out must be after check-in." };
   }
 
