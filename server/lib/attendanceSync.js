@@ -626,6 +626,10 @@ export async function syncAttendanceFromLogs(pool) {
       rowsUpdated += 1;
     } else {
       const prev = existing.rows[0];
+      // Manual HR corrections own check_in/check_out — never overwrite from biometric logs.
+      if (prev.manually_corrected === true) {
+        continue;
+      }
       const source = prev.source || "manual";
       const breaks = parseJsonArray(prev.breaks);
       const shortLeaves = parseJsonArray(prev.short_leaves);
@@ -738,6 +742,8 @@ export async function finalizeOpenAttendance(pool) {
   for (const prev of openRows) {
     const user = userById.get(prev.user_id);
     if (!user) continue;
+    // Preserve HR/admin manual corrections — do not recompute from biometric logs.
+    if (prev.manually_corrected === true) continue;
     const dateKey = String(prev.date || "").slice(0, 10);
     const breaks = parseJsonArray(prev.breaks);
     const shortLeaves = parseJsonArray(prev.short_leaves);

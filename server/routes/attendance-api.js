@@ -175,18 +175,92 @@ function breakStatusPayload(row) {
   };
 }
 
+/** Prefer top-level times; fall back to latest correction_log change targets. */
+function resolveCorrectionTimes(r) {
+  const log = Array.isArray(r?.correctionLog) ? r.correctionLog : [];
+  const last = log.length ? log[log.length - 1] : null;
+  const fromLogIn = last?.changes?.checkIn?.to;
+  const fromLogOut = last?.changes?.checkOut?.to;
+  const checkIn = r?.checkIn || fromLogIn || null;
+  const checkOut = r?.checkOut || fromLogOut || null;
+  return {
+    checkIn: checkIn || null,
+    checkOut: checkOut || null,
+    last,
+  };
+}
+
 export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAdmin) {
   async function upsertAttendanceRecord(c, r) {
     // r is already camelCased from frontend utils/state
     const id = r?.id;
     if (!id) throw new Error("attendance.id is required");
+    const userId = r.userId;
+    const dateKey = String(r.date || "").slice(0, 10);
+    if (!userId || !dateKey) throw new Error("attendance.userId and attendance.date are required");
 
-    // Manual correction must carry a reason + edited-by metadata.
-    if (r.manuallyCorrected === true) {
-      const log = Array.isArray(r.correctionLog) ? r.correctionLog : [];
-      const last = log[log.length - 1];
+    const isCorrection = r.manuallyCorrected === true;
+    let checkIn = r.checkIn || null;
+    let checkOut = r.checkOut || null;
+    let workingMs = r.workingMs ?? null;
+    let totalBreakMs = r.totalBreakMs ?? null;
+    let status = r.status ?? null;
+    let late = r.late || false;
+    const breaks = r.breaks || [];
+    const shortLeaves = r.shortLeaves || [];
+    const breakStart = r.breakStart || null;
+    const breakEnd = r.breakEnd || null;
+
+    // Manual correction must carry a reason + edited-by metadata, and must
+    // always write the corrected check_in / check_out onto the main row.
+    if (isCorrection) {
+      const resolved = resolveCorrectionTimes(r);
+      const last = resolved.last;
       if (!last || !String(last.reason || "").trim()) throw new Error("Reason for correction is required.");
       if (!r.lastCorrectedBy || !r.lastCorrectedByRole) throw new Error("editedBy metadata is required.");
+      checkIn = resolved.checkIn;
+      checkOut = resolved.checkOut;
+      if (!checkIn && !checkOut) throw new Error("Corrected check-in or check-out time is required.");
+
+      // Recalculate metrics from the corrected times (do not trust stale client values).
+      const { rows: userRows } = await c.query(
+        `SELECT id, shift FROM users WHERE id = $1 LIMIT 1`,
+        [userId]
+      );
+      const user = userRows[0] || null;
+      totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
+      if (checkIn && checkOut) {
+        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+      } else if (checkIn && user) {
+        workingMs = computeNetWorkingMs(checkIn, new Date().toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+      } else {
+        workingMs = null;
+      }
+      status = user
+        ? computeBiometricDayStatus(user, checkIn, checkOut, {
+            breaks,
+            shortLeaves,
+            breakStart,
+            breakEnd,
+            dateKey,
+            now: new Date(),
+            netWorkingMs: workingMs,
+            source: r.source || "manual",
+          })
+        : (checkOut ? "Present" : (checkIn ? "Missing Checkout" : "Absent"));
+      late = user ? isLateCheckIn(checkIn, user, dateKey) : false;
+    }
+
+    // Prefer the existing (user_id, date) row so corrections never land on a
+    // duplicate id while the biometric row keeps the old check_out.
+    let canonicalId = id;
+    if (isCorrection) {
+      const { rows: existingRows } = await c.query(
+        `SELECT id FROM attendance WHERE user_id = $1 AND date = $2
+         ORDER BY updated_at DESC NULLS LAST, id LIMIT 1`,
+        [userId, dateKey]
+      );
+      if (existingRows[0]?.id) canonicalId = existingRows[0].id;
     }
 
     await c.query(
@@ -220,34 +294,69 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
          correction_log = EXCLUDED.correction_log,
          last_corrected_by = EXCLUDED.last_corrected_by,
          last_corrected_by_role = EXCLUDED.last_corrected_by_role,
-         last_corrected_on = EXCLUDED.last_corrected_on`,
+         last_corrected_on = EXCLUDED.last_corrected_on,
+         updated_at = NOW()`,
       [
-        id,
-        r.userId,
-        r.date,
-        r.checkIn || null,
-        r.checkOut || null,
-        JSON.stringify(r.breaks || []),
-        JSON.stringify(r.shortLeaves || []),
-        r.breakStart || null,
-        r.breakEnd || null,
+        canonicalId,
+        userId,
+        dateKey,
+        checkIn,
+        checkOut,
+        JSON.stringify(breaks),
+        JSON.stringify(shortLeaves),
+        breakStart,
+        breakEnd,
         r.autoCheckout || false,
-        r.workingMs ?? null,
-        r.totalBreakMs ?? null,
-        r.status ?? null,
-        r.late || false,
+        workingMs,
+        totalBreakMs,
+        status,
+        late,
         r.source || "manual",
         r.checkInMethod || null,
         r.checkOutMethod || null,
         r.lastScan || null,
         r.lastScanMethod || null,
-        r.manuallyCorrected === true,
+        isCorrection,
         JSON.stringify(r.correctionLog || []),
         r.lastCorrectedBy || null,
         r.lastCorrectedByRole || null,
         r.lastCorrectedOn || null,
       ]
     );
+
+    // Belt-and-suspenders: force the main clock fields on correction even if
+    // an older partial UPDATE path somehow ran without them.
+    if (isCorrection) {
+      await c.query(
+        `UPDATE attendance SET
+           check_in = $1,
+           check_out = $2,
+           status = $3,
+           working_ms = $4,
+           total_break_ms = $5,
+           late = $6,
+           manually_corrected = true,
+           correction_log = $7,
+           last_corrected_by = $8,
+           last_corrected_by_role = $9,
+           last_corrected_on = $10,
+           updated_at = NOW()
+         WHERE id = $11`,
+        [
+          checkIn,
+          checkOut,
+          status,
+          workingMs,
+          totalBreakMs,
+          late,
+          JSON.stringify(r.correctionLog || []),
+          r.lastCorrectedBy || null,
+          r.lastCorrectedByRole || null,
+          r.lastCorrectedOn || null,
+          canonicalId,
+        ]
+      );
+    }
   }
 
   app.post("/api/attendance", requireHrAdmin, async (req, res) => {
