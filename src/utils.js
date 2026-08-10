@@ -847,66 +847,75 @@ export function isoForAttendanceCorrectionTime(dateKey, hhmm, { overnightCheckou
 
 export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason }, holidays = []) {
   const list = attendance || [];
-  const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
-  const prevCheckIn = existing?.checkIn || null;
-  const prevCheckOut = existing?.checkOut || null;
+  try {
+    const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
+    const prevCheckIn = existing?.checkIn || null;
+    const prevCheckOut = existing?.checkOut || null;
 
-  const in24 = checkInTime ? normalizeTimeTo24Hour(checkInTime) : "";
-  const out24 = checkOutTime ? normalizeTimeTo24Hour(checkOutTime) : "";
-  const newCheckIn = in24 ? isoForAttendanceCorrectionTime(dateKey, in24) : null;
-  // Overnight checkout (00:00–05:00 / 12:00 AM–5:00 AM) → next calendar day ISO (PKT → UTC).
-  const overnightOut = !!(out24 && isOvernightCheckoutTime(out24));
-  const newCheckOut = out24
-    ? isoForAttendanceCorrectionTime(dateKey, out24, { overnightCheckout: overnightOut })
-    : null;
+    const in24 = checkInTime ? normalizeTimeTo24Hour(checkInTime) : "";
+    const out24 = checkOutTime ? normalizeTimeTo24Hour(checkOutTime) : "";
+    const newCheckIn = in24 ? isoForAttendanceCorrectionTime(dateKey, in24) : null;
+    // Overnight checkout (00:00–05:00 / 12:00 AM–5:00 AM) → next calendar day ISO (PKT → UTC).
+    const overnightOut = !!(out24 && isOvernightCheckoutTime(out24));
+    const newCheckOut = out24
+      ? isoForAttendanceCorrectionTime(dateKey, out24, { overnightCheckout: overnightOut })
+      : null;
 
-  if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };
-  if (!newCheckIn && !newCheckOut) return { attendance: list, error: "Enter at least a check-in or check-out time." };
-  // Overnight 12AM–5AM checkout is always valid; do not compare as same-day times.
-  if (newCheckIn && newCheckOut && !overnightOut && new Date(newCheckOut) <= new Date(newCheckIn)) {
-    return { attendance: list, error: "Check-out must be after check-in." };
+    if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };
+    if (!newCheckIn && !newCheckOut) return { attendance: list, error: "Enter at least a check-in or check-out time." };
+    // Overnight 12AM–5AM checkout is always valid; do not compare as same-day times.
+    if (newCheckIn && newCheckOut && !overnightOut && new Date(newCheckOut) <= new Date(newCheckIn)) {
+      return { attendance: list, error: "Check-out must be after check-in." };
+    }
+
+    const changes = {};
+    if (prevCheckIn !== newCheckIn) changes.checkIn = { from: prevCheckIn, to: newCheckIn };
+    if (prevCheckOut !== newCheckOut) changes.checkOut = { from: prevCheckOut, to: newCheckOut };
+    if (Object.keys(changes).length === 0) return { attendance: list, error: "No changes to save." };
+
+    if (!actor?.name || !actor?.role) {
+      return { attendance: list, error: "Missing editor identity for correction audit log." };
+    }
+
+    const logEntry = {
+      id: `corr-${Date.now()}`,
+      by: actor.name,
+      byRole: actor.role,
+      at: new Date().toISOString(),
+      reason: reason.trim(),
+      changes,
+    };
+
+    const base = existing || {
+      id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userId,
+      date: dateKey,
+      breaks: [],
+      shortLeaves: [],
+      breakStart: null,
+      breakEnd: null,
+      autoCheckout: false,
+      source: "manual",
+      correctionLog: [],
+    };
+
+    const updated = finalizeRecord({
+      ...base,
+      checkIn: newCheckIn,
+      checkOut: newCheckOut,
+      manuallyCorrected: true,
+      correctionLog: [...(base.correctionLog || []), logEntry],
+      lastCorrectedBy: actor.name,
+      lastCorrectedByRole: actor.role,
+      lastCorrectedOn: logEntry.at,
+    }, user, holidays);
+
+    const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
+    return { attendance: next, error: null, record: updated };
+  } catch (e) {
+    console.error("[applyAttendanceCorrection] failed", e);
+    return { attendance: list, error: e?.message || "Failed to apply attendance correction." };
   }
-
-  const changes = {};
-  if (prevCheckIn !== newCheckIn) changes.checkIn = { from: prevCheckIn, to: newCheckIn };
-  if (prevCheckOut !== newCheckOut) changes.checkOut = { from: prevCheckOut, to: newCheckOut };
-  if (Object.keys(changes).length === 0) return { attendance: list, error: "No changes to save." };
-
-  const logEntry = {
-    id: `corr-${Date.now()}`,
-    by: actor.name,
-    byRole: actor.role,
-    at: new Date().toISOString(),
-    reason: reason.trim(),
-    changes,
-  };
-
-  const base = existing || {
-    id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    userId,
-    date: dateKey,
-    breaks: [],
-    shortLeaves: [],
-    breakStart: null,
-    breakEnd: null,
-    autoCheckout: false,
-    source: "manual",
-    correctionLog: [],
-  };
-
-  const updated = finalizeRecord({
-    ...base,
-    checkIn: newCheckIn,
-    checkOut: newCheckOut,
-    manuallyCorrected: true,
-    correctionLog: [...(base.correctionLog || []), logEntry],
-    lastCorrectedBy: actor.name,
-    lastCorrectedByRole: actor.role,
-    lastCorrectedOn: logEntry.at,
-  }, user, holidays);
-
-  const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
-  return { attendance: next, error: null };
 }
 
 /** Undo manual correction and restore pre-correction (original biometric) check-in/out. */
@@ -938,7 +947,7 @@ export function clearAttendanceCorrection(attendance, userId, dateKey, user, hol
   }, user, holidays);
 
   const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
-  return { attendance: next, error: null };
+  return { attendance: next, error: null, record: updated };
 }
 
 export function flattenCorrectionAuditLog(attendance, users = []) {

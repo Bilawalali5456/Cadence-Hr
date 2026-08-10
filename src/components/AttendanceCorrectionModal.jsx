@@ -51,67 +51,103 @@ export function AttendanceCorrectionModal({
     setCheckOutTime(normalizeTimeTo24Hour(v) || v);
   }
 
-  async function save() {
-    if (!canEdit || busy) return;
-    setErr("");
-    const result = applyAttendanceCorrection(
-      attendance,
-      user.id,
-      dateKey,
-      user,
-      currentUser,
-      {
-        checkInTime: normalizeTimeTo24Hour(checkInTime),
-        checkOutTime: normalizeTimeTo24Hour(checkOutTime),
-        reason,
-      },
-      holidays,
-    );
-    if (result.error) {
-      setErr(result.error);
+  async function save(e) {
+    e?.preventDefault?.();
+    if (busy) return;
+    if (!canEdit) {
+      setErr("You do not have permission to correct attendance.");
       return;
     }
+    setErr("");
     setBusy(true);
     try {
-      const updated = result.attendance.find(r => r && r.userId === user.id && r.date === dateKey);
-      if (persistAttendance && updated) {
+      const in24 = normalizeTimeTo24Hour(checkInTime);
+      const out24 = normalizeTimeTo24Hour(checkOutTime);
+      const result = applyAttendanceCorrection(
+        attendance,
+        user.id,
+        dateKey,
+        user,
+        currentUser,
+        {
+          checkInTime: in24,
+          checkOutTime: out24,
+          reason,
+        },
+        holidays,
+      );
+      if (result.error) {
+        setErr(result.error);
+        return;
+      }
+      const updated = result.record
+        || result.attendance.find(r => r && r.userId === user.id && r.date === dateKey);
+      if (!updated) {
+        setErr("Could not build the corrected attendance record.");
+        return;
+      }
+      if (persistAttendance) {
+        console.log("[attendance-correction] calling API", {
+          id: updated.id,
+          userId: updated.userId,
+          date: updated.date,
+          checkIn: updated.checkIn,
+          checkOut: updated.checkOut,
+        });
         await persistAttendance(updated);
       }
       setAttendance(result.attendance);
       onClose();
     } catch (e) {
+      console.error("[attendance-correction] save failed", e);
       setErr(e?.message || String(e));
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteCorrection() {
-    if (!canEdit || busy || !isCorrected) return;
+  async function deleteCorrection(e) {
+    e?.preventDefault?.();
+    if (busy || !isCorrected) return;
+    if (!canEdit) {
+      setErr("You do not have permission to delete this correction.");
+      return;
+    }
     if (!window.confirm(
       "Delete this manual correction and restore the original biometric check-in/check-out times?"
     )) return;
     setErr("");
-    const result = clearAttendanceCorrection(
-      attendance,
-      user.id,
-      dateKey,
-      user,
-      holidays,
-    );
-    if (result.error) {
-      setErr(result.error);
-      return;
-    }
     setBusy(true);
     try {
-      const updated = result.attendance.find(r => r && r.userId === user.id && r.date === dateKey);
-      if (persistAttendance && updated) {
+      const result = clearAttendanceCorrection(
+        attendance,
+        user.id,
+        dateKey,
+        user,
+        holidays,
+      );
+      if (result.error) {
+        setErr(result.error);
+        return;
+      }
+      const updated = result.record
+        || result.attendance.find(r => r && r.userId === user.id && r.date === dateKey);
+      if (!updated) {
+        setErr("Could not restore the attendance record.");
+        return;
+      }
+      if (persistAttendance) {
+        console.log("[attendance-correction] calling API (delete correction)", {
+          id: updated.id,
+          userId: updated.userId,
+          date: updated.date,
+        });
         await persistAttendance(updated);
       }
       setAttendance(result.attendance);
       onClose();
     } catch (e) {
+      console.error("[attendance-correction] delete failed", e);
       setErr(e?.message || String(e));
     } finally {
       setBusy(false);
@@ -120,7 +156,11 @@ export function AttendanceCorrectionModal({
 
   return (
     <Modal open={open} onClose={onClose} title="Manual attendance correction" wide>
-      <div className="p-5 space-y-4">
+      <form
+        className="p-5 space-y-4"
+        onSubmit={save}
+        noValidate
+      >
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Employee</label>
@@ -185,17 +225,21 @@ export function AttendanceCorrectionModal({
         <div className="flex justify-between gap-2 pt-2 flex-wrap">
           <div>
             {canEdit && isCorrected && (
-              <Btn variant="danger" onClick={deleteCorrection} disabled={busy}>
+              <Btn type="button" variant="danger" onClick={deleteCorrection} disabled={busy}>
                 {busy ? "Working…" : "Delete correction"}
               </Btn>
             )}
           </div>
           <div className="flex gap-2 ml-auto">
-            <Btn variant="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
-            {canEdit && <Btn onClick={save} disabled={busy}>{busy ? "Saving…" : "Save correction"}</Btn>}
+            <Btn type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+            {canEdit && (
+              <Btn type="submit" disabled={busy}>
+                {busy ? "Saving…" : "Save correction"}
+              </Btn>
+            )}
           </div>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }

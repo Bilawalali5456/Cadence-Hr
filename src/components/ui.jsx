@@ -139,7 +139,7 @@ export function PwStrength({ pw }) {
   );
 }
 
-export function Btn({ children, onClick, variant = "primary", size = "md", disabled = false, className = "" }) {
+export function Btn({ children, onClick, variant = "primary", size = "md", disabled = false, className = "", type = "button" }) {
   const sz = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";
   const styles = {
     primary: { background: B.dark,   color: B.white, border: "none" },
@@ -149,7 +149,7 @@ export function Btn({ children, onClick, variant = "primary", size = "md", disab
   };
   const s = styles[variant] || styles.primary;
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button type={type} onClick={onClick} disabled={disabled}
       style={disabled ? { ...s, opacity: 0.4, cursor: "not-allowed" } : s}
       className={`inline-flex items-center gap-1.5 font-medium rounded-lg transition-opacity ${sz} ${className}`}>
       {children}
