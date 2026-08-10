@@ -781,13 +781,10 @@ export function wasCorrectedByExecutive(record) {
   return (record.correctionLog || []).some(e => e?.byRole === "Executive");
 }
 
-export function canCorrectAttendance(actor, record) {
+/** HR Admin, HR Employee, and Executive may always correct / re-correct attendance. */
+export function canCorrectAttendance(actor, _record) {
   if (!actor) return false;
-  // HR Admin / Executive may always open correction (including re-correcting prior edits).
-  if (isHrAdminRole(actor.role) || isExecutiveRole(actor.role)) return true;
-  if (!isHrOpsRole(actor.role)) return false;
-  // HR Employee: may correct unless an Executive already locked the record.
-  return !wasCorrectedByExecutive(record);
+  return isHrOpsRole(actor.role) || isExecutiveRole(actor.role);
 }
 
 export function formatCorrectionChangeSummary(changes) {
@@ -802,16 +799,27 @@ export function formatCorrectionChangeSummary(changes) {
   return parts.join(" · ");
 }
 
+/**
+ * Build ISO for attendance wall-clock time in Asia/Karachi.
+ * Overnight checkout (00:00–05:00) is stamped on the next calendar morning.
+ */
+export function isoForAttendanceCorrectionTime(dateKey, hhmm, { overnightCheckout = false } = {}) {
+  if (!dateKey || !hhmm) return null;
+  const key = overnightCheckout ? addDaysToDateKey(dateKey, 1) : dateKey;
+  return isoFromDateAndTime(key, hhmm);
+}
+
 export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason }, holidays = []) {
   const list = attendance || [];
   const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
   const prevCheckIn = existing?.checkIn || null;
   const prevCheckOut = existing?.checkOut || null;
-  const newCheckIn = checkInTime ? isoFromDateAndTime(dateKey, checkInTime) : null;
-  // Overnight checkout (00:00–05:00) is next morning relative to the attendance date.
+  const newCheckIn = checkInTime ? isoForAttendanceCorrectionTime(dateKey, checkInTime) : null;
+  // Overnight checkout (00:00–05:00) → next calendar day ISO (PKT → UTC).
   const overnightOut = !!(checkOutTime && isOvernightCheckoutTime(checkOutTime));
-  const checkOutDateKey = overnightOut ? addDaysToDateKey(dateKey, 1) : dateKey;
-  const newCheckOut = checkOutTime ? isoFromDateAndTime(checkOutDateKey, checkOutTime) : null;
+  const newCheckOut = checkOutTime
+    ? isoForAttendanceCorrectionTime(dateKey, checkOutTime, { overnightCheckout: overnightOut })
+    : null;
 
   if (!reason?.trim()) return { attendance: list, error: "Reason for correction is required." };
   if (!newCheckIn && !newCheckOut) return { attendance: list, error: "Enter at least a check-in or check-out time." };
@@ -856,6 +864,38 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
     lastCorrectedBy: actor.name,
     lastCorrectedByRole: actor.role,
     lastCorrectedOn: logEntry.at,
+  }, user, holidays);
+
+  const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
+  return { attendance: next, error: null };
+}
+
+/** Undo manual correction and restore pre-correction (original biometric) check-in/out. */
+export function clearAttendanceCorrection(attendance, userId, dateKey, user, holidays = []) {
+  const list = attendance || [];
+  const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
+  if (!existing) return { attendance: list, error: "Attendance record not found." };
+  if (!existing.manuallyCorrected) return { attendance: list, error: "This record has no manual correction to delete." };
+
+  const log = Array.isArray(existing.correctionLog) ? existing.correctionLog : [];
+  let checkIn = existing.checkIn || null;
+  let checkOut = existing.checkOut || null;
+  // First log entry's `from` values are the original pre-correction (biometric) times.
+  if (log.length > 0) {
+    const first = log[0];
+    if (first?.changes?.checkIn) checkIn = first.changes.checkIn.from ?? null;
+    if (first?.changes?.checkOut) checkOut = first.changes.checkOut.from ?? null;
+  }
+
+  const updated = finalizeRecord({
+    ...existing,
+    checkIn,
+    checkOut,
+    manuallyCorrected: false,
+    correctionLog: [],
+    lastCorrectedBy: null,
+    lastCorrectedByRole: null,
+    lastCorrectedOn: null,
   }, user, holidays);
 
   const next = [...list.filter(r => !(r && r.userId === userId && r.date === dateKey)), updated];
