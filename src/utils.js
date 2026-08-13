@@ -616,25 +616,40 @@ export function closeActiveBreak(record, endIso) {
 
 export function calcLiveWorkingMs(record, now = new Date()) {
   if (!record?.checkIn) return 0;
-  const end = record.checkOut ? new Date(record.checkOut) : now;
-  let ms = end - new Date(record.checkIn);
+  const startMs = new Date(record.checkIn).getTime();
+  if (!Number.isFinite(startMs)) return 0;
+  const endMs = record.checkOut
+    ? new Date(record.checkOut).getTime()
+    : (now instanceof Date && Number.isFinite(now.getTime()) ? now.getTime() : Date.now());
+  if (!Number.isFinite(endMs)) return 0;
+  let ms = endMs - startMs;
   ms -= calcTotalBreakMs(record, now);
-  ms -= calcShortLeaveMs(record);
-  return Math.max(0, ms);
+  // In-progress (no checkout): do not subtract short leave — future/partial
+  // entries were zeroing live hours to "—". Completed days still deduct below.
+  if (record.checkOut) ms -= calcShortLeaveMs(record);
+  return Math.max(0, Number.isFinite(ms) ? ms : 0);
 }
 
 export function calcShortLeaveMs(record) {
-  return (record?.shortLeaves || [])
-    .filter(sl => !sl.status || sl.status === "approved")
-    .reduce((sum, sl) => sum + (new Date(sl.end) - new Date(sl.start)), 0);
+  const list = Array.isArray(record?.shortLeaves) ? record.shortLeaves : [];
+  return list
+    .filter(sl => !sl?.status || sl.status === "approved")
+    .reduce((sum, sl) => {
+      const startRaw = sl?.start || sl?.startIso;
+      const endRaw = sl?.end || sl?.endIso;
+      if (!startRaw || !endRaw) return sum;
+      const ms = new Date(endRaw) - new Date(startRaw);
+      return sum + (Number.isFinite(ms) && ms > 0 ? ms : 0);
+    }, 0);
 }
 
 export function calcNetWorkingMs(record) {
   if (!record?.checkIn || !record?.checkOut) return 0;
   let ms = new Date(record.checkOut) - new Date(record.checkIn);
+  if (!Number.isFinite(ms)) return 0;
   ms -= calcTotalBreakMs(record);
   ms -= calcShortLeaveMs(record);
-  return Math.max(0, ms);
+  return Math.max(0, Number.isFinite(ms) ? ms : 0);
 }
 
 export function isLateCheckIn(checkInIso, user, holidays = []) {
@@ -1208,18 +1223,28 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
   return changed ? next : attendance;
 }
 
+function formatHoursMinutes(ms) {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  const h = Math.floor(safe / 3600000);
+  const m = Math.floor((safe % 3600000) / 60000);
+  return `${h}h ${m}m`;
+}
+
 export function displayWorkingHours(record, user, now = new Date()) {
   const dateKey = record?.date || todayKey();
-  const status = computeDayStatus(user, record, [], now);
-  if (record?.checkIn && status === "Working") {
-    return formatDurationMs(calcLiveWorkingMs(record, now));
+  const computed = user ? computeDayStatus(user, record, [], now) : record?.status;
+  const isWorking = !!(
+    record?.checkIn &&
+    !record?.checkOut &&
+    (record?.status === "Working" || computed === "Working")
+  );
+  // Live hours for open shifts: now − check-in − breaks (Xh Ym), independent of short_leaves.
+  if (isWorking) {
+    return formatHoursMinutes(calcLiveWorkingMs(record, now));
   }
-  const bounds = getShiftBounds(user, dateKey);
-  if (record?.checkIn && bounds.end && now < bounds.end && status === "Working") {
-    return formatDurationMs(calcLiveWorkingMs(record, now));
-  }
+  const bounds = user ? getShiftBounds(user, dateKey) : {};
   // Missing Checkout: use stored workingMs (shift end − check-in − breaks) or estimate
-  if (record?.checkIn && !record?.checkOut && status === "Missing Checkout") {
+  if (record?.checkIn && !record?.checkOut && computed === "Missing Checkout") {
     if (record.workingMs != null) return formatDurationMs(record.workingMs);
     if (bounds.end) {
       const gross = Math.max(0, bounds.end - new Date(record.checkIn));
@@ -1228,7 +1253,7 @@ export function displayWorkingHours(record, user, now = new Date()) {
   }
   if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
   if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));
-  if (record?.checkIn && !record?.checkOut) return formatDurationMs(calcLiveWorkingMs(record, now));
+  if (record?.checkIn && !record?.checkOut) return formatHoursMinutes(calcLiveWorkingMs(record, now));
   return "—";
 }
 
