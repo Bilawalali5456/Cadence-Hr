@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut } from "../utils.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -47,6 +47,202 @@ function getRecordForDate(attendance, userId, user, dateKey, now = new Date()) {
     return getUserTodayRecord(attendance, userId, user, now);
   }
   return (attendance || []).find(r => r && r.userId === userId && r.date === dateKey) || null;
+}
+
+function isApprovedLeaveDay(userId, dateKey, leaveRequests, user, holidays) {
+  for (const lr of leaveRequests || []) {
+    if (!lr || lr.userId !== userId || lr.status !== "approved" || lr.type === "WFH") continue;
+    if (dateKey < lr.from || dateKey > lr.to) continue;
+    if (user && !scheduledWorkDatesForUser(user, dateKey, dateKey, holidays).includes(dateKey)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Status badge for admin drill-down — Late shows on check-in only; column uses Present. */
+function drillDownStatusPill(status, record) {
+  let label = status;
+  if (status === "Late" || (record?.late && record?.checkIn && status !== "Working" && status !== "Missing Checkout")) {
+    label = "Present";
+  }
+  if (label === "On Time") label = "Present";
+  const toneMap = {
+    Present: "green",
+    Working: "blue",
+    Absent: "red",
+    "Early Leave": "orange",
+    "On Leave": "blue",
+    "Missing Checkout": "yellow",
+    "Short Hours": "orange",
+    Off: "slate",
+    "Public Holiday": "blue",
+  };
+  if (record?.autoCheckout || status === "Auto Checkout") {
+    return { tone: "yellow", label: "Missing Checkout" };
+  }
+  return { tone: toneMap[label] || "slate", label: label || "—" };
+}
+
+function resolveDrillDownDayStatus(user, record, dateKey, leaveRequests, holidays, now) {
+  if (isApprovedLeaveDay(user?.id, dateKey, leaveRequests, user, holidays) && !record?.checkIn) {
+    return "On Leave";
+  }
+  return resolveDayStatus(user, record, dateKey, holidays, now);
+}
+
+function employeeDetailDateRange(user, month) {
+  const { start, end } = monthDateRange(month);
+  const today = todayKey();
+  let rangeStart = start;
+  let rangeEnd = end;
+  if (user?.hired) {
+    if (user.hired > end) return { rangeStart: null, rangeEnd: null };
+    if (user.hired > rangeStart) rangeStart = user.hired;
+  }
+  if (rangeEnd > today) rangeEnd = today;
+  if (rangeStart > rangeEnd) return { rangeStart: null, rangeEnd: null };
+  return { rangeStart, rangeEnd };
+}
+
+function AdminEmployeeAttendanceDetail({
+  user,
+  month,
+  onMonthChange,
+  monthOptions,
+  onBack,
+  leaveRequests,
+  holidays,
+  now,
+}) {
+  const [employeeAttendance, setEmployeeAttendance] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiFetchAttendance({ month, userId: user.id })
+      .then(list => {
+        if (!cancelled) setEmployeeAttendance(Array.isArray(list) ? list : []);
+      })
+      .catch(e => {
+        console.error("Failed to fetch employee attendance:", e?.message || e);
+        if (!cancelled) setEmployeeAttendance([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [month, user.id]);
+
+  const summary = computeMonthlyAttendanceSummary(user, employeeAttendance, leaveRequests, month, holidays);
+  const { rangeStart, rangeEnd } = employeeDetailDateRange(user, month);
+  const today = todayKey(now);
+  const recordByDate = Object.fromEntries(
+    (employeeAttendance || [])
+      .filter(r => r && r.userId === user.id && r.date)
+      .map(r => [r.date, r])
+  );
+
+  const dailyRows = rangeStart && rangeEnd
+    ? eachDateInRange(rangeStart, rangeEnd)
+        .map(dateKey => {
+          const record = recordByDate[dateKey] || null;
+          const isToday = dateKey === today;
+          const rowNow = isToday ? now : new Date(`${dateKey}T23:59:59`);
+          const status = resolveDrillDownDayStatus(user, record, dateKey, leaveRequests, holidays, rowNow);
+          return { dateKey, record, status, rowNow, isToday };
+        })
+        .reverse()
+    : [];
+
+  return (
+    <div className="space-y-5">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+      >
+        ← Back
+      </button>
+
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{user.name}</h2>
+            <p className="text-sm text-slate-500 mt-1">{formatShiftRange(user, today)}</p>
+          </div>
+          <select
+            value={month}
+            onChange={e => onMonthChange(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5 text-sm">
+          {[
+            ["Present", summary.totalPresentDays],
+            ["Absent", summary.totalAbsentDays],
+            ["Late", summary.totalLateDays],
+            ["Working / Required", `${formatDurationMs(summary.totalWorkingMs)} / ${formatDurationMs(summary.totalRequiredMs)}`],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 p-3">
+              <div className="text-xs text-slate-400">{label}</div>
+              <div className="text-lg font-semibold text-slate-800 mt-1 tabular-nums">{value}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-200">
+          <STitle>Daily attendance — {monthLabel(month)}</STitle>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
+                {["Date", "Check-in", "Check-out", "Working hours", "Status"].map(h => (
+                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+              ) : dailyRows.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No days in this period.</td></tr>
+              ) : dailyRows.map(({ dateKey, record, status, rowNow }) => {
+                const ds = drillDownStatusPill(status, record);
+                const showLate = record?.checkIn && (record.late || isLateCheckIn(record.checkIn, user, holidays));
+                return (
+                  <tr key={dateKey} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-3 text-slate-700">{formatDate(dateKey)}</td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        {formatTime(record?.checkIn)}
+                        {showLate && <Pill tone="red">Late</Pill>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      <CheckOutCell record={record} user={user} dateKey={dateKey} now={rowNow} />
+                    </td>
+                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">
+                      {displayWorkingHours(record, user, rowNow)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Pill tone={ds.tone}>{ds.label}</Pill>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 export function AttendancePage({ currentUser, users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, roles, holidays = [], notifications, setNotifications }) {
@@ -261,6 +457,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [period, setPeriod] = useState("daily");
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
+  const [detailUser, setDetailUser] = useState(null);
   const [now, setNow] = useState(() => new Date());
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
@@ -444,6 +641,18 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       </div>
 
       {viewMode === "monthly" ? (
+      detailUser ? (
+        <AdminEmployeeAttendanceDetail
+          user={detailUser}
+          month={month}
+          onMonthChange={setMonth}
+          monthOptions={monthOptions}
+          onBack={() => setDetailUser(null)}
+          leaveRequests={leaveRequests}
+          holidays={holidays}
+          now={now}
+        />
+      ) : (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle>Monthly attendance summary</STitle>
@@ -468,8 +677,21 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               {monthlyRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : monthlyRows.map(({ user, summary }) => (
-                <tr key={user.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
+                <tr
+                  key={user.id}
+                  className="border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50/80"
+                  onClick={() => setDetailUser(user)}
+                >
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); setDetailUser(user); }}
+                      className="text-left font-medium text-slate-800 hover:underline underline-offset-2"
+                      style={{ color: B.dark }}
+                    >
+                      {user.name}
+                    </button>
+                  </td>
                   <td className="px-4 py-3">{summary.totalPresentDays}</td>
                   <td className="px-4 py-3">{summary.totalAbsentDays}</td>
                   <td className="px-4 py-3">{summary.totalLateDays}</td>
@@ -484,6 +706,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           </table>
         </div>
       </Card>
+      )
       ) : (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
@@ -582,7 +805,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       </Card>
       )}
 
-      {viewMode === "monthly" && (
+      {viewMode === "monthly" && !detailUser && (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle right={<span className="text-xs text-slate-400">Total: {formatDurationMs(periodTotalMs)}</span>}>Attendance reports</STitle>
