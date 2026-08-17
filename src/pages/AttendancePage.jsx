@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, attendanceVisibleUserIds, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, formatBreakUsage, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, filterAttendanceByPeriod, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -454,7 +454,6 @@ export function EmployeeAttendanceFull(props) {
 export function AdminAttendanceView({ users, attendance, setAttendance, shortLeaveRequests, setShortLeaveRequests, leaveRequests, setLeaveRequests, setUsers, currentUser, roles, holidays = [], setNotifications }) {
   const [viewMode, setViewMode] = useState("daily");
   const [selectedDate, setSelectedDate] = useState(() => todayKey());
-  const [period, setPeriod] = useState("daily");
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), attendanceMonthOptions(users)));
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [detailUser, setDetailUser] = useState(null);
@@ -474,7 +473,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     ? activeAttendanceRoster(users || [], currentUser.role)
     : allStaff
   ).filter(u => u && u.id);
-  const visibleIds = attendanceVisibleUserIds(users || [], currentUser.role);
   const today = todayKey();
   const isSelectedToday = selectedDate === today;
   const pendingShort = (shortLeaveRequests || []).filter(r =>
@@ -527,16 +525,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     return resolveDayStatus(u, r, r?.date || today, holidays) === "Absent";
   }).length;
 
-  const reportRows = filterAttendanceByPeriod(attendance || [], period)
-    .filter(r => r && r.userId && visibleIds.has(r.userId))
-    .map(r => {
-      const user = (users || []).find(u => u && u.id === r.userId);
-      return user ? { ...r, name: user.name, dept: user.dept || user.role || "—", shift: formatShiftRange(user, r.date), user } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.name || "").localeCompare(b.name || ""));
-
-  const periodTotalMs = reportRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r)), 0);
   const monthOptions = attendanceMonthOptions(users);
   const monthlyRows = liveRoster
     .map(u => ({
@@ -544,6 +532,16 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       summary: computeMonthlyAttendanceSummary(u, attendance, leaveRequests, month, holidays),
     }))
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
+
+  const hoursSummaryMs = viewMode === "monthly"
+    ? monthlyRows.reduce((sum, { summary }) => sum + (summary.totalWorkingMs || 0), 0)
+    : liveRoster.reduce((sum, u) => {
+        const r = getRecordForDate(attendance, u.id, u, selectedDate, now);
+        if (!r?.checkIn) return sum;
+        const liveNow = selectedDate === today ? now : new Date(`${selectedDate}T23:59:59`);
+        if (r.checkOut) return sum + (r.workingMs || calcNetWorkingMs(r) || 0);
+        return sum + calcLiveWorkingMs(r, liveNow);
+      }, 0);
 
   return (
     <div className="space-y-5">
@@ -611,7 +609,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
           { label: "Late today", value: lateToday.length, icon: AlertTriangle },
           { label: "Absent today", value: absentTodayCount, icon: Users },
-          { label: period === "daily" ? "Total hours today" : period === "weekly" ? "Weekly hours" : "Monthly hours", value: formatDurationMs(periodTotalMs), icon: BadgeCheck },
+          { label: viewMode === "monthly" ? "Monthly hours" : (selectedDate === today ? "Total hours today" : "Total hours"), value: formatDurationMs(hoursSummaryMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
             <div className="flex items-center justify-between mb-2">
@@ -789,90 +787,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         <button
                           type="button"
                           onClick={() => setCorrectionTarget({ user: u, record: r, dateKey: rowDate })}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
-                          title="Edit attendance"
-                        >
-                          <Pencil size={12} />Edit
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-      )}
-
-      {viewMode === "daily" && (
-      <Card className="overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
-          <STitle right={<span className="text-xs text-slate-400">Total: {formatDurationMs(periodTotalMs)}</span>}>Attendance reports</STitle>
-          <div className="flex gap-1 p-1 rounded-lg bg-slate-100">
-            {["daily", "weekly", "monthly"].map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className="px-3 py-1.5 text-xs font-medium rounded-md capitalize transition-colors"
-                style={period === p ? { background: B.dark, color: B.white } : { color: B.dark }}>{p}</button>
-            ))}
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[980px]">
-            <thead>
-              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Date", "Check-in", "Break", "Check-out", "Working Hours", "Status", ...(canManageCorrections ? [""] : [])].map(h => (
-                  <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h || "Actions"}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {reportRows.length === 0 ? (
-                <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No records for this {period} period.</td></tr>
-              ) : reportRows.map(r => {
-                const dateKey = r?.date ?? todayKey();
-                const shiftCfg = getUserShift(r.user, dateKey);
-                const rowNow = dateKey === today ? now : undefined;
-                const ds = dayStatusPill(resolveDayStatus(r.user, r, dateKey, holidays, rowNow), r);
-                const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
-                return (
-                  <tr key={r.id} className="border-b border-slate-100 last:border-0">
-                    <td className="px-4 py-3 font-medium text-slate-800">{r.name}</td>
-                    <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">
-                      {formatTime(r.checkIn)}
-                      {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {!r.checkIn ? "—" : (
-                        <div className="text-xs">
-                          <div className={`tabular-nums font-medium ${breakOver ? "text-red-600" : ""}`}>
-                            {displayBreakTime(r, rowNow || new Date())}
-                          </div>
-                          {breakSessionCount(r) > 0 && (
-                            <div className="text-slate-400">{breakSessionCount(r)} break{breakSessionCount(r) === 1 ? "" : "s"}</div>
-                          )}
-                          {breakOver && <Pill tone="red">Over</Pill>}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">
-                      <CheckOutCell record={r} user={r.user} dateKey={dateKey} now={rowNow || new Date()} />
-                    </td>
-                    <td className="px-4 py-3 tabular-nums font-medium text-slate-800">{displayWorkingHours(r, r.user, rowNow || new Date())}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1 flex-wrap">
-                        {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
-                        <Pill tone={ds.tone}>{ds.label}</Pill>
-                        {r.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
-                        {(r?.source === "wfh" || isWfhAttendance(r, r.userId, r.date, leaveRequests, holidays, r.user)) && <Pill tone="blue">WFH</Pill>}
-                      </span>
-                    </td>
-                    {canManageCorrections && (
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => setCorrectionTarget({ user: r.user, record: r, dateKey: r.date })}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
                           title="Edit attendance"
                         >
