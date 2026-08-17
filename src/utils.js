@@ -551,8 +551,37 @@ export function getUserShift(user, dateKey = todayKey()) {
 
 export function shiftDateTime(dateKey, hhmm) {
   // Always interpret wall-clock times in Asia/Karachi (not the browser's local TZ).
-  const iso = karachiDateToIso(dateKey, hhmm || "00:00");
+  const normalized = normalizeTimeTo24Hour(hhmm) || String(hhmm || "00:00").trim();
+  const iso = karachiDateToIso(dateKey, normalized);
   return iso ? new Date(iso) : new Date(NaN);
+}
+
+function parseClockMins(hhmm) {
+  const normalized = normalizeTimeTo24Hour(hhmm) || String(hhmm || "00:00").trim();
+  const [h, m] = normalized.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+/** Shift ends 00:00–05:00 PKT on the next calendar day (overnight). */
+function isPostMidnightShiftEnd(shiftStart, shiftEnd) {
+  const endMins = parseClockMins(shiftEnd);
+  const startMins = parseClockMins(shiftStart);
+  if (endMins == null || startMins == null) return false;
+  const endHour = Math.floor(endMins / 60);
+  if (endHour < 0 || endHour > 5) return false;
+  return startMins > endMins || startMins >= 12 * 60;
+}
+
+/** Build shift-end instant in PKT; overnight ends 00:00–05:00 roll to next day. */
+function shiftEndDateTime(dateKey, shiftStart, shiftEnd) {
+  const endKey = isPostMidnightShiftEnd(shiftStart, shiftEnd)
+    ? addDaysToDateKey(dateKey, 1)
+    : dateKey;
+  let end = shiftDateTime(endKey, shiftEnd);
+  const start = shiftDateTime(dateKey, shiftStart);
+  if (end <= start) end = new Date(end.getTime() + 86400000);
+  return end;
 }
 
 function addDaysToDateKey(dateKey, delta) {
@@ -570,9 +599,7 @@ export function getShiftBounds(user, dateKey) {
     return { start: null, end: null, lateCutoff: null, checkoutDeadline: null, earlyLeaveCutoff: null, ...s };
   }
   const start = shiftDateTime(dateKey, s.shiftStart);
-  let end = shiftDateTime(dateKey, s.shiftEnd);
-  // Overnight shifts (e.g. 16:00 → 01:00): end is next calendar day
-  if (end <= start) end = new Date(end.getTime() + 86400000);
+  const end = shiftEndDateTime(dateKey, s.shiftStart, s.shiftEnd);
   const lateCutoff = new Date(start.getTime() + s.graceMinutes * 60000);
   const graceMs = (s.checkoutGraceMinutes ?? 20) * 60000;
   // Early Leave: checkout before (shift end − grace) counts as Early Leave
@@ -629,7 +656,7 @@ export function formatShiftRange(user, dateKey = todayKey()) {
   const start = fmt(s.shiftStart);
   const end = fmt(s.shiftEnd);
   const startMs = shiftDateTime(dateKey, s.shiftStart).getTime();
-  const endMs = shiftDateTime(dateKey, s.shiftEnd).getTime();
+  const endMs = shiftEndDateTime(dateKey, s.shiftStart, s.shiftEnd).getTime();
   const overnight = endMs <= startMs;
   return overnight ? `${start} – ${end} (+1)` : `${start} – ${end}`;
 }
@@ -769,8 +796,8 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
   // Trust server On Leave status
   if (record?.status === "On Leave") return "On Leave";
-  // Trust server-finalized status
-  if (record?.status && record.status !== "Working" && record.checkOut)
+  // Trust server-finalized status (Early Leave recalculated client-side — overnight shift end).
+  if (record?.status && record.status !== "Working" && record.status !== "Early Leave" && record.checkOut)
     return record.status;
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
@@ -790,18 +817,7 @@ export function effectiveCheckOut(record, user, dateKey = record?.date || todayK
   if (!record?.checkIn) return null;
   const currentTime = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
   if (isAttendanceDayClosed(dateKey, currentTime)) return record.checkOut || null;
-  const shift = getUserShift(user, dateKey);
-  let employeeShiftEndTime = getShiftBounds(user, dateKey).end;
-  if (!shift.off && shift.shiftEnd) {
-    const startIso = karachiDateToIso(dateKey, shift.shiftStart);
-    const endIso = karachiDateToIso(dateKey, shift.shiftEnd);
-    if (endIso) {
-      employeeShiftEndTime = new Date(endIso);
-      if (startIso && employeeShiftEndTime <= new Date(startIso)) {
-        employeeShiftEndTime = new Date(employeeShiftEndTime.getTime() + 86400000);
-      }
-    }
-  }
+  const employeeShiftEndTime = getShiftBounds(user, dateKey).end;
   if (employeeShiftEndTime && currentTime < employeeShiftEndTime) return null;
   return record.checkOut || null;
 }
@@ -1183,8 +1199,7 @@ export function performBreakEnd(attendance, userId, user, now = new Date(), holi
 
 export function buildShortLeaveRequest(user, dateKey, fromTime, toTime, reason) {
   const start = shiftDateTime(dateKey, fromTime);
-  let end = shiftDateTime(dateKey, toTime);
-  if (end <= start) end = new Date(end.getTime() + 86400000);
+  let end = shiftEndDateTime(dateKey, fromTime, toTime);
   if (end <= start) return { error: "End time must be after start time." };
   const minutes = Math.round((end - start) / 60000);
   return {
