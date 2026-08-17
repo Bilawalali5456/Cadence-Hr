@@ -131,6 +131,7 @@ const userToJs = (r) => ({
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
   shiftId: r.shift_id || undefined,
+  shiftHistory: Array.isArray(r.shift_history) ? r.shift_history : [],
 });
 
 /** Public user payload — never include password or tempPassword. */

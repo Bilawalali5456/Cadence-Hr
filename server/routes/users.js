@@ -1,5 +1,6 @@
 import bcryptjs from "bcryptjs";
 import { HR_ADMIN_ROLES, canManageTargetRole, canAssignRole } from "../lib/auth.js";
+import { buildShiftHistoryOnChange, parseShiftHistory, shiftsEqual } from "../lib/shiftHistory.js";
 
 function isBcryptHash(pw) {
   return typeof pw === "string" && (pw.startsWith("$2a$") || pw.startsWith("$2b$"));
@@ -42,6 +43,7 @@ function userRowToJs(r) {
     bankIban: r.bank_iban || "",
     shift: r.shift || undefined,
     shiftId: r.shift_id || undefined,
+    shiftHistory: parseShiftHistory(r.shift_history),
   };
 }
 
@@ -99,6 +101,9 @@ function buildUserInsertValues(u, { passwordHash, firstLogin, existing } = {}) {
 
   const shift = u.shift !== undefined ? (u.shift ? JSON.stringify(u.shift) : null) : existing?.shift;
   const shiftId = u.shiftId !== undefined ? (u.shiftId || null) : existing?.shiftId;
+  const shiftHistory = u.shiftHistory !== undefined
+    ? JSON.stringify(Array.isArray(u.shiftHistory) ? u.shiftHistory : [])
+    : (existing?.shiftHistory != null ? JSON.stringify(existing.shiftHistory) : "[]");
 
   const type = u.type ?? (existing?.type ?? "Full-time");
   const hired = u.hired ?? (existing?.hired ?? "");
@@ -137,6 +142,7 @@ function buildUserInsertValues(u, { passwordHash, firstLogin, existing } = {}) {
     bankIban,
     shift,
     shiftId,
+    shiftHistory,
   ];
 }
 
@@ -200,8 +206,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
           id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
           leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
           guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-          bank_name, bank_branch, bank_account, bank_iban, shift, shift_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+          bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
@@ -231,7 +237,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
           bank_account = EXCLUDED.bank_account,
           bank_iban = EXCLUDED.bank_iban,
           shift = EXCLUDED.shift,
-          shift_id = EXCLUDED.shift_id
+          shift_id = EXCLUDED.shift_id,
+          shift_history = EXCLUDED.shift_history
         `,
         values
       );
@@ -304,6 +311,14 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         ...body,
       };
 
+      const oldShift = existing.shift;
+      const newShift = body.shift !== undefined ? body.shift : existing.shift;
+      let shiftHistory = parseShiftHistory(existingRows[0].shift_history);
+      if (canHr && body.shift !== undefined && !shiftsEqual(oldShift, newShift)) {
+        shiftHistory = buildShiftHistoryOnChange(shiftHistory, oldShift, existing.hired);
+        merged.shiftHistory = shiftHistory;
+      }
+
       const values = buildUserInsertValues(merged, { passwordHash, firstLogin, existing });
 
       await pool.query(
@@ -311,8 +326,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
           id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
           leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
           guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-          bank_name, bank_branch, bank_account, bank_iban, shift, shift_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+          bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
@@ -342,7 +357,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
           bank_account = EXCLUDED.bank_account,
           bank_iban = EXCLUDED.bank_iban,
           shift = EXCLUDED.shift,
-          shift_id = EXCLUDED.shift_id
+          shift_id = EXCLUDED.shift_id,
+          shift_history = EXCLUDED.shift_history
         `,
         values
       );

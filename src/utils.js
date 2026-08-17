@@ -338,6 +338,41 @@ export function resolveShiftSource(user) {
   return {};
 }
 
+function parseShiftHistoryEntries(user) {
+  const raw = user?.shiftHistory ?? user?.shift_history;
+  return Array.isArray(raw) ? raw : [];
+}
+
+/**
+ * Shift effective on a calendar date (PKT date keys).
+ * Uses shift_history for past dates; current user.shift from today onward.
+ */
+export function getShiftForDate(user, dateKey = todayKey()) {
+  const current = resolveShiftSource(user);
+  const history = parseShiftHistoryEntries(user);
+  const key = String(dateKey || "").slice(0, 10);
+  if (!key) return current;
+
+  const today = todayKey();
+  if (key >= today) return current;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i];
+    const from = String(entry?.from || entry?.from_date || "").slice(0, 10);
+    const toRaw = entry?.to ?? entry?.to_date;
+    const to = toRaw != null && toRaw !== "" ? String(toRaw).slice(0, 10) : null;
+    if (!from) continue;
+    if (key >= from && (!to || key <= to)) {
+      return entry?.shift && typeof entry.shift === "object" ? entry.shift : current;
+    }
+  }
+  return current;
+}
+
+export function shiftConfigEqual(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
 /** Build a complete shift config from form fields; empty day times fall back to defaults. */
 export function buildShiftFromForm(form = {}) {
   const src = form.weeklySchedule || {};
@@ -449,7 +484,7 @@ export function normalizeWeeklySchedule(shift = {}) {
 }
 
 export function getShiftSchedule(user, dateKey = todayKey()) {
-  const shift = resolveShiftSource(user);
+  const shift = getShiftForDate(user, dateKey);
   const weeklySchedule = normalizeWeeklySchedule(shift);
   const day = shiftDayKey(dateKey);
   const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
@@ -464,7 +499,7 @@ export function getShiftSchedule(user, dateKey = todayKey()) {
 }
 
 export function getUserShift(user, dateKey = todayKey()) {
-  const shift = { ...DEFAULT_SHIFT, ...resolveShiftSource(user) };
+  const shift = { ...DEFAULT_SHIFT, ...getShiftForDate(user, dateKey) };
   const daySchedule = getShiftSchedule(user, dateKey);
   return { ...shift, ...daySchedule, weeklySchedule: daySchedule.weeklySchedule };
 }
@@ -686,6 +721,7 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 }
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
+  // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
   // Trust server On Leave status
   if (record?.status === "On Leave") return "On Leave";
   // Trust server-finalized status
@@ -1726,6 +1762,7 @@ function approvedLeaveDatesForUser(leaveRequests, userId, fromKey, toKey, holida
 }
 
 export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays = []) {
+  // Per-day status/required hours use getShiftForDate via getUserShift(dateKey).
   const { start, end } = monthDateRange(month);
   const today = todayKey();
   let rangeStart = start;

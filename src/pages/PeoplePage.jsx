@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule, shiftConfigEqual } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
@@ -143,11 +143,18 @@ export function PeoplePage({
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already used by another account."); return; }
     const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, ...rest } = form;
+    const newShift = buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule });
+    if (!shiftConfigEqual(newShift, editTgt.shift)) {
+      const ok = window.confirm(
+        "Shift change will apply from today onwards. Past attendance records will use previous shift for status calculations. Continue?"
+      );
+      if (!ok) return;
+    }
     const updated = {
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
       cnicEnc: encryptSensitive(cnicDigits),
-      shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
+      shift: newShift,
       shiftId: null,
     };
     try {

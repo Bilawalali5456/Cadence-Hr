@@ -259,6 +259,7 @@ ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by_role TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_on TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_history JSONB DEFAULT '[]'::jsonb;
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS
