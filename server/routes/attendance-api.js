@@ -1,5 +1,5 @@
 import { HR_ADMIN_ROLES } from "../lib/auth.js";
-import { karachiDateKey } from "../lib/admsHelpers.js";
+import { karachiDateKey, karachiTimestampText } from "../lib/admsHelpers.js";
 import {
   syncAttendanceFromLogs,
   hasShiftEnded,
@@ -84,6 +84,37 @@ function prevDateKey(dateKey) {
   const dt = new Date(Date.UTC(y, m - 1, d - 1));
   const p = (n) => String(n).padStart(2, "0");
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
+/** PKT hour (0–23) from a Date. */
+function pktHour(now) {
+  const text = karachiTimestampText(now);
+  if (!text || text.length < 13) return null;
+  return Number(text.slice(11, 13));
+}
+
+/** PKT 00:00–04:59 — overnight checkout window (same rule as biometric). */
+function isOvernightCheckoutWindow(now = new Date()) {
+  const hour = pktHour(now);
+  return hour != null && !Number.isNaN(hour) && hour >= 0 && hour < 5;
+}
+
+/** Open WFH row for checkout: today first, then yesterday during overnight window. */
+async function findOpenWfhAttendance(pool, userId, now = new Date()) {
+  const today = karachiDateKey(now);
+  const openWfhSql = `SELECT * FROM attendance
+     WHERE user_id = $1 AND date = $2 AND source = 'wfh'
+       AND check_in IS NOT NULL AND check_out IS NULL
+     LIMIT 1`;
+
+  const { rows: todayRows } = await pool.query(openWfhSql, [userId, today]);
+  if (todayRows[0]) return todayRows[0];
+
+  if (!isOvernightCheckoutWindow(now)) return null;
+
+  const yesterday = prevDateKey(today);
+  const { rows: yRows } = await pool.query(openWfhSql, [userId, yesterday]);
+  return yRows[0] || null;
 }
 
 const STUCK_BREAK_MS = 60 * 60 * 1000; // 60 minutes
@@ -654,21 +685,16 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       }
 
       const now = new Date();
-      const today = karachiDateKey(now);
 
-      const { rows } = await pool.query(
-        `SELECT * FROM attendance
-         WHERE user_id = $1 AND date = $2 AND source = 'wfh'
-         LIMIT 1`,
-        [actor.id, today]
-      );
-      const row = rows[0];
+      const row = await findOpenWfhAttendance(pool, actor.id, now);
       if (!row?.check_in) {
-        return res.status(404).json({ error: "No WFH check-in found for today" });
+        return res.status(404).json({ error: "No open WFH check-in found" });
       }
       if (row.check_out) {
         return res.status(400).json({ error: "Already checked out" });
       }
+
+      const attendanceDate = String(row.date || karachiDateKey(now)).slice(0, 10);
 
       const { rows: userRows } = await pool.query(
         `SELECT id, name, role, shift, status FROM users WHERE id = $1 LIMIT 1`,
@@ -699,7 +725,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         null
       );
       const status = computeBiometricDayStatus(user, row.check_in, checkOutIso, {
-        dateKey: today,
+        dateKey: attendanceDate,
         now,
         breaks,
         shortLeaves,
