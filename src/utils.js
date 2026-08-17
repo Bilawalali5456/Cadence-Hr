@@ -390,9 +390,6 @@ export function getShiftForDate(user, dateKey = todayKey()) {
 
   const today = todayKey();
   if (key >= today) {
-    console.log(
-      `[getShiftForDate] user=${user?.id || user?.name || "?"} date=${key} source=current (today+) shiftStart=${current.shiftStart || "?"}`
-    );
     return current;
   }
 
@@ -406,12 +403,7 @@ export function getShiftForDate(user, dateKey = todayKey()) {
   }
 
   const historicalShift = matched ? parseShiftObject(matched.shift) : null;
-  const resolved = historicalShift || current;
-  const source = historicalShift ? "history" : "current";
-  console.log(
-    `[getShiftForDate] user=${user?.id || user?.name || "?"} date=${key} source=${source} historyEntries=${history.length} shiftStart=${resolved.shiftStart || "?"}`
-  );
-  return resolved;
+  return historicalShift || current;
 }
 
 export function shiftConfigEqual(a, b) {
