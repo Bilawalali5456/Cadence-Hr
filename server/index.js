@@ -11,7 +11,7 @@ import { registerAdmsRoutes } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
 import { registerAttendanceRestRoutes } from "./routes/attendance-api.js";
 import { registerLeaveRoutes } from "./routes/leave.js";
-import { registerUsersRoutes } from "./routes/users.js";
+import { registerUsersRoutes, USER_SELECT_SQL, logShiftHistoryRaw } from "./routes/users.js";
 import { registerBadgesRoutes } from "./routes/badges.js";
 import { registerShortLeaveRoutes } from "./routes/short-leave.js";
 import { registerAnnouncementsRoutes } from "./routes/announcements.js";
@@ -132,7 +132,7 @@ const userToJs = (r) => ({
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
   shiftId: r.shift_id || undefined,
-  shiftHistory: parseShiftHistory(r.shift_history),
+  shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
 });
 
 /** Public user payload — never include password or tempPassword. */
@@ -296,7 +296,7 @@ app.get("/api/bootstrap", async (req, res) => {
     }
 
     const currentUserPromise = actor
-      ? pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [actor.id])
+      ? pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [actor.id])
       : Promise.resolve({ rows: [] });
 
     const [currentUserRow, roles, company, holidays, shifts] = await Promise.all([
@@ -306,6 +306,10 @@ app.get("/api/bootstrap", async (req, res) => {
       pool.query("SELECT * FROM holidays ORDER BY date"),
       pool.query("SELECT * FROM shifts ORDER BY name"),
     ]);
+
+    if (currentUserRow.rows[0]) {
+      logShiftHistoryRaw(currentUserRow.rows[0], "GET /api/bootstrap");
+    }
 
     res.json({
       currentUser: currentUserRow.rows[0] ? userToSafeJs(currentUserRow.rows[0]) : null,
@@ -532,13 +536,15 @@ app.post("/api/login", async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      "SELECT * FROM users WHERE LOWER(email) = $1 LIMIT 1",
+      `${USER_SELECT_SQL} WHERE LOWER(email) = $1 LIMIT 1`,
       [email]
     );
     const row = rows[0];
     if (!row) {
       return res.json({ ok: false, error: "Invalid credentials" });
     }
+
+    logShiftHistoryRaw(row, "POST /api/login");
 
     const stored = row.password || "";
     let match = false;
@@ -634,7 +640,7 @@ app.post("/api/change-password", requireAuth, async (req, res) => {
     );
     await revokeAllUserSessions(pool, userId);
     const session = await createSession(pool, userId);
-    const { rows: updated } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
+    const { rows: updated } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [userId]);
     setSessionCookie(res, session.token);
     res.json({
       ok: true,

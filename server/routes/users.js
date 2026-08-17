@@ -12,6 +12,23 @@ function hashPasswordIfNeeded(pw) {
   return bcryptjs.hashSync(String(pw), 10);
 }
 
+/** Explicit column list so shift_history is always fetched from DB. */
+export const USER_SELECT_SQL = `
+  SELECT id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
+    leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
+    guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
+    bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
+  FROM users`;
+
+export function logShiftHistoryRaw(row, label) {
+  if (!row?.id) return;
+  const raw = row.shift_history ?? row.shiftHistory;
+  const parsed = parseShiftHistory(raw);
+  console.log(
+    `[${label}] user=${row.id} shift_history type=${raw == null ? "null" : typeof raw} isArray=${Array.isArray(raw)} parsedLen=${parsed.length} raw=${raw != null ? JSON.stringify(raw).slice(0, 200) : "null"}`
+  );
+}
+
 function userRowToJs(r) {
   return {
     id: r.id,
@@ -43,7 +60,7 @@ function userRowToJs(r) {
     bankIban: r.bank_iban || "",
     shift: r.shift || undefined,
     shiftId: r.shift_id || undefined,
-    shiftHistory: parseShiftHistory(r.shift_history),
+    shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
   };
 }
 
@@ -153,7 +170,13 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
   // HR Admin/Executive: list all users (password/temp never returned).
   app.get("/api/users", requireHrAdmin, async (_req, res) => {
     try {
-      const { rows } = await pool.query("SELECT * FROM users ORDER BY name");
+      const { rows } = await pool.query(`${USER_SELECT_SQL} ORDER BY name`);
+      for (const row of rows) {
+        const raw = row.shift_history;
+        if (raw != null && JSON.stringify(raw) !== "[]") {
+          logShiftHistoryRaw(row, "GET /api/users");
+        }
+      }
       res.json(rows.map(userRowToSafe));
     } catch (e) {
       console.error("GET /api/users error:", e.message);
@@ -173,8 +196,9 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         return res.status(403).json({ error: "Forbidden — cannot view other users" });
       }
 
-      const { rows } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [targetId]);
+      const { rows } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [targetId]);
       if (!rows[0]) return res.status(404).json({ error: "User not found" });
+      logShiftHistoryRaw(rows[0], "GET /api/users/:id");
       res.json(userRowToSafe(rows[0]));
     } catch (e) {
       console.error("GET /api/users/:id error:", e.message);
@@ -243,7 +267,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         values
       );
 
-      const { rows: created } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [u.id]);
+      const { rows: created } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [u.id]);
+      logShiftHistoryRaw(created[0], "POST /api/users");
       res.json({ ok: true, user: userRowToSafe(created[0]) });
     } catch (e) {
       console.error("POST /api/users error:", e.message);
@@ -265,7 +290,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
 
       const bodyRaw = req.body || {};
 
-      const { rows: existingRows } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [targetId]);
+      const { rows: existingRows } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [targetId]);
       if (!existingRows[0]) return res.status(404).json({ error: "User not found" });
 
       const existing = userRowToJs(existingRows[0]);
@@ -363,7 +388,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         values
       );
 
-      const { rows: updated } = await pool.query("SELECT * FROM users WHERE id = $1 LIMIT 1", [targetId]);
+      const { rows: updated } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [targetId]);
+      logShiftHistoryRaw(updated[0], "PUT /api/users/:id");
       res.json({ ok: true, user: userRowToSafe(updated[0]) });
     } catch (e) {
       console.error("PUT /api/users/:id error:", e.message);

@@ -1,13 +1,27 @@
 import { karachiDateKey } from "./admsHelpers.js";
 
+function normalizeHistoryEntry(entry) {
+  return entry && typeof entry === "object" ? { ...entry } : entry;
+}
+
 export function parseShiftHistory(raw) {
-  if (Array.isArray(raw)) return raw.map(e => ({ ...e }));
+  if (raw == null || raw === "") return [];
+  if (Array.isArray(raw)) return raw.map(normalizeHistoryEntry);
   if (typeof raw === "string") {
     try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.map(e => ({ ...e })) : [];
+      return parseShiftHistory(JSON.parse(raw));
     } catch {
       return [];
+    }
+  }
+  if (typeof raw === "object") {
+    // JSONB single entry stored as object instead of array
+    if (raw.from || raw.from_date || raw.shift) {
+      return [normalizeHistoryEntry(raw)];
+    }
+    const vals = Object.values(raw);
+    if (vals.length && vals.every(v => v && typeof v === "object")) {
+      return vals.map(normalizeHistoryEntry);
     }
   }
   return [];
