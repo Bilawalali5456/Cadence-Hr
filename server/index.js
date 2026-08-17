@@ -24,6 +24,7 @@ import { registerShiftsRoutes } from "./routes/shifts.js";
 import { registerCompanyRoutes } from "./routes/company.js";
 import { registerRolesRoutes } from "./routes/roles.js";
 import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
+import { parseShiftHistory } from "./lib/shiftHistory.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
@@ -131,7 +132,7 @@ const userToJs = (r) => ({
   bankIban: r.bank_iban || "",
   shift: r.shift || undefined,
   shiftId: r.shift_id || undefined,
-  shiftHistory: Array.isArray(r.shift_history) ? r.shift_history : [],
+  shiftHistory: parseShiftHistory(r.shift_history),
 });
 
 /** Public user payload — never include password or tempPassword. */
@@ -391,9 +392,10 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
     const body = Array.isArray(req.body) ? req.body : [];
-    const { rows: existingRows } = await client.query("SELECT id, password, first_login FROM users");
+    const { rows: existingRows } = await client.query("SELECT id, password, first_login, shift_history FROM users");
     const existingPasswords = Object.fromEntries(existingRows.map((r) => [r.id, r.password]));
     const existingFirstLogin = Object.fromEntries(existingRows.map((r) => [r.id, r.first_login]));
+    const existingShiftHistory = Object.fromEntries(existingRows.map((r) => [r.id, r.shift_history]));
 
     // IMPORTANT: do NOT DELETE FROM users (full wipe). That cascades into user_sessions
     // and immediately invalidates the caller's Bearer token after every sync.
@@ -405,15 +407,18 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
       keepIds.push(u.id);
       const password = resolvePasswordForSave(u.password, existingPasswords[u.id]);
       const firstLogin = resolveFirstLoginForSave(u, existingFirstLogin);
+      const shiftHistoryJson = u.shiftHistory !== undefined
+        ? JSON.stringify(Array.isArray(u.shiftHistory) ? u.shiftHistory : [])
+        : (existingShiftHistory[u.id] != null ? JSON.stringify(parseShiftHistory(existingShiftHistory[u.id])) : "[]");
       await client.query(
         `INSERT INTO users (
            id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
            guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-           bank_name, bank_branch, bank_account, bank_iban, shift, shift_id
+           bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
          )
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
@@ -444,7 +449,8 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
            bank_account = EXCLUDED.bank_account,
            bank_iban = EXCLUDED.bank_iban,
            shift = EXCLUDED.shift,
-           shift_id = EXCLUDED.shift_id`,
+           shift_id = EXCLUDED.shift_id,
+           shift_history = EXCLUDED.shift_history`,
         [
           u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
@@ -454,6 +460,7 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
           u.bankName || "", u.bankBranch || "", u.bankAccount || "", u.bankIban || "",
           u.shift ? JSON.stringify(u.shift) : null,
           u.shiftId || null,
+          shiftHistoryJson,
         ]
       );
     }

@@ -330,17 +330,53 @@ export const DEFAULT_SHIFT = {
   weeklySchedule: DEFAULT_WEEKLY_SCHEDULE,
 };
 
+function normalizeDateKey(value) {
+  return String(value || "").slice(0, 10);
+}
+
+/** Parse shift JSON whether stored as object or string (API/DB). */
+function parseShiftObject(shift) {
+  if (shift && typeof shift === "object") return shift;
+  if (typeof shift === "string") {
+    try {
+      const parsed = JSON.parse(shift);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** Resolve the employee's own stored schedule (no shared shift templates). */
 export function resolveShiftSource(user) {
-  if (user?.shift && (user.shift.weeklySchedule || user.shift.shiftStart)) {
-    return user.shift;
+  const parsed = parseShiftObject(user?.shift);
+  if (parsed && (parsed.weeklySchedule || parsed.shiftStart)) {
+    return parsed;
   }
   return {};
 }
 
 function parseShiftHistoryEntries(user) {
   const raw = user?.shiftHistory ?? user?.shift_history;
-  return Array.isArray(raw) ? raw : [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function historyEntryCoversDate(entry, dateKey) {
+  const from = normalizeDateKey(entry?.from ?? entry?.from_date);
+  if (!from || from > dateKey) return false;
+  const toRaw = entry?.to ?? entry?.to_date;
+  if (toRaw == null || toRaw === "") return true;
+  return normalizeDateKey(toRaw) >= dateKey;
 }
 
 /**
@@ -349,24 +385,33 @@ function parseShiftHistoryEntries(user) {
  */
 export function getShiftForDate(user, dateKey = todayKey()) {
   const current = resolveShiftSource(user);
-  const history = parseShiftHistoryEntries(user);
-  const key = String(dateKey || "").slice(0, 10);
+  const key = normalizeDateKey(dateKey);
   if (!key) return current;
 
   const today = todayKey();
-  if (key >= today) return current;
+  if (key >= today) {
+    console.log(
+      `[getShiftForDate] user=${user?.id || user?.name || "?"} date=${key} source=current (today+) shiftStart=${current.shiftStart || "?"}`
+    );
+    return current;
+  }
 
+  const history = parseShiftHistoryEntries(user);
+  let matched = null;
   for (let i = history.length - 1; i >= 0; i--) {
-    const entry = history[i];
-    const from = String(entry?.from || entry?.from_date || "").slice(0, 10);
-    const toRaw = entry?.to ?? entry?.to_date;
-    const to = toRaw != null && toRaw !== "" ? String(toRaw).slice(0, 10) : null;
-    if (!from) continue;
-    if (key >= from && (!to || key <= to)) {
-      return entry?.shift && typeof entry.shift === "object" ? entry.shift : current;
+    if (historyEntryCoversDate(history[i], key)) {
+      matched = history[i];
+      break;
     }
   }
-  return current;
+
+  const historicalShift = matched ? parseShiftObject(matched.shift) : null;
+  const resolved = historicalShift || current;
+  const source = historicalShift ? "history" : "current";
+  console.log(
+    `[getShiftForDate] user=${user?.id || user?.name || "?"} date=${key} source=${source} historyEntries=${history.length} shiftStart=${resolved.shiftStart || "?"}`
+  );
+  return resolved;
 }
 
 export function shiftConfigEqual(a, b) {
