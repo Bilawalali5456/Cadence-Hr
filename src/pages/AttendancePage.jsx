@@ -805,7 +805,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       </Card>
       )}
 
-      {viewMode === "monthly" && !detailUser && (
+      {viewMode === "daily" && (
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle right={<span className="text-xs text-slate-400">Total: {formatDurationMs(periodTotalMs)}</span>}>Attendance reports</STitle>
