@@ -794,25 +794,6 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
-  if (record?.checkOut) {
-    const shift = getUserShift(user, dateKey);
-    const bounds = getShiftBounds(user, dateKey);
-    const shiftEndDT = shiftEndDateTime(dateKey, shift.shiftStart, shift.shiftEnd);
-    const cutoff = bounds.earlyLeaveCutoff || bounds.end;
-    const checkoutTime = new Date(record.checkOut);
-    console.log("[resolveDayStatus]", {
-      date: record.date || dateKey,
-      serverStatus: record.status,
-      shiftStart: shift.shiftStart,
-      shiftEnd: shift.shiftEnd,
-      shiftEndUTC: shiftEndDT?.toISOString?.(),
-      earlyLeaveCutoffUTC: cutoff?.toISOString?.(),
-      checkoutUTC: record.checkOut,
-      checkoutPKT: formatTime(record.checkOut),
-      isEarlyLeave: cutoff ? checkoutTime < cutoff : null,
-    });
-  }
-
   // Trust server On Leave status
   if (record?.status === "On Leave") return "On Leave";
   // Trust server-finalized status (Early Leave recalculated client-side — overnight shift end).
@@ -823,9 +804,8 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  // Trust finalized server status — except legacy "Late" with a completed checkout
-  // (day status is Present; Late is shown only as the check-in badge).
-  if (record.status && record.status !== "Working" && record.status !== "Late" && (record.checkOut || record.status === "Missing Checkout")) {
+  // Trust finalized server status — except Late / Early Leave (recalculated client-side).
+  if (record.status && record.status !== "Working" && record.status !== "Late" && record.status !== "Early Leave" && (record.checkOut || record.status === "Missing Checkout")) {
     return record.status;
   }
   return computeDayStatus(user, record, holidays, now);
