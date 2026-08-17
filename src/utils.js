@@ -777,8 +777,8 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record?.checkIn) return "Absent";
 
-  // Working until shift end + 30 min (or day closed) — never finalize mid-shift.
-  if (!shouldFinalizeAttendance(user, dateKey, currentTime)) return "Working";
+  // Working only while checked in with no checkout and shift not yet finalized.
+  if (!record.checkOut && !shouldFinalizeAttendance(user, dateKey, currentTime)) return "Working";
 
   if (!record.checkOut) return "Missing Checkout";
 
@@ -794,20 +794,17 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
-  // Trust server On Leave status
   if (record?.status === "On Leave") return "On Leave";
-  // Trust server-finalized status (Early Leave recalculated client-side — overnight shift end).
-  if (record?.status && record.status !== "Working" && record.status !== "Early Leave" && record.checkOut)
-    return record.status;
+  // Checkout complete — always derive Present / Early Leave / Short Hours client-side.
+  if (record?.checkOut) {
+    return computeDayStatus(user, record, holidays, now);
+  }
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  // Trust finalized server status — except Late / Early Leave (recalculated client-side).
-  if (record.status && record.status !== "Working" && record.status !== "Late" && record.status !== "Early Leave" && (record.checkOut || record.status === "Missing Checkout")) {
-    return record.status;
-  }
+  if (record.status === "Missing Checkout") return record.status;
   return computeDayStatus(user, record, holidays, now);
 }
 
