@@ -794,6 +794,25 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
+  if (record?.checkOut) {
+    const shift = getUserShift(user, dateKey);
+    const bounds = getShiftBounds(user, dateKey);
+    const shiftEndDT = shiftEndDateTime(dateKey, shift.shiftStart, shift.shiftEnd);
+    const cutoff = bounds.earlyLeaveCutoff || bounds.end;
+    const checkoutTime = new Date(record.checkOut);
+    console.log("[resolveDayStatus]", {
+      date: record.date || dateKey,
+      serverStatus: record.status,
+      shiftStart: shift.shiftStart,
+      shiftEnd: shift.shiftEnd,
+      shiftEndUTC: shiftEndDT?.toISOString?.(),
+      earlyLeaveCutoffUTC: cutoff?.toISOString?.(),
+      checkoutUTC: record.checkOut,
+      checkoutPKT: formatTime(record.checkOut),
+      isEarlyLeave: cutoff ? checkoutTime < cutoff : null,
+    });
+  }
+
   // Trust server On Leave status
   if (record?.status === "On Leave") return "On Leave";
   // Trust server-finalized status (Early Leave recalculated client-side — overnight shift end).
