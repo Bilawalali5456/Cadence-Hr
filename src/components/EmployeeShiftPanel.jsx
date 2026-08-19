@@ -74,11 +74,12 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   }, [user.id, key, setAttendance]);
 
   useEffect(() => {
-    if (!checkedIn) return undefined;
-    const intervalMs = onBreak ? 1000 : 30000;
+    const tickBreakTimer = canUseBreakButtons && onBreak;
+    if (!checkedIn && !tickBreakTimer) return undefined;
+    const intervalMs = tickBreakTimer ? 1000 : 30000;
     const id = setInterval(() => setNow(new Date()), intervalMs);
     return () => clearInterval(id);
-  }, [checkedIn, onBreak, today?.breakStart]);
+  }, [checkedIn, onBreak, today?.breakStart, canUseBreakButtons]);
 
   async function handleWfhCheckin() {
     setErr("");
