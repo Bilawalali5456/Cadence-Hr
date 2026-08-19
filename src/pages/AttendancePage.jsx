@@ -564,7 +564,17 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     })
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
 
-  const isWfhRow = (row) => row.record?.source === "wfh" || row.record?.checkInMethod === "wfh" || isWfhAttendance(row.record, row.user.id, row.rowDate, leaveRequests, holidays, row.user);
+  const isWfhRow = (row) => {
+    const r = row?.record;
+    return (
+      r?.source === "wfh" ||
+      r?.checkInMethod === "wfh" ||
+      r?.check_in_method === "wfh" ||
+      (r?.checkIn && r?.source === "wfh") ||
+      // Also match the same condition used for the WFH badge in the table.
+      isWfhAttendance(r, row.user.id, row.rowDate, leaveRequests, holidays, row.user)
+    );
+  };
   const wfhCount = dailyRows.reduce((sum, row) => sum + (isWfhRow(row) ? 1 : 0), 0);
 
   const statusCounts = dailyRows.reduce((acc, row) => {
@@ -573,7 +583,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   }, {});
   const chipOptions = dailyStatusOrder.filter(status => {
     if (status === "All") return true;
-    if (status === "WFH") return true;
+    if (status === "WFH") return wfhCount > 0;
     return (statusCounts[status] || 0) > 0;
   });
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -806,7 +816,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <div className="flex flex-wrap gap-2 mt-3">
             {chipOptions.map(status => {
               const active = statusFilter === status;
-              const count = status === "All" ? dailyRows.length : (statusCounts[status] || 0);
+              const count = status === "All"
+                ? dailyRows.length
+                : (status === "WFH" ? wfhCount : (statusCounts[status] || 0));
               return (
                 <button
                   key={status}
