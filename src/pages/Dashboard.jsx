@@ -416,7 +416,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
 
   return (
     <div className="space-y-5">
-      {(isHrEmployeeRole(role)) && (
+      {(role === "Employee" || role === "Manager" || isHrEmployeeRole(role)) && (
         <>
           <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
           <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
