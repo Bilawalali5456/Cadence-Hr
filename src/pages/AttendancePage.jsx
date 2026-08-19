@@ -567,35 +567,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const isWfhRow = (row) => row.record?.source === "wfh" || row.record?.checkInMethod === "wfh" || isWfhAttendance(row.record, row.user.id, row.rowDate, leaveRequests, holidays, row.user);
   const wfhCount = dailyRows.reduce((sum, row) => sum + (isWfhRow(row) ? 1 : 0), 0);
 
-  useEffect(() => {
-    // TEMP debug: verify WFH field names on fetched attendance records (camelCase expected).
-    const rosterRows = dailyRows || [];
-    const first = rosterRows[0];
-    const firstRecord = first?.record || {};
-    console.log("[WFH debug] selectedDate", selectedDate, "wfhCount", wfhCount);
-    console.log("[WFH debug] first record fields:", Object.keys(rosterRows[0] || {}));
-    console.log("[WFH debug] first record (camel) keys:", Object.keys(firstRecord || {}));
-    console.log("[WFH debug] first record (camel) values:", {
-      source: firstRecord?.source,
-      checkInMethod: firstRecord?.checkInMethod,
-      check_in_method: firstRecord?.check_in_method,
-    });
-
-    const sample = rosterRows.slice(0, 5).map(r => ({
-      user: r.user?.name,
-      recordKeys: Object.keys(r.record || {}),
-      source: r.record?.source,
-      checkInMethod: r.record?.checkInMethod,
-      check_in_method: r.record?.check_in_method,
-      recordDate: r.record?.date,
-      recordUserId: r.record?.userId ?? r.record?.user_id,
-    }));
-    console.log("[WFH debug] first few records sample:", sample);
-
-    const recordsForSelectedDate = (attendance || []).filter(r => r && r.date === selectedDate);
-    console.log("[WFH debug] attendance rows for selectedDate:", recordsForSelectedDate.length);
-  }, [selectedDate, attendance]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const statusCounts = dailyRows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
