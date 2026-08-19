@@ -543,7 +543,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     }))
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
 
-  const dailyStatusOrder = ["All", "Working", "Present", "Late", "Absent", "Early Leave", "Missing Checkout", "On Leave"];
+  const dailyStatusOrder = ["All", "Working", "Present", "WFH", "Late", "Absent", "Early Leave", "Missing Checkout", "On Leave"];
   const dailyRows = liveRoster
     .map(u => {
       const rowDate = selectedDate;
@@ -563,14 +563,26 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       };
     })
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
+
+  const wfhCount = dailyRows.reduce((sum, row) => sum + (row.record?.source === "wfh" ? 1 : 0), 0);
   const statusCounts = dailyRows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
   }, {});
-  const chipOptions = dailyStatusOrder.filter(status => status === "All" || (statusCounts[status] || 0) > 0);
+  const chipOptions = dailyStatusOrder.filter(status => {
+    if (status === "All") return true;
+    if (status === "WFH") return wfhCount > 0;
+    return (statusCounts[status] || 0) > 0;
+  });
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredDailyRows = dailyRows.filter(row => {
-    if (statusFilter !== "All" && row.status !== statusFilter) return false;
+    if (statusFilter !== "All") {
+      if (statusFilter === "WFH") {
+        if (row.record?.source !== "wfh") return false;
+      } else if (row.status !== statusFilter) {
+        return false;
+      }
+    }
     if (normalizedSearch && !String(row.user.name || "").toLowerCase().includes(normalizedSearch)) return false;
     return true;
   });
