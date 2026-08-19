@@ -21,6 +21,7 @@ import {
   canManualCheckIn,
   isApprovedWfhDay,
   isWfhAttendance,
+  isHrEmployeeRole,
 } from "../utils.js";
 import { apiStartBreak, apiEndBreak, apiBreakStatus, apiWfhCheckin, apiWfhCheckout } from "../api.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
@@ -48,11 +49,15 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const publicHoliday = getPublicHoliday(key, holidays);
   const dayOff = bounds.off || publicHoliday;
   const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
+  const role = user?.role;
+  const canUseBreakButtons = role === "Employee" || role === "Manager" || isHrEmployeeRole(role);
   const checkedIn = today?.checkIn && isAttendanceInProgress(user, today, key, now);
   const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));
   const breakExceeded = isBreakExceeded(today, shift.breakMinutes, now);
-  const showBreakButton = checkedIn && !dayOff;
+  const showBreakButton = canUseBreakButtons && !dayOff && (
+    onBreak || (today?.checkIn && !today?.checkOut)
+  );
 
   useEffect(() => {
     let cancelled = false;
