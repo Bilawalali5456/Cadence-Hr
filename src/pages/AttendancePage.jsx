@@ -468,6 +468,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [now, setNow] = useState(() => new Date());
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [monthlySearch, setMonthlySearch] = useState("");
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
@@ -528,13 +529,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     }
   }
 
-  const checkedInNow = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && !effectiveCheckOut(r, u, r?.date || todayKey()); });
-  const lateToday = liveRoster.filter(u => { const r = getUserTodayRecord(attendance, u.id, u); return r?.checkIn && isLateCheckIn(r.checkIn, u, holidays); });
-  const absentTodayCount = liveRoster.filter(u => {
-    const r = getUserTodayRecord(attendance, u.id, u);
-    return resolveDayStatus(u, r, r?.date || today, holidays) === "Absent";
-  }).length;
-
   const monthOptions = attendanceMonthOptions(users);
   const monthlyRows = liveRoster
     .map(u => ({
@@ -542,6 +536,11 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       summary: computeMonthlyAttendanceSummary(u, attendance, leaveRequests, month, holidays),
     }))
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
+
+  const normalizedMonthlySearch = monthlySearch.trim().toLowerCase();
+  const filteredMonthlyRows = normalizedMonthlySearch
+    ? monthlyRows.filter(({ user }) => String(user?.name || "").toLowerCase().includes(normalizedMonthlySearch))
+    : monthlyRows;
 
   const dailyStatusOrder = ["All", "Working", "Present", "WFH", "Late", "Absent", "Early Leave", "Missing Checkout", "On Leave"];
   const dailyRows = liveRoster
@@ -605,15 +604,13 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     }
   }, [chipOptions, statusFilter]);
 
-  const hoursSummaryMs = viewMode === "monthly"
-    ? monthlyRows.reduce((sum, { summary }) => sum + (summary.totalWorkingMs || 0), 0)
-    : liveRoster.reduce((sum, u) => {
-        const r = getRecordForDate(attendance, u.id, u, selectedDate, now);
-        if (!r?.checkIn) return sum;
-        const liveNow = selectedDate === today ? now : new Date(`${selectedDate}T23:59:59`);
-        if (r.checkOut) return sum + (r.workingMs || calcNetWorkingMs(r) || 0);
-        return sum + calcLiveWorkingMs(r, liveNow);
-      }, 0);
+  const checkedInCount = dailyRows.reduce((sum, row) => sum + (row.record?.checkIn != null ? 1 : 0), 0);
+  const lateCount = dailyRows.reduce((sum, row) => sum + (row.record?.late === true ? 1 : 0), 0);
+  const absentCount = dailyRows.reduce((sum, row) => sum + (row.status === "Absent" ? 1 : 0), 0);
+  const totalHoursMs = dailyRows.reduce((sum, row) => {
+    const ms = row.record?.workingMs;
+    return sum + (typeof ms === "number" && Number.isFinite(ms) ? ms : 0);
+  }, 0);
 
   return (
     <div className="space-y-5">
@@ -678,10 +675,10 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Checked in now", value: checkedInNow.length, icon: LogIn },
-          { label: "Late today", value: lateToday.length, icon: AlertTriangle },
-          { label: "Absent today", value: absentTodayCount, icon: Users },
-          { label: viewMode === "monthly" ? "Monthly hours" : (selectedDate === today ? "Total hours today" : "Total hours"), value: formatDurationMs(hoursSummaryMs), icon: BadgeCheck },
+          { label: "Checked in", value: checkedInCount, icon: LogIn },
+          { label: "Late", value: lateCount, icon: AlertTriangle },
+          { label: "Absent", value: absentCount, icon: Users },
+          { label: "Total hours", value: formatDurationMs(totalHoursMs), icon: BadgeCheck },
         ].map(k => (
           <Card key={k.label} className="p-4">
             <div className="flex items-center justify-between mb-2">
@@ -734,6 +731,27 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
             {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </select>
         </div>
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50/40">
+          <div className="relative">
+            <input
+              type="text"
+              value={monthlySearch}
+              onChange={e => setMonthlySearch(e.target.value)}
+              placeholder="Search employee name..."
+              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 pr-10"
+            />
+            {monthlySearch && (
+              <button
+                type="button"
+                onClick={() => setMonthlySearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                aria-label="Clear employee search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[1180px]">
             <thead>
@@ -746,7 +764,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
             <tbody>
               {monthlyRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
-              ) : monthlyRows.map(({ user, summary }) => (
+              ) : filteredMonthlyRows.length === 0 ? (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
+              ) : filteredMonthlyRows.map(({ user, summary }) => (
                 <tr
                   key={user.id}
                   className="border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50/80"
