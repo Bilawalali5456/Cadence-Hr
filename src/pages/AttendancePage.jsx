@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil } from "lucide-react";
+import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
 import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
@@ -88,6 +88,14 @@ function resolveDrillDownDayStatus(user, record, dateKey, leaveRequests, holiday
     return "On Leave";
   }
   return resolveDayStatus(user, record, dateKey, holidays, now);
+}
+
+function adminDailyStatus(user, record, dateKey, holidays, now) {
+  const status = resolveDayStatus(user, record, dateKey, holidays, now);
+  if (record?.checkIn && isLateCheckIn(record.checkIn, user, holidays) && status === "Present") {
+    return "Late";
+  }
+  return status;
 }
 
 function employeeDetailDateRange(user, month) {
@@ -458,6 +466,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [detailUser, setDetailUser] = useState(null);
   const [now, setNow] = useState(() => new Date());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
@@ -532,6 +542,44 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       summary: computeMonthlyAttendanceSummary(u, attendance, leaveRequests, month, holidays),
     }))
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
+
+  const dailyStatusOrder = ["All", "Working", "Present", "Late", "Absent", "Early Leave", "Missing Checkout", "On Leave"];
+  const dailyRows = liveRoster
+    .map(u => {
+      const rowDate = selectedDate;
+      const record = getRecordForDate(attendance, u.id, u, rowDate, now);
+      const liveNow = isSelectedToday ? now : new Date(`${rowDate}T23:59:59`);
+      const shiftCfg = getUserShift(u, rowDate);
+      const status = adminDailyStatus(u, record, rowDate, holidays, isSelectedToday ? now : liveNow);
+      return {
+        user: u,
+        rowDate,
+        record,
+        liveNow,
+        shiftCfg,
+        status,
+        ds: dayStatusPill(status, record),
+        breakOver: isBreakExceeded(record, shiftCfg.breakMinutes),
+      };
+    })
+    .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
+  const statusCounts = dailyRows.reduce((acc, row) => {
+    acc[row.status] = (acc[row.status] || 0) + 1;
+    return acc;
+  }, {});
+  const chipOptions = dailyStatusOrder.filter(status => status === "All" || (statusCounts[status] || 0) > 0);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredDailyRows = dailyRows.filter(row => {
+    if (statusFilter !== "All" && row.status !== statusFilter) return false;
+    if (normalizedSearch && !String(row.user.name || "").toLowerCase().includes(normalizedSearch)) return false;
+    return true;
+  });
+
+  useEffect(() => {
+    if (!chipOptions.includes(statusFilter)) {
+      setStatusFilter("All");
+    }
+  }, [chipOptions, statusFilter]);
 
   const hoursSummaryMs = viewMode === "monthly"
     ? monthlyRows.reduce((sum, { summary }) => sum + (summary.totalWorkingMs || 0), 0)
@@ -721,6 +769,44 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
             </span>
           </div>
         </div>
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50/40">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search by name..."
+              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 pr-10"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {chipOptions.map(status => {
+              const active = statusFilter === status;
+              const count = status === "All" ? dailyRows.length : (statusCounts[status] || 0);
+              return (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setStatusFilter(status)}
+                  className="rounded-full transition-colors"
+                  style={!active ? { border: `1px solid ${B.darkBorder}` } : undefined}
+                >
+                  <Pill tone={active ? "dark" : "slate"}>{status} {count}</Pill>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[980px]">
             <thead>
@@ -733,13 +819,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
             <tbody>
               {liveRoster.length === 0 ? (
                 <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
-              ) : liveRoster.map(u => {
-                const rowDate = selectedDate;
-                const r = getRecordForDate(attendance, u.id, u, rowDate, now);
-                const liveNow = isSelectedToday ? now : new Date(`${rowDate}T23:59:59`);
-                const shiftCfg = getUserShift(u, rowDate);
-                const ds = dayStatusPill(resolveDayStatus(u, r, rowDate, holidays, isSelectedToday ? now : liveNow), r);
-                const breakOver = isBreakExceeded(r, shiftCfg.breakMinutes);
+              ) : filteredDailyRows.length === 0 ? (
+                <tr><td colSpan={canManageCorrections ? 8 : 7} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
+              ) : filteredDailyRows.map(({ user: u, rowDate, record: r, liveNow, breakOver, ds }) => {
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3">
