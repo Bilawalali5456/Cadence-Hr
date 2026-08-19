@@ -564,21 +564,22 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     })
     .sort((a, b) => (a.user.name || "").localeCompare(b.user.name || ""));
 
-  const wfhCount = dailyRows.reduce((sum, row) => sum + (row.record?.source === "wfh" ? 1 : 0), 0);
+  const isWfhRow = (row) => row.record?.source === "wfh" || row.record?.checkInMethod === "wfh" || isWfhAttendance(row.record, row.user.id, row.rowDate, leaveRequests, holidays, row.user);
+  const wfhCount = dailyRows.reduce((sum, row) => sum + (isWfhRow(row) ? 1 : 0), 0);
   const statusCounts = dailyRows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
   }, {});
   const chipOptions = dailyStatusOrder.filter(status => {
     if (status === "All") return true;
-    if (status === "WFH") return wfhCount > 0;
+    if (status === "WFH") return true;
     return (statusCounts[status] || 0) > 0;
   });
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredDailyRows = dailyRows.filter(row => {
     if (statusFilter !== "All") {
       if (statusFilter === "WFH") {
-        if (row.record?.source !== "wfh") return false;
+        if (!isWfhRow(row)) return false;
       } else if (row.status !== statusFilter) {
         return false;
       }
