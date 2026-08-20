@@ -91,11 +91,8 @@ function resolveDrillDownDayStatus(user, record, dateKey, leaveRequests, holiday
 }
 
 function adminDailyStatus(user, record, dateKey, holidays, now) {
-  const status = resolveDayStatus(user, record, dateKey, holidays, now);
-  if (record?.checkIn && isLateCheckIn(record.checkIn, user, holidays) && status === "Present") {
-    return "Late";
-  }
-  return status;
+  // Day status stays Present when late=true; Late is only the check-in badge.
+  return resolveDayStatus(user, record, dateKey, holidays, now);
 }
 
 function employeeDetailDateRange(user, month) {
@@ -575,6 +572,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     );
   };
   const wfhCount = dailyRows.reduce((sum, row) => sum + (isWfhRow(row) ? 1 : 0), 0);
+  const lateCount = dailyRows.reduce((sum, row) => sum + (row.record?.late === true ? 1 : 0), 0);
 
   const statusCounts = dailyRows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
@@ -583,6 +581,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const chipOptions = dailyStatusOrder.filter(status => {
     if (status === "All") return true;
     if (status === "WFH") return wfhCount > 0;
+    if (status === "Late") return lateCount > 0;
     return (statusCounts[status] || 0) > 0;
   });
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -590,6 +589,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     if (statusFilter !== "All") {
       if (statusFilter === "WFH") {
         if (!isWfhRow(row)) return false;
+      } else if (statusFilter === "Late") {
+        if (row.record?.late !== true) return false;
       } else if (row.status !== statusFilter) {
         return false;
       }
@@ -605,7 +606,6 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   }, [chipOptions, statusFilter]);
 
   const checkedInCount = dailyRows.reduce((sum, row) => sum + (row.record?.checkIn != null ? 1 : 0), 0);
-  const lateCount = dailyRows.reduce((sum, row) => sum + (row.record?.late === true ? 1 : 0), 0);
   const absentCount = dailyRows.reduce((sum, row) => sum + (row.status === "Absent" ? 1 : 0), 0);
   const totalHoursMs = dailyRows.reduce((sum, row) => {
     const ms = row.record?.workingMs;

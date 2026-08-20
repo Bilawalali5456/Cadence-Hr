@@ -788,8 +788,11 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
   if (record?.status === "On Leave") return "On Leave";
   // Checkout complete — always derive Present / Early Leave / Short Hours client-side.
+  // late=true / legacy status "Late" never overrides a completed-shift Present.
   if (record?.checkOut) {
-    return computeDayStatus(user, record, holidays, now);
+    const status = computeDayStatus(user, record, holidays, now);
+    // Present wins over Late; Late is check-in badge only, not day status.
+    return status === "Late" ? "Present" : status;
   }
   const pub = getPublicHoliday(dateKey, holidays);
   if (pub && !record?.checkIn) return "Public Holiday";
@@ -797,7 +800,13 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
   if (record.status === "Missing Checkout") return record.status;
-  return computeDayStatus(user, record, holidays, now);
+  // Legacy server "Late" is not a day status — recompute (Working / Missing Checkout / etc.).
+  if (record.status === "Late") {
+    const status = computeDayStatus(user, record, holidays, now);
+    return status === "Late" ? "Present" : status;
+  }
+  const status = computeDayStatus(user, record, holidays, now);
+  return status === "Late" ? "Present" : status;
 }
 
 /** Effective checkout for display — null only during an open/active shift day. */
@@ -815,7 +824,8 @@ export function dayStatusPill(status, record = null) {
     Present: { tone: "green", label: "Present" },
     Working: { tone: "blue", label: "Working" },
     "On Time": { tone: "green", label: "Present" },
-    Late: { tone: "orange", label: "Late" },
+    // Legacy: Late is check-in badge only — status column shows Present.
+    Late: { tone: "green", label: "Present" },
     "Early Leave": { tone: "red", label: "Early Leave" },
     "Short Hours": { tone: "orange", label: "Short Hours" },
     "Missing Checkout": { tone: "orange", label: "Missing Checkout" },
