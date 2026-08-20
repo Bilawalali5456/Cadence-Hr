@@ -578,6 +578,8 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
   }, {});
+  // Late is a check-in flag, not a day status — count via record.late.
+  statusCounts.Late = lateCount;
   const chipOptions = dailyStatusOrder.filter(status => {
     if (status === "All") return true;
     if (status === "WFH") return wfhCount > 0;
@@ -838,7 +840,11 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               const active = statusFilter === status;
               const count = status === "All"
                 ? dailyRows.length
-                : (status === "WFH" ? wfhCount : (statusCounts[status] || 0));
+                : status === "WFH"
+                  ? wfhCount
+                  : status === "Late"
+                    ? lateCount
+                    : (statusCounts[status] || 0);
               return (
                 <button
                   key={status}
