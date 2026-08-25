@@ -62,7 +62,8 @@ function isApprovedLeaveDay(userId, dateKey, leaveRequests, user, holidays) {
 /** Status badge for admin drill-down — Late shows on check-in only; column uses Present. */
 function drillDownStatusPill(status, record) {
   let label = status;
-  if (status === "Late" || (record?.late && record?.checkIn && status !== "Working" && status !== "Missing Checkout")) {
+  // Only remap legacy day-status "Late" → Present. Do not override Short Hours / Early Leave when late=true.
+  if (status === "Late") {
     label = "Present";
   }
   if (label === "On Time") label = "Present";

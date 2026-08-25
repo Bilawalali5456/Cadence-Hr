@@ -813,10 +813,18 @@ function recordServerDayStatus(record) {
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift / getShiftForDate).
   const serverStatus = recordServerDayStatus(record);
+
+  console.log("[status check]", {
+    date: dateKey,
+    rawStatus: record?.status,
+    serverStatus: recordServerDayStatus(record),
+    checkOut: record?.checkOut,
+  });
+
   if (serverStatus === "On Leave") return "On Leave";
 
   // Short Hours: trust server only when checkout exists (finalized day).
-  if (serverStatus === "Short Hours" && record?.checkOut) return "Short Hours";
+  if (recordServerDayStatus(record) === "Short Hours" && record?.checkOut) return "Short Hours";
 
   // Use getShiftForDate so past dates resolve overnight from shift_history (not current shift only).
   const shift = user ? getShiftForDate(user, dateKey) : null;
@@ -826,7 +834,7 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   );
 
   // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
-  if (serverStatus === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
+  if (recordServerDayStatus(record) === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
     return "Early Leave";
   }
 
