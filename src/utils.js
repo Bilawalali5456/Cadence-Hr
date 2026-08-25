@@ -805,8 +805,8 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
   if (record?.status === "On Leave") return "On Leave";
 
-  // Short Hours: always trust server (client net/required can disagree after SL/break math).
-  if (record?.status === "Short Hours") return "Short Hours";
+  // Short Hours: trust server only when checkout exists (finalized day).
+  if (record?.status === "Short Hours" && record?.checkOut) return "Short Hours";
 
   const shift = user ? getUserShift(user, dateKey) : null;
   // Overnight ends 00:00–05:00 PKT — only then recalculate Early Leave client-side.
@@ -814,8 +814,10 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
   );
 
-  // Early Leave: trust server for normal day shifts (e.g. 15:00–22:00).
-  if (record?.status === "Early Leave" && !isOvernightShiftEnd) return "Early Leave";
+  // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
+  if (record?.status === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
+    return "Early Leave";
+  }
 
   // Checkout complete — derive Present / Early Leave (overnight) / etc. client-side.
   // late=true / legacy status "Late" never overrides a completed-shift Present.
