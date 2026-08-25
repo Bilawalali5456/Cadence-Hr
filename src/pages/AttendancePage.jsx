@@ -127,7 +127,15 @@ function AdminEmployeeAttendanceDetail({
     setLoading(true);
     apiFetchAttendance({ month, userId: user.id })
       .then(list => {
-        if (!cancelled) setEmployeeAttendance(Array.isArray(list) ? list : []);
+        if (!cancelled) {
+          setEmployeeAttendance(Array.isArray(list) ? list : []);
+          console.log(
+            "[drill-down] fetched records count:",
+            list?.length,
+            "sample dates:",
+            list?.slice(0, 5).map(r => r.date)
+          );
+        }
       })
       .catch(e => {
         console.error("Failed to fetch employee attendance:", e?.message || e);
@@ -147,6 +155,7 @@ function AdminEmployeeAttendanceDetail({
       .filter(r => r && r.userId === user.id && r.date)
       .map(r => [r.date, r])
   );
+  console.log("[drill-down] recordByDate keys:", Object.keys(recordByDate));
 
   const dailyRows = rangeStart && rangeEnd
     ? eachDateInRange(rangeStart, rangeEnd)
