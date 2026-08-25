@@ -802,13 +802,14 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 }
 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
-  // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
+  // Date-specific shift from shift_history (via getShiftBounds → getUserShift / getShiftForDate).
   if (record?.status === "On Leave") return "On Leave";
 
   // Short Hours: trust server only when checkout exists (finalized day).
   if (record?.status === "Short Hours" && record?.checkOut) return "Short Hours";
 
-  const shift = user ? getUserShift(user, dateKey) : null;
+  // Use getShiftForDate so past dates resolve overnight from shift_history (not current shift only).
+  const shift = user ? getShiftForDate(user, dateKey) : null;
   // Overnight ends 00:00–05:00 PKT — only then recalculate Early Leave client-side.
   const isOvernightShiftEnd = !!(
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
