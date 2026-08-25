@@ -804,11 +804,23 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift).
   if (record?.status === "On Leave") return "On Leave";
-  // Checkout complete — always derive Present / Early Leave / Short Hours client-side.
+
+  // Short Hours: always trust server (client net/required can disagree after SL/break math).
+  if (record?.status === "Short Hours") return "Short Hours";
+
+  const shift = user ? getUserShift(user, dateKey) : null;
+  // Overnight ends 00:00–05:00 PKT — only then recalculate Early Leave client-side.
+  const isOvernightShiftEnd = !!(
+    shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
+  );
+
+  // Early Leave: trust server for normal day shifts (e.g. 15:00–22:00).
+  if (record?.status === "Early Leave" && !isOvernightShiftEnd) return "Early Leave";
+
+  // Checkout complete — derive Present / Early Leave (overnight) / etc. client-side.
   // late=true / legacy status "Late" never overrides a completed-shift Present.
   if (record?.checkOut) {
     const status = computeDayStatus(user, record, holidays, now);
-    // Present wins over Late; Late is check-in badge only, not day status.
     return status === "Late" ? "Present" : status;
   }
   const pub = getPublicHoliday(dateKey, holidays);
