@@ -3,12 +3,48 @@ import { karachiDateKey, karachiTimestampText } from "../lib/admsHelpers.js";
 import {
   syncAttendanceFromLogs,
   hasShiftEnded,
-  computeNetWorkingMs,
   computeBreakMs,
   getCheckInEarliest,
   isLateCheckIn,
   computeBiometricDayStatus,
 } from "../lib/attendanceSync.js";
+
+/**
+ * Short-leave ms overlapping [checkIn, checkOut] only.
+ * Checkout before SL ⇒ 0; during SL ⇒ partial; after SL end ⇒ full duration.
+ */
+function computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut) {
+  const workStart = new Date(checkIn).getTime();
+  const workEnd = new Date(checkOut).getTime();
+  if (!Number.isFinite(workStart) || !Number.isFinite(workEnd) || workEnd <= workStart) return 0;
+  return parseJsonArray(shortLeaves)
+    .filter(sl => !sl.status || sl.status === "approved")
+    .reduce((sum, sl) => {
+      const startRaw = sl?.start || sl?.startIso;
+      const endRaw = sl?.end || sl?.endIso;
+      if (!startRaw || !endRaw) return sum;
+      const slStart = new Date(startRaw).getTime();
+      const slEnd = new Date(endRaw).getTime();
+      if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) return sum;
+      const overlapStart = Math.max(slStart, workStart);
+      const overlapEnd = Math.min(slEnd, workEnd);
+      const ms = overlapEnd - overlapStart;
+      return sum + (ms > 0 ? ms : 0);
+    }, 0);
+}
+
+/** Net working ms = gross − breaks − overlapping short leave only. */
+function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null) {
+  if (!checkIn || !checkOut) return null;
+  const gross = new Date(checkOut) - new Date(checkIn);
+  if (!(gross > 0)) return null;
+  return Math.max(
+    0,
+    gross
+      - computeBreakMs(breaks, breakStart, breakEnd)
+      - computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut)
+  );
+}
 
 function genAttId() {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

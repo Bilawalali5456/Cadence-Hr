@@ -729,16 +729,33 @@ export function calcLiveWorkingMs(record, now = new Date()) {
   return Math.max(0, Number.isFinite(ms) ? ms : 0);
 }
 
-export function calcShortLeaveMs(record) {
+/**
+ * Approved short-leave ms that overlaps the worked interval.
+ * Only overlap between [checkIn, checkOut|workEndOverride] and each short leave
+ * is counted — checkout before SL start ⇒ 0; checkout during SL ⇒ partial.
+ */
+export function calcShortLeaveMs(record, workEndOverride = null) {
   const list = Array.isArray(record?.shortLeaves) ? record.shortLeaves : [];
+  const workStartMs = record?.checkIn ? new Date(record.checkIn).getTime() : NaN;
+  const workEndMs = record?.checkOut
+    ? new Date(record.checkOut).getTime()
+    : (workEndOverride != null ? new Date(workEndOverride).getTime() : NaN);
+  const hasWorkWindow = Number.isFinite(workStartMs) && Number.isFinite(workEndMs) && workEndMs > workStartMs;
+
   return list
     .filter(sl => !sl?.status || sl.status === "approved")
     .reduce((sum, sl) => {
       const startRaw = sl?.start || sl?.startIso;
       const endRaw = sl?.end || sl?.endIso;
       if (!startRaw || !endRaw) return sum;
-      const ms = new Date(endRaw) - new Date(startRaw);
-      return sum + (Number.isFinite(ms) && ms > 0 ? ms : 0);
+      const slStart = new Date(startRaw).getTime();
+      const slEnd = new Date(endRaw).getTime();
+      if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) return sum;
+      if (!hasWorkWindow) return sum;
+      const overlapStart = Math.max(slStart, workStartMs);
+      const overlapEnd = Math.min(slEnd, workEndMs);
+      const ms = overlapEnd - overlapStart;
+      return sum + (ms > 0 ? ms : 0);
     }, 0);
 }
 
@@ -1307,7 +1324,7 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
       let workingMs = finalized.workingMs;
       if (!r.checkOut && bounds.end) {
         const gross = Math.max(0, bounds.end - new Date(r.checkIn));
-        workingMs = Math.max(0, gross - calcTotalBreakMs(updated) - calcShortLeaveMs(updated));
+        workingMs = Math.max(0, gross - calcTotalBreakMs(updated) - calcShortLeaveMs(updated, bounds.end));
       }
       return { ...finalized, status: "Missing Checkout", dayStatus: "Missing Checkout", workingMs, autoCheckout: false };
     }
@@ -1342,11 +1359,16 @@ export function displayWorkingHours(record, user, now = new Date()) {
     if (record.workingMs != null) return formatDurationMs(record.workingMs);
     if (bounds.end) {
       const gross = Math.max(0, bounds.end - new Date(record.checkIn));
-      return formatDurationMs(Math.max(0, gross - calcTotalBreakMs(record) - calcShortLeaveMs(record)));
+      return formatDurationMs(Math.max(0, gross - calcTotalBreakMs(record) - calcShortLeaveMs(record, bounds.end)));
     }
   }
-  if (record?.checkOut && record.workingMs != null) return formatDurationMs(record.workingMs);
-  if (record?.checkIn && record?.checkOut) return formatDurationMs(calcNetWorkingMs(record));
+  if (record?.checkOut) {
+    // Prefer overlap-aware client calc when short leaves exist (stored workingMs may still use full SL).
+    const hasApprovedSl = (record.shortLeaves || []).some(sl => !sl?.status || sl.status === "approved");
+    if (hasApprovedSl) return formatDurationMs(calcNetWorkingMs(record));
+    if (record.workingMs != null) return formatDurationMs(record.workingMs);
+    return formatDurationMs(calcNetWorkingMs(record));
+  }
   if (record?.checkIn && !record?.checkOut) return formatHoursMinutes(calcLiveWorkingMs(record, now));
   return "—";
 }
