@@ -801,12 +801,22 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   return "Present";
 }
 
+/** Day status from an attendance API/client record (`status`, with dayStatus fallback). */
+function recordServerDayStatus(record) {
+  if (!record) return null;
+  const raw = record.status ?? record.dayStatus ?? null;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  return s || null;
+}
+
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift / getShiftForDate).
-  if (record?.status === "On Leave") return "On Leave";
+  const serverStatus = recordServerDayStatus(record);
+  if (serverStatus === "On Leave") return "On Leave";
 
   // Short Hours: trust server only when checkout exists (finalized day).
-  if (record?.status === "Short Hours" && record?.checkOut) return "Short Hours";
+  if (serverStatus === "Short Hours" && record?.checkOut) return "Short Hours";
 
   // Use getShiftForDate so past dates resolve overnight from shift_history (not current shift only).
   const shift = user ? getShiftForDate(user, dateKey) : null;
@@ -815,20 +825,8 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
   );
 
-  console.log("[resolveDayStatus debug]", {
-    date: dateKey,
-    serverStatus: record?.status,
-    checkOut: record?.checkOut,
-    shiftFromHistory: getShiftForDate(user, dateKey),
-    shiftStart: shift?.shiftStart,
-    shiftEnd: shift?.shiftEnd,
-    isOvernightShiftEnd,
-    willTrustServerEarlyLeave: record?.status === "Early Leave" && record?.checkOut && !isOvernightShiftEnd,
-    willTrustServerShortHours: record?.status === "Short Hours" && record?.checkOut,
-  });
-
   // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
-  if (record?.status === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
+  if (serverStatus === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
     return "Early Leave";
   }
 
@@ -843,9 +841,9 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off && !record?.checkIn) return "Off";
   if (!record) return bounds.off || pub ? (pub ? "Public Holiday" : "Off") : "Absent";
-  if (record.status === "Missing Checkout") return record.status;
+  if (serverStatus === "Missing Checkout") return serverStatus;
   // Legacy server "Late" is not a day status — recompute (Working / Missing Checkout / etc.).
-  if (record.status === "Late") {
+  if (serverStatus === "Late") {
     const status = computeDayStatus(user, record, holidays, now);
     return status === "Late" ? "Present" : status;
   }

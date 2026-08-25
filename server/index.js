@@ -156,7 +156,7 @@ const attToJs = (r) => ({
   autoCheckout: r.auto_checkout || false,
   workingMs: r.working_ms != null ? Number(r.working_ms) : undefined,
   totalBreakMs: r.total_break_ms != null ? Number(r.total_break_ms) : undefined,
-  status: r.status || undefined,
+  status: r.status != null && String(r.status).trim() !== "" ? String(r.status).trim() : null,
   late: r.late || false,
   source: r.source || "manual",
   checkInMethod: r.check_in_method || null,

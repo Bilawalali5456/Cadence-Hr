@@ -777,7 +777,27 @@ export function sanitizeHolidays(list) {
 }
 
 export function sanitizeAttendance(list) {
-  return safeList(list).filter(r => r && r.userId && r.date);
+  return safeList(list)
+    .filter(r => r && (r.userId || r.user_id) && r.date != null && r.date !== "")
+    .map(r => {
+      const date = String(r.date ?? "").slice(0, 10);
+      // API attToJs uses `status`; also accept dayStatus / snake_case fallbacks.
+      const rawStatus = r.status ?? r.dayStatus ?? r.day_status ?? null;
+      const status = rawStatus != null && String(rawStatus).trim() !== ""
+        ? String(rawStatus).trim()
+        : undefined;
+      return {
+        ...r,
+        userId: r.userId || r.user_id,
+        date,
+        checkIn: r.checkIn ?? r.check_in ?? null,
+        checkOut: r.checkOut ?? r.check_out ?? null,
+        status,
+        dayStatus: r.dayStatus ?? status,
+        late: !!(r.late ?? r.isLate),
+      };
+    })
+    .filter(r => r.userId && /^\d{4}-\d{2}-\d{2}$/.test(r.date));
 }
 
 export function sanitizeLeaveRequests(list) {
