@@ -815,6 +815,18 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
   );
 
+  console.log("[resolveDayStatus debug]", {
+    date: dateKey,
+    serverStatus: record?.status,
+    checkOut: record?.checkOut,
+    shiftFromHistory: getShiftForDate(user, dateKey),
+    shiftStart: shift?.shiftStart,
+    shiftEnd: shift?.shiftEnd,
+    isOvernightShiftEnd,
+    willTrustServerEarlyLeave: record?.status === "Early Leave" && record?.checkOut && !isOvernightShiftEnd,
+    willTrustServerShortHours: record?.status === "Short Hours" && record?.checkOut,
+  });
+
   // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
   if (record?.status === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
     return "Early Leave";
