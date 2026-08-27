@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, ATTENDANCE_MONTH_FLOOR, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
 import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -300,9 +300,8 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
     ? getRecordForDate(attendance, user.id, user, selectedDate, now)
     : null;
   const history = (attendance || [])
-    .filter(r => r && r.userId === user.id && r.date && r.date >= ATTENDANCE_MONTH_FLOOR)
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 14);
+    .filter(r => r && r.userId === user.id && r.date && r.date.startsWith(month))
+    .sort((a, b) => b.date.localeCompare(a.date));
   const monthSummary = computeMonthlyAttendanceSummary(user, attendance, leaveRequests, month, holidays);
 
   return (
