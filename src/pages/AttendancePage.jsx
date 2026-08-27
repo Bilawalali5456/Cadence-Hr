@@ -890,7 +890,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                     <td className="px-4 py-3 text-slate-700">{formatDate(rowDate)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
-                      {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
+                      {r?.checkInMethod && r?.source !== "leave" ? (
+                        <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span>
+                      ) : null}
                       {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="orange">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
@@ -915,7 +917,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                         {isOnBreak(r) && <Pill tone="amber">On Break</Pill>}
                         <Pill tone={ds.tone}>{ds.label}</Pill>
                         {r?.manuallyCorrected && <Pill tone="purple">Corrected</Pill>}
-                        {(r?.source === "wfh" || isWfhAttendance(r, u.id, rowDate, leaveRequests, holidays, u)) && <Pill tone="blue">WFH</Pill>}
+                        {r?.source !== "leave" && (r?.source === "wfh" || isWfhAttendance(r, u.id, rowDate, leaveRequests, holidays, u)) && (
+                          <Pill tone="blue">WFH</Pill>
+                        )}
                       </span>
                     </td>
                     {canManageCorrections && (
