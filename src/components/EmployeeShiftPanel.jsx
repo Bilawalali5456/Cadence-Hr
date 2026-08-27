@@ -124,7 +124,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
       <Card className={compact ? "p-4" : "p-6"}>
         <STitle right={
           <span className="inline-flex items-center gap-1">
-            {(isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user)) && <Pill tone="blue">WFH</Pill>}
+            {(today?.source !== "leave" && daySt.label !== "On Leave" && (isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user))) && <Pill tone="blue">WFH</Pill>}
             {onBreak && <Pill tone="amber">On Break</Pill>}
             <Pill tone={daySt.tone}>{daySt.label}</Pill>
           </span>

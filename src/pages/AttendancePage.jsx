@@ -385,7 +385,9 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                     <td className="px-4 py-3 text-slate-700">{formatDate(dateKey)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r?.checkIn)}
-                      {r?.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
+                      {r?.checkInMethod && r?.source !== "leave" && ds.label !== "On Leave" ? (
+                        <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{displayBreakTime(r, liveNow)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
@@ -427,7 +429,9 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
                       {formatTime(r.checkIn)}
-                      {r.checkInMethod ? <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span> : null}
+                      {r.checkInMethod && r?.source !== "leave" && ds.label !== "On Leave" ? (
+                        <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{displayBreakTime(r)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">
@@ -437,7 +441,9 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 flex-wrap">
                         <Pill tone={ds.tone}>{ds.label}</Pill>
-                        {(r?.source === "wfh" || isWfhAttendance(r, user.id, r.date, leaveRequests, holidays, user)) && <Pill tone="blue">WFH</Pill>}
+                        {r?.source !== "leave" && ds.label !== "On Leave" && (r?.source === "wfh" || isWfhAttendance(r, user.id, r.date, leaveRequests, holidays, user)) && (
+                          <Pill tone="blue">WFH</Pill>
+                        )}
                       </span>
                     </td>
                   </tr>
