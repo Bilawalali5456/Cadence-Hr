@@ -814,13 +814,6 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift / getShiftForDate).
   const serverStatus = recordServerDayStatus(record);
 
-  console.log("[status check]", {
-    date: dateKey,
-    rawStatus: record?.status,
-    serverStatus: recordServerDayStatus(record),
-    checkOut: record?.checkOut,
-  });
-
   if (serverStatus === "On Leave") return "On Leave";
 
   // Short Hours: trust server only when checkout exists (finalized day).
