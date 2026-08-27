@@ -998,7 +998,7 @@ export function isoForAttendanceCorrectionTime(dateKey, hhmm, { overnightCheckou
   return isoFromDateAndTime(key, normalized);
 }
 
-export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason }, holidays = []) {
+export function applyAttendanceCorrection(attendance, userId, dateKey, user, actor, { checkInTime, checkOutTime, reason, markAsWfh = false }, holidays = []) {
   const list = attendance || [];
   try {
     const existing = list.find(r => r && r.userId === userId && r.date === dateKey) || null;
@@ -1024,7 +1024,11 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
     const changes = {};
     if (prevCheckIn !== newCheckIn) changes.checkIn = { from: prevCheckIn, to: newCheckIn };
     if (prevCheckOut !== newCheckOut) changes.checkOut = { from: prevCheckOut, to: newCheckOut };
-    if (Object.keys(changes).length === 0) return { attendance: list, error: "No changes to save." };
+    const wasWfh = existing?.source === "wfh";
+    const sourceChanging = !!markAsWfh !== wasWfh;
+    if (Object.keys(changes).length === 0 && !sourceChanging) {
+      return { attendance: list, error: "No changes to save." };
+    }
 
     if (!actor?.name || !actor?.role) {
       return { attendance: list, error: "Missing editor identity for correction audit log." };
@@ -1036,7 +1040,9 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
       byRole: actor.role,
       at: new Date().toISOString(),
       reason: reason.trim(),
-      changes,
+      changes: Object.keys(changes).length
+        ? changes
+        : { source: { from: existing?.source || null, to: markAsWfh ? "wfh" : "manual" } },
     };
 
     const base = existing || {
@@ -1052,8 +1058,21 @@ export function applyAttendanceCorrection(attendance, userId, dateKey, user, act
       correctionLog: [],
     };
 
+    const wfhFields = markAsWfh
+      ? {
+          source: "wfh",
+          checkInMethod: "wfh",
+          checkOutMethod: newCheckOut ? "wfh" : (base.checkOutMethod || null),
+        }
+      : {
+          source: base.source === "wfh" ? "manual" : (base.source || "manual"),
+          checkInMethod: base.checkInMethod === "wfh" ? "manual" : (base.checkInMethod || null),
+          checkOutMethod: base.checkOutMethod === "wfh" ? (newCheckOut ? "manual" : null) : (base.checkOutMethod || null),
+        };
+
     const updated = finalizeRecord({
       ...base,
+      ...wfhFields,
       checkIn: newCheckIn,
       checkOut: newCheckOut,
       manuallyCorrected: true,

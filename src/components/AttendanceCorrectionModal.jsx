@@ -7,8 +7,21 @@ import {
   formatDate,
   timeInputFromIso,
   normalizeTimeTo24Hour,
+  isApprovedWfhDay,
 } from "../utils.js";
 import { Modal, Btn, ErrBox } from "./ui.jsx";
+
+/** Approved WFH leave covering dateKey (from/to or from_date/to_date). */
+function hasApprovedWfhLeave(leaveRequests, userId, dateKey) {
+  const key = String(dateKey || "").slice(0, 10);
+  if (!userId || !key) return false;
+  return (leaveRequests || []).some(r => {
+    if (!r || r.userId !== userId || r.type !== "WFH" || r.status !== "approved") return false;
+    const from = String(r.from || r.from_date || "").slice(0, 10);
+    const to = String(r.to || r.to_date || "").slice(0, 10);
+    return from && to && from <= key && key <= to;
+  });
+}
 
 export function AttendanceCorrectionModal({
   open,
@@ -18,11 +31,13 @@ export function AttendanceCorrectionModal({
   attendance,
   setAttendance,
   holidays = [],
+  leaveRequests = [],
   persistAttendance,
 }) {
   const [checkInTime, setCheckInTime] = useState("");
   const [checkOutTime, setCheckOutTime] = useState("");
   const [reason, setReason] = useState("");
+  const [markAsWfh, setMarkAsWfh] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -31,15 +46,20 @@ export function AttendanceCorrectionModal({
   const dateKey = target?.dateKey;
   const canEdit = canCorrectAttendance(currentUser, record);
   const isCorrected = !!(record?.manuallyCorrected);
+  const approvedWfh = !!(user && dateKey && (
+    hasApprovedWfhLeave(leaveRequests, user.id, dateKey)
+    || isApprovedWfhDay(user.id, dateKey, leaveRequests, holidays, user)
+  ));
 
   useEffect(() => {
     if (!open || !target) return;
     setCheckInTime(normalizeTimeTo24Hour(timeInputFromIso(record?.checkIn)));
     setCheckOutTime(normalizeTimeTo24Hour(timeInputFromIso(record?.checkOut)));
     setReason("");
+    setMarkAsWfh(approvedWfh || record?.source === "wfh");
     setErr("");
     setBusy(false);
-  }, [open, target, record?.checkIn, record?.checkOut]);
+  }, [open, target, record?.checkIn, record?.checkOut, record?.source, approvedWfh]);
 
   if (!open || !target || !user) return null;
 
@@ -73,6 +93,7 @@ export function AttendanceCorrectionModal({
           checkInTime: in24,
           checkOutTime: out24,
           reason,
+          markAsWfh,
         },
         holidays,
       );
@@ -87,13 +108,6 @@ export function AttendanceCorrectionModal({
         return;
       }
       if (persistAttendance) {
-        console.log("[attendance-correction] calling API", {
-          id: updated.id,
-          userId: updated.userId,
-          date: updated.date,
-          checkIn: updated.checkIn,
-          checkOut: updated.checkOut,
-        });
         await persistAttendance(updated);
       }
       setAttendance(result.attendance);
@@ -137,11 +151,6 @@ export function AttendanceCorrectionModal({
         return;
       }
       if (persistAttendance) {
-        console.log("[attendance-correction] calling API (delete correction)", {
-          id: updated.id,
-          userId: updated.userId,
-          date: updated.date,
-        });
         await persistAttendance(updated);
       }
       setAttendance(result.attendance);
@@ -194,6 +203,23 @@ export function AttendanceCorrectionModal({
             <p className="text-[11px] text-slate-400 mt-1">12:00 AM = midnight (00:00). Overnight 12:00 AM–5:00 AM is saved as next morning.</p>
           </div>
         </div>
+        <label className="flex items-start gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={markAsWfh}
+            onChange={e => setMarkAsWfh(e.target.checked)}
+            disabled={!canEdit || busy}
+            className="mt-0.5 rounded border-slate-300"
+          />
+          <span>
+            <span className="block text-sm font-medium text-slate-800">Mark as WFH day</span>
+            <span className="block text-xs text-slate-500 mt-0.5">
+              {approvedWfh
+                ? "Approved WFH leave found for this date — attendance will be tagged as WFH."
+                : "No approved WFH leave for this date. You can still mark this attendance as WFH."}
+            </span>
+          </span>
+        </label>
         <div>
           <label className="block text-xs font-medium text-slate-600 mb-1">Reason for correction <span className="text-red-500">*</span></label>
           <textarea

@@ -394,6 +394,9 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
     // Belt-and-suspenders: force the main clock fields on correction even if
     // an older partial UPDATE path somehow ran without them.
     if (isCorrection) {
+      const source = r.source || "manual";
+      const checkInMethod = r.checkInMethod || null;
+      const checkOutMethod = r.checkOutMethod || null;
       await c.query(
         `UPDATE attendance SET
            check_in = $1,
@@ -402,13 +405,16 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
            working_ms = $4,
            total_break_ms = $5,
            late = $6,
+           source = $7,
+           check_in_method = $8,
+           check_out_method = $9,
            manually_corrected = true,
-           correction_log = $7,
-           last_corrected_by = $8,
-           last_corrected_by_role = $9,
-           last_corrected_on = $10,
+           correction_log = $10,
+           last_corrected_by = $11,
+           last_corrected_by_role = $12,
+           last_corrected_on = $13,
            updated_at = NOW()
-         WHERE id = $11`,
+         WHERE id = $14`,
         [
           checkIn,
           checkOut,
@@ -416,6 +422,9 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
           workingMs,
           totalBreakMs,
           late,
+          source,
+          checkInMethod,
+          checkOutMethod,
           JSON.stringify(r.correctionLog || []),
           r.lastCorrectedBy || null,
           r.lastCorrectedByRole || null,

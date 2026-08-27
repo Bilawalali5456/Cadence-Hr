@@ -625,6 +625,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
         attendance={attendance}
         setAttendance={setAttendance}
         holidays={holidays}
+        leaveRequests={leaveRequests}
         persistAttendance={(updatedRecord) => apiUpdateAttendance(updatedRecord.id, updatedRecord)}
       />
       {isExecutiveRole(currentUser.role) && (
