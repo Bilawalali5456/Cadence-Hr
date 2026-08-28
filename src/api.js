@@ -36,7 +36,7 @@ export function persistSessionToken(userId, token) {
 }
 
 export async function apiBootstrap() {
-  const res = await apiFetch(`${API_URL}/bootstrap`, { headers: authHeaders() });
+  const res = await apiFetch(`${API_URL}/bootstrap?v=${Date.now()}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
