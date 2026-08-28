@@ -821,24 +821,14 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
 
   // Use getShiftForDate so past dates resolve overnight from shift_history (not current shift only).
   const shift = user ? getShiftForDate(user, dateKey) : null;
-  if (serverStatus === "Early Leave") {
-    const bounds = user ? getShiftBounds(user, dateKey) : {};
-    const earlyLeaveCutoff = bounds.earlyLeaveCutoff || bounds.end;
-    console.log("[early leave debug]", {
-      date: dateKey,
-      shiftEnd: shift?.shiftEnd,
-      checkoutGraceMinutes: shift?.checkoutGraceMinutes,
-      checkoutUTC: record?.checkOut,
-      earlyLeaveCutoff: earlyLeaveCutoff?.toISOString?.(),
-    });
-  }
   // Overnight ends 00:00–05:00 PKT — only then recalculate Early Leave client-side.
   const isOvernightShiftEnd = !!(
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
   );
 
   // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
-  if (recordServerDayStatus(record) === "Early Leave" && record?.checkOut && !isOvernightShiftEnd) {
+  const serverEarlyLeave = recordServerDayStatus(record) === "Early Leave" || record?.status === "Early Leave";
+  if (serverEarlyLeave && record?.checkOut && !isOvernightShiftEnd) {
     return "Early Leave";
   }
 
