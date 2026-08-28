@@ -1,4 +1,5 @@
 import { karachiDateKey, karachiTimestampText, parseZktTime } from "./admsHelpers.js";
+import { parseShiftHistory } from "./shiftHistory.js";
 
 /**
  * Final attendance policy (Pakistan / Asia/Karachi):
@@ -21,10 +22,72 @@ export function isAutoCheckoutDue(user, dateKey, now = new Date()) {
   return now >= new Date(getShiftEndDate(user, dateKey).getTime() + 30 * 60000);
 }
 
+function parseShiftObject(shift) {
+  if (!shift) return {};
+  if (typeof shift === "string") {
+    try {
+      const parsed = JSON.parse(shift);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof shift === "object" ? shift : {};
+}
+
+function historyEntryCoversDate(entry, dateKey) {
+  const from = String(entry?.from ?? entry?.from_date ?? "").slice(0, 10);
+  if (!from || from > dateKey) return false;
+  const toRaw = entry?.to ?? entry?.to_date;
+  if (toRaw == null || toRaw === "") return true;
+  return String(toRaw).slice(0, 10) >= dateKey;
+}
+
+/** Shift effective on dateKey — uses shift_history for past dates when available. */
+function getShiftForDate(user, dateKey) {
+  const current = parseShiftObject(user?.shift);
+  const key = String(dateKey || "").slice(0, 10);
+  if (!key) return current;
+
+  const today = karachiDateKey(new Date());
+  if (key >= today) return current;
+
+  const history = parseShiftHistory(user?.shift_history ?? user?.shiftHistory);
+  let matched = null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (historyEntryCoversDate(history[i], key)) {
+      matched = history[i];
+      break;
+    }
+  }
+  const historicalShift = matched ? parseShiftObject(matched.shift) : null;
+  return historicalShift || current;
+}
+
+function parseClockMins(hhmm) {
+  const raw = String(hhmm || "00:00").trim();
+  const [h, m] = raw.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+/** Shift ends 00:00–05:00 PKT on the next calendar day (overnight). */
+function isPostMidnightShiftEnd(shiftStart, shiftEnd) {
+  const endMins = parseClockMins(shiftEnd);
+  const startMins = parseClockMins(shiftStart);
+  if (endMins == null || startMins == null) return false;
+  const endHour = Math.floor(endMins / 60);
+  if (endHour < 0 || endHour > 5) return false;
+  return startMins > endMins || startMins >= 12 * 60;
+}
+
 function getShiftEndDate(user, dateKey) {
   const shift = getUserShift(user, dateKey);
   const start = shiftDateTime(dateKey, shift.shiftStart);
-  let end = shiftDateTime(dateKey, shift.shiftEnd);
+  const endKey = isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
+    ? addDaysToDateKey(dateKey, 1)
+    : dateKey;
+  let end = shiftDateTime(endKey, shift.shiftEnd);
   if (!start || !end) return end || start || new Date(`${dateKey}T00:00:00Z`);
   if (end <= start) end = new Date(end.getTime() + 86400000);
   return end;
@@ -121,9 +184,11 @@ function normalizeWeeklySchedule(shift = {}) {
 }
 
 function enrichUserShift(user) {
-  if (user.shift && typeof user.shift === "object") return user;
+  const shift = parseShiftObject(user?.shift);
+  const base = user.shift && typeof user.shift === "object" ? user : { ...user, shift };
+  if (base.shift && typeof base.shift === "object") return base;
   return {
-    ...user,
+    ...base,
     shift: {
       shiftStart: "09:00",
       shiftEnd: "18:00",
@@ -136,7 +201,7 @@ function enrichUserShift(user) {
 }
 
 export function getUserShift(user, dateKey = dateKeyFromDate(new Date())) {
-  const s = (user?.shift && typeof user.shift === "object") ? user.shift : {};
+  const s = parseShiftObject(getShiftForDate(user, dateKey));
   const weeklySchedule = normalizeWeeklySchedule(s);
   const day = shiftDayKey(dateKey);
   const daySchedule = weeklySchedule[day] || DEFAULT_WEEKLY_SCHEDULE[day];
@@ -331,8 +396,12 @@ export function isEarlyLeave(checkOutIso, user, dateKeyOverride = null) {
   const dateKey = dateKeyOverride || dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
-  const grace = (shift.checkoutGraceMinutes ?? 20) * 60000;
-  return d < new Date(getShiftEndDate(user, dateKey).getTime() - grace);
+  const checkoutGraceMinutes = shift.checkoutGraceMinutes ?? 20;
+  const graceMs = checkoutGraceMinutes * 60000;
+  const shiftEnd = getShiftEndDate(user, dateKey);
+  const earlyLeaveCutoff = new Date(shiftEnd.getTime() - graceMs);
+  // Checkout at/after (shift end − grace) → Present; strictly before → Early Leave.
+  return d.getTime() < earlyLeaveCutoff.getTime();
 }
 
 export function isShortHours(checkIn, checkOut, user, options = {}) {
@@ -514,7 +583,9 @@ export async function syncAttendanceFromLogs(pool) {
     return { logsProcessed: 0, rowsUpdated: await finalizeOpenAttendance(pool) };
   }
 
-  const { rows: users } = await pool.query(`SELECT id, shift FROM users WHERE status = 'active'`);
+  const { rows: users } = await pool.query(
+    `SELECT id, shift, shift_history FROM users WHERE status = 'active'`
+  );
   const userById = new Map(users.map(u => [u.id, enrichUserShift(u)]));
 
   // Group pending work by (employee, shift-aware attendance day).
@@ -722,7 +793,9 @@ export async function syncAttendanceFromLogs(pool) {
 /** Finalize or repair open attendance when shift ends, at midnight, or fix premature check-outs. */
 export async function finalizeOpenAttendance(pool) {
   const now = new Date();
-  const { rows: users } = await pool.query(`SELECT id, shift FROM users WHERE status = 'active'`);
+  const { rows: users } = await pool.query(
+    `SELECT id, shift, shift_history FROM users WHERE status = 'active'`
+  );
   const userById = new Map(users.map(u => [u.id, enrichUserShift(u)]));
 
   const { rows: openRows } = await pool.query(
