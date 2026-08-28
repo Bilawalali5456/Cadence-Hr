@@ -1,7 +1,8 @@
 import crypto from "crypto";
 
-/** Session lifetime — 30 days. */
-export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Session lifetime — 7 days (stored in user_sessions.expires_at). */
+export const SESSION_TTL_DAYS = 7;
+export const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 export const SESSION_COOKIE = "adforce_session";
 
 export function extractSessionToken(req) {
@@ -55,15 +56,15 @@ export function clearSessionCookie(res) {
   );
 }
 
-/** Create a server-side session; returns { token, expiresAt }. */
+/** Create a server-side session in PostgreSQL; returns { token, expiresAt }. */
 export async function createSession(pool, userId) {
   const token = newSessionToken();
   // Use DB clock so expires_at is never skewed by Node/Postgres timezone mismatch
   const { rows } = await pool.query(
     `INSERT INTO user_sessions (token, user_id, expires_at)
-     VALUES ($1, $2, NOW() + INTERVAL '30 days')
+     VALUES ($1, $2, NOW() + ($3::text || ' days')::interval)
      RETURNING expires_at`,
-    [token, userId]
+    [token, userId, String(SESSION_TTL_DAYS)]
   );
   return { token, expiresAt: rows[0]?.expires_at || null };
 }
@@ -97,9 +98,26 @@ export async function resolveAuthenticatedUser(pool, req) {
   return rows[0];
 }
 
-/** Optional — prune expired sessions (call on startup). */
+/** Prune expired sessions (call on startup and periodically). */
 export async function cleanupExpiredSessions(pool) {
-  await pool.query("DELETE FROM user_sessions WHERE expires_at <= NOW()");
+  const { rowCount } = await pool.query(
+    `DELETE FROM user_sessions
+     WHERE expires_at <= NOW()
+        OR created_at <= NOW() - ($1::text || ' days')::interval`,
+    [String(SESSION_TTL_DAYS)]
+  );
+  return rowCount || 0;
+}
+
+/** Run session cleanup every hour so stale rows do not accumulate. */
+export function startSessionCleanupScheduler(pool, intervalMs = 60 * 60 * 1000) {
+  const run = () => {
+    cleanupExpiredSessions(pool).catch((e) => {
+      console.warn("[auth] session cleanup failed:", e.message);
+    });
+  };
+  run();
+  return setInterval(run, intervalMs);
 }
 
 export const HR_ADMIN_ROLES = ["HR Admin", "Executive", "HR Employee"];

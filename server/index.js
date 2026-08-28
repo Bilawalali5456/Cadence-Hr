@@ -29,7 +29,8 @@ import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
-  revokeAllUserSessions, cleanupExpiredSessions, createRequireAuth, createRequireHrAdmin,
+  revokeAllUserSessions, cleanupExpiredSessions, startSessionCleanupScheduler,
+  createRequireAuth, createRequireHrAdmin,
   HR_ADMIN_ROLES, canManageTargetRole, setSessionCookie, clearSessionCookie,
 } from "./lib/auth.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
@@ -1112,7 +1113,12 @@ async function applyBiometricTimezoneFix() {
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
-  .then(() => cleanupExpiredSessions(pool))
+  .then(async () => {
+    const pruned = await cleanupExpiredSessions(pool);
+    if (pruned > 0) console.log(`✓ Pruned ${pruned} expired session${pruned === 1 ? "" : "s"}`);
+    startSessionCleanupScheduler(pool);
+    console.log("✓ Sessions persisted in PostgreSQL (user_sessions)");
+  })
   .then(() => migratePlaintextPasswords())
   .then(() => applyBiometricTimezoneFix().catch((e) => {
     console.error("Biometric timezone fix failed (continuing startup):", e.message);

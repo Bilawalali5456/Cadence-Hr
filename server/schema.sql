@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS app_meta (
   updated_at    TIMESTAMP DEFAULT NOW()
 );
 
--- Server-side login sessions (Bearer token validated on protected API routes)
+-- Server-side login sessions (PostgreSQL — survives PM2 restarts)
 CREATE TABLE IF NOT EXISTS user_sessions (
   token          TEXT PRIMARY KEY,
   user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
