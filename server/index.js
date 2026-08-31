@@ -769,7 +769,7 @@ app.put("/api/payroll", requireHrOps, async (req, res) => {
 
 // Legacy bulk PUT endpoints below are deprecated; granular REST routes take precedence when registered last.
 
-app.put("/api/assets", requireAuth, async (req, res) => {
+app.put("/api/assets", requireAssetManager, async (req, res) => {
   try {
     await replaceAll("assets", req.body, (c, a) =>
       c.query(

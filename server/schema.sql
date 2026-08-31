@@ -217,7 +217,7 @@ INSERT INTO roles (id, name, permissions) VALUES
 ('HR Employee', 'HR Employee', '[
   "view_dashboard","view_people","manage_employees","manage_executives",
   "view_attendance","view_attendance_reports","approve_short_leave","approve_leave","view_leave",
-  "view_policies","manage_policies","view_assets","view_all_assets","manage_assets",
+  "view_policies","manage_policies",
   "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
 ]'::jsonb),
 ('Executive', 'Executive', '[

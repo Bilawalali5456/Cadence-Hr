@@ -1,12 +1,12 @@
 import React, { useState } from "react";
-import { Key, Check, AlertTriangle } from "lucide-react";
+import { Key, Check, AlertTriangle, Package } from "lucide-react";
 import { B } from "../brand.jsx";
 import { DEFAULT_ANNUAL_LEAVE, getUserCnic, formatDate, isManagerDesignation } from "../utils.js";
 import { apiChangePassword, apiUpdateWarning } from "../api.js";
 import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox, Pill, UserDisplayName } from "../components/ui.jsx";
 import { warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
 
-export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings = [], setWarnings }) {
+export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings = [], setWarnings, assets = [] }) {
   const me = users.find(u => u.id === currentUser.id) || currentUser;
   const [tab, setTab] = useState("info");
   const [pw, setPw]   = useState({ curr: "", newp: "", conf: "" });
@@ -16,6 +16,8 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings
   const myWarnings = (warnings || [])
     .filter(w => w && w.userId === me.id)
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  const myAssets = (assets || []).filter(a => a && a.assignedTo === me.id);
 
   async function changePw() {
     setPwErr(""); setPwOk(false);
@@ -121,6 +123,28 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings
             </div>
             <p className="text-xs text-slate-400 mt-4">To update your information, contact your HR administrator.</p>
           </Card>
+          {myAssets.length > 0 && (
+            <Card className="p-5">
+              <STitle>Assigned assets</STitle>
+              <div className="space-y-3">
+                {myAssets.map(a => (
+                  <div key={a.id} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100">
+                    <Package size={16} className="text-slate-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-slate-800">{a.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {[a.assetType, a.serialNumber, a.brand].filter(Boolean).join(" · ") || "—"}
+                      </div>
+                      {a.assignedDate && (
+                        <div className="text-xs text-slate-400 mt-0.5">Assigned {formatDate(a.assignedDate)}</div>
+                      )}
+                    </div>
+                    <Pill tone={a.condition === "Good" || a.condition === "New" ? "green" : "slate"}>{a.condition || "—"}</Pill>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
         </div>
       )}
 

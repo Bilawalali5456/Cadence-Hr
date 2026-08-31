@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -168,13 +168,18 @@ export default function App() {
       }
       if (key === "settings" || key === "myprofile") {
         // Employees/Managers: self profile only — never GET /api/users (403).
-        const [us, warnings] = await Promise.all([
+        const fetches = [
           apiFetchUsers({ selfOnly: !rosterOk }),
           apiFetchWarnings(),
-        ]);
+        ];
+        if (roleHint && isHrEmployeeRole(roleHint)) {
+          fetches.push(apiFetchAssets());
+        }
+        const results = await Promise.all(fetches);
         markRemoteApply();
-        setUsers(us);
-        setWarnings(warnings);
+        setUsers(results[0]);
+        setWarnings(results[1]);
+        if (results[2]) setAssets(results[2]);
       }
       if (key === "shortleave") {
         const [shortLeave, att] = await Promise.all([apiFetchShortLeave(), apiFetchAttendance({ month: monthKey() })]);
@@ -278,6 +283,13 @@ export default function App() {
     if (!r || !isAdminRole(r)) return;
     const allowed = ADMIN_SIDEBAR_IDS.has(route) || ADMIN_SELF_SERVICE_IDS.has(route);
     if (!allowed) setRoute("home");
+  }, [route, session?.userId, users]);
+
+  /* ── HR Employee: block Assets module (read-only assigned assets live on profile) ── */
+  useEffect(() => {
+    const r = users.find(u => u.id === session?.userId)?.role;
+    if (!r || !isHrEmployeeRole(r)) return;
+    if (route === "assets") setRoute("home");
   }, [route, session?.userId, users]);
 
   /* ── Live poll while Attendance / Biometric / Home tab is open ── */
@@ -455,6 +467,7 @@ export default function App() {
   const nav  = NAV.filter(n => {
     if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
     if (hasStaffPortalRole(role)) return STAFF_PORTAL_IDS.has(n.id);
+    if (n.id === "assets" && !canAccessAssetsModule(role, roles)) return false;
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;
@@ -556,9 +569,9 @@ export default function App() {
           {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={(next) => { markRemoteApply(); setAttendance(next); }} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
-          {route === "assets"        && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
+          {route === "assets"        && canAccessAssetsModule(role, roles) && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
           {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
-          {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} warnings={warnings} setWarnings={setWarnings} />}
+          {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} warnings={warnings} setWarnings={setWarnings} assets={assets} />}
           {route === "settings"      && <SettingsPage   currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} company={company} setCompany={setCompany} roles={roles} />}
         </main>
       </div>

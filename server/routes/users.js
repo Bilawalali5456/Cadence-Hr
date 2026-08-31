@@ -1,5 +1,5 @@
 import bcryptjs from "bcryptjs";
-import { HR_OPS_ROLES, ASSET_MANAGER_ROLES, actorCanAssignRole } from "../lib/rbac.js";
+import { HR_OPS_ROLES, actorCanAssignRole } from "../lib/rbac.js";
 import { canManageTargetRole } from "../lib/auth.js";
 import { buildShiftHistoryOnChange, parseShiftHistory, shiftsEqual } from "../lib/shiftHistory.js";
 

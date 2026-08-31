@@ -44,6 +44,12 @@ export function isHrEmployeeRole(role) {
   return role === "HR Employee";
 }
 
+/** Assets sidebar/module — HR Employee uses profile read-only view instead. */
+export function canAccessAssetsModule(role, roles) {
+  if (isHrEmployeeRole(role)) return false;
+  return can(role, "view_assets", roles);
+}
+
 /** HR Employee operational powers (people, payroll, attendance reports). */
 export function isHrOpsRole(role) {
   return isHrEmployeeRole(role);

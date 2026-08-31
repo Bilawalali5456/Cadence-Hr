@@ -4,7 +4,7 @@ import { canAssignRole, extractSessionToken, resolveAuthenticatedUser } from "./
 export const HR_OPS_ROLES = ["HR Employee", "Executive"];
 
 /** Roles that may create, assign, and delete company assets. */
-export const ASSET_MANAGER_ROLES = ["Admin", "HR Employee", "Executive"];
+export const ASSET_MANAGER_ROLES = ["Admin", "Executive"];
 
 export function isHrOpsRoleName(role) {
   return HR_OPS_ROLES.includes(role);
@@ -56,7 +56,7 @@ export function createRequireHrOps(pool) {
   };
 }
 
-/** Require Admin, HR Employee, or Executive for asset write operations. */
+/** Require Admin or Executive for asset write operations. */
 export function createRequireAssetManager(pool) {
   return async function requireAssetManager(req, res, next) {
     try {
