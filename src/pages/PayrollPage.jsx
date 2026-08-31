@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Save, Landmark } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
-import { can, isStaffRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
+import { can, isStaffRole, isHrEmployeeRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
 import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox } from "../components/ui.jsx";
 import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll } from "../api.js";
 
@@ -15,7 +15,7 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
   const [genErr, setGenErr] = useState("");
 
   const staff = canManage
-    ? users.filter(u => u.status === "active" && isStaffRole(u.role))
+    ? users.filter(u => u.status === "active" && (isStaffRole(u.role) || isHrEmployeeRole(u.role)))
     : activePayrollRoster(users, currentUser.role);
   const monthSlips = payroll.filter(s => s.month === month);
   const mySlips = payroll.filter(s => s.userId === currentUser.id).sort((a, b) => b.month.localeCompare(a.month));
