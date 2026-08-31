@@ -1,4 +1,4 @@
-import { ASSET_MANAGER_ROLES } from "../lib/rbac.js";
+import { resolveAssetManagerAccess } from "../lib/rbac.js";
 
 function parseReturnLog(value) {
   if (!value) return null;
@@ -152,7 +152,8 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireAssetManager
       const { rows } = await pool.query("SELECT * FROM assets ORDER BY name");
       let list = rows.map(assetToJs);
 
-      if (!ASSET_MANAGER_ROLES.includes(actor.role)) {
+      const canViewAll = await resolveAssetManagerAccess(pool, actor);
+      if (!canViewAll) {
         list = list.filter((a) => a.assignedTo === actor.id);
       }
 
@@ -186,7 +187,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireAssetManager
     if (!id) return res.status(400).json({ error: "id is required" });
 
     const actor = req.authUser;
-    const isHr = ASSET_MANAGER_ROLES.includes(actor.role);
+    const isHr = await resolveAssetManagerAccess(pool, actor);
 
     try {
       const { rows: existingRows } = await pool.query("SELECT * FROM assets WHERE id = $1", [id]);

@@ -23,7 +23,8 @@ import { HolidaysPage } from "./pages/HolidaysPage.jsx";
 import { ReportsPage } from "./pages/ReportsPage.jsx";
 import { BiometricPage } from "./pages/BiometricPage.jsx";
 
-const ADMIN_SIDEBAR_IDS = new Set(["home", "assets"]);
+const ADMIN_SIDEBAR_IDS = new Set(["assets"]);
+const HOME_NAV = { id: "home", label: "Home", icon: LayoutDashboard };
 const ADMIN_SELF_SERVICE_IDS = new Set([
   "attendance", "shortleave", "payroll", "leave",
   "announcements", "policies", "myprofile", "settings",
@@ -281,16 +282,18 @@ export default function App() {
   useEffect(() => {
     const r = users.find(u => u.id === session?.userId)?.role;
     if (!r || !isAdminRole(r)) return;
-    const allowed = ADMIN_SIDEBAR_IDS.has(route) || ADMIN_SELF_SERVICE_IDS.has(route);
+    const allowed = route === "home" || ADMIN_SIDEBAR_IDS.has(route) || ADMIN_SELF_SERVICE_IDS.has(route);
     if (!allowed) setRoute("home");
   }, [route, session?.userId, users]);
 
-  /* ── HR Employee: block Assets module (read-only assigned assets live on profile) ── */
+  /* ── Block Assets for roles without module access (HR Employee, regular Employee) ── */
   useEffect(() => {
-    const r = users.find(u => u.id === session?.userId)?.role;
-    if (!r || !isHrEmployeeRole(r)) return;
-    if (route === "assets") setRoute("home");
-  }, [route, session?.userId, users]);
+    const user = session?.userId ? users.find(u => u.id === session.userId) : null;
+    if (!user) return;
+    if (route === "assets" && !canAccessAssetsModule(user, roles)) {
+      setRoute("home");
+    }
+  }, [route, session?.userId, users, roles]);
 
   /* ── Live poll while Attendance / Biometric / Home tab is open ── */
   useEffect(() => {
@@ -461,18 +464,19 @@ export default function App() {
   const rosterUsers = canFetchUserRoster(role) ? users : [];
   // Employee portal sidebar (legacy Manager role until DB migration completes).
   const STAFF_PORTAL_IDS = new Set([
-    "home", "attendance", "shortleave", "payroll", "leave",
-    "holidays", "policies", "assets", "announcements", "myprofile", "settings",
+    "attendance", "shortleave", "payroll", "leave",
+    "holidays", "policies", "announcements", "myprofile", "settings",
   ]);
-  const nav  = NAV.filter(n => {
+  const navItems = NAV.filter(n => {
+    if (n.id === "assets" && !canAccessAssetsModule(currentUser, roles)) return false;
     if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
     if (hasStaffPortalRole(role)) return STAFF_PORTAL_IDS.has(n.id);
-    if (n.id === "assets" && !canAccessAssetsModule(role, roles)) return false;
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;
     return can(role, n.permission, roles);
   });
+  const sidebarNav = [HOME_NAV, ...navItems];
   const [title, sub] = TITLES[route] || TITLES.home;
 
   return (
@@ -488,7 +492,7 @@ export default function App() {
           </div>
         </div>
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {nav.map(n => (
+          {sidebarNav.map(n => (
             <button key={n.id} onClick={() => handleNavClick(n.id)}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors"
               style={route === n.id
@@ -569,7 +573,7 @@ export default function App() {
           {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={(next) => { markRemoteApply(); setAttendance(next); }} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
-          {route === "assets"        && canAccessAssetsModule(role, roles) && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
+          {route === "assets"        && canAccessAssetsModule(currentUser, roles) && <AssetsPage     currentUser={currentUser} users={users} assets={assets} setAssets={setAssets} roles={roles} />}
           {route === "announcements" && <AnnouncementsPage currentUser={currentUser} anns={announcements} setAnns={setAnnouncements} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}
           {route === "myprofile"     && <MyProfilePage  currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} warnings={warnings} setWarnings={setWarnings} assets={assets} />}
           {route === "settings"      && <SettingsPage   currentUser={currentUser} users={users} setUsers={setUsers} onLogout={handleLogout} company={company} setCompany={setCompany} roles={roles} />}

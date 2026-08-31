@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Search, Trash2, Edit2, Save, Plus, Package } from "lucide-react";
 import { B } from "../brand.jsx";
-import { can, isStaffRole, isHrAdminRole, isHrEmployeeRole, todayKey, formatDate } from "../utils.js";
+import { isStaffRole, isHrAdminRole, isHrEmployeeRole, canManageAssets, canViewAllAssets, todayKey, formatDate } from "../utils.js";
 import { Pill, Card, Modal, TextInput, SelectInput, Btn, ErrBox } from "../components/ui.jsx";
 import { apiCreateAsset, apiUpdateAsset, apiDeleteAsset } from "../api.js";
 
@@ -20,8 +20,8 @@ function buildReturnLog(userId, userName, returnDate) {
 }
 
 export function AssetsPage({ currentUser, users, assets, setAssets, roles }) {
-  const canManage = can(currentUser.role, "manage_assets", roles);
-  const canViewAll = can(currentUser.role, "view_all_assets", roles);
+  const canManage = canManageAssets(currentUser, roles);
+  const canViewAll = canViewAllAssets(currentUser, roles);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [open, setOpen] = useState(false);

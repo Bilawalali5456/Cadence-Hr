@@ -44,10 +44,30 @@ export function isHrEmployeeRole(role) {
   return role === "HR Employee";
 }
 
-/** Assets sidebar/module — HR Employee uses profile read-only view instead. */
-export function canAccessAssetsModule(role, roles) {
+/** Assets sidebar/module — Admin, Executive, and Manager designation only. */
+export function isAssetManagerUser(user) {
+  if (!user) return false;
+  const role = user.role;
+  if (isAdminRole(role) || isExecutiveRole(role)) return true;
+  return isManagerDesignation(user);
+}
+
+export function canAccessAssetsModule(user, roles) {
+  const role = typeof user === "string" ? user : user?.role;
   if (isHrEmployeeRole(role)) return false;
-  return can(role, "view_assets", roles);
+  if (typeof user === "object" && user && isAssetManagerUser(user)) return true;
+  if (isAdminRole(role) || isExecutiveRole(role)) return true;
+  return false;
+}
+
+export function canManageAssets(user, roles) {
+  if (isAssetManagerUser(user)) return true;
+  return can(user?.role, "manage_assets", roles);
+}
+
+export function canViewAllAssets(user, roles) {
+  if (isAssetManagerUser(user)) return true;
+  return can(user?.role, "view_all_assets", roles);
 }
 
 /** HR Employee operational powers (people, payroll, attendance reports). */

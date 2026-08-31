@@ -10,8 +10,36 @@ export function isHrOpsRoleName(role) {
   return HR_OPS_ROLES.includes(role);
 }
 
+export function isManagerDesignationUser(user) {
+  if (!user) return false;
+  const d = String(user.designation || "").trim().toLowerCase();
+  if (d === "manager") return true;
+  return user.role === "Manager";
+}
+
+/** Role-based or designation-based (Employee + Manager) asset management. */
+export function isAssetManagerUser(user) {
+  if (!user) return false;
+  if (ASSET_MANAGER_ROLES.includes(user.role)) return true;
+  return (user.role === "Employee" || user.role === "Manager") && isManagerDesignationUser(user);
+}
+
 export function isAssetManagerRoleName(role) {
   return ASSET_MANAGER_ROLES.includes(role);
+}
+
+export async function resolveAssetManagerAccess(pool, user) {
+  if (!user) return false;
+  if (isAssetManagerUser(user)) return true;
+  if (user.role !== "Employee" && user.role !== "Manager") return false;
+
+  const { rows } = await pool.query(
+    `SELECT role, designation FROM users WHERE id = $1 LIMIT 1`,
+    [user.id]
+  );
+  const row = rows[0];
+  if (!row) return false;
+  return isAssetManagerUser(row);
 }
 
 export function canViewAllAttendance(role) {
@@ -56,7 +84,7 @@ export function createRequireHrOps(pool) {
   };
 }
 
-/** Require Admin or Executive for asset write operations. */
+/** Require Admin, Executive, or Employee with designation Manager for asset write operations. */
 export function createRequireAssetManager(pool) {
   return async function requireAssetManager(req, res, next) {
     try {
@@ -68,7 +96,8 @@ export function createRequireAssetManager(pool) {
       if (!user) {
         return res.status(401).json({ error: "Authentication required", reason: "invalid_or_expired_session" });
       }
-      if (!ASSET_MANAGER_ROLES.includes(user.role)) {
+      const canManage = await resolveAssetManagerAccess(pool, user);
+      if (!canManage) {
         return res.status(403).json(authFailPayload(req, "asset_manager_only"));
       }
       req.authUser = user;
