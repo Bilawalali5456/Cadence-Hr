@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { Key, Check, AlertTriangle } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, getUserCnic, formatDate } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, getUserCnic, formatDate, isManagerDesignation } from "../utils.js";
 import { apiChangePassword, apiUpdateWarning } from "../api.js";
-import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox, Pill } from "../components/ui.jsx";
+import { Avatar, Card, STitle, PwInput, PwStrength, Btn, ErrBox, OkBox, Pill, UserDisplayName } from "../components/ui.jsx";
 import { warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
 
 export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings = [], setWarnings }) {
@@ -65,8 +65,8 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings
       <div className="flex items-center gap-4 mb-6 p-5 rounded-xl text-white" style={{ background: B.dark }}>
         <Avatar name={me.name} size={14} />
         <div>
-          <div className="text-lg font-bold">{me.name}</div>
-          <div className="text-sm opacity-70">{me.title || me.role} · {me.dept}</div>
+          <UserDisplayName user={me} className="text-lg font-bold" />
+          <div className="text-sm opacity-70">{me.title || (isManagerDesignation(me) ? "Manager" : me.role)} · {me.dept}</div>
           <div className="text-xs opacity-50 mt-0.5">{me.email}</div>
         </div>
       </div>

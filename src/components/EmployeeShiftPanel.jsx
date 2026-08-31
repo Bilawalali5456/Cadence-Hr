@@ -21,7 +21,7 @@ import {
   canManualCheckIn,
   isApprovedWfhDay,
   isWfhAttendance,
-  isHrEmployeeRole,
+  hasOwnAttendance,
 } from "../utils.js";
 import { apiStartBreak, apiEndBreak, apiBreakStatus, apiWfhCheckin, apiWfhCheckout } from "../api.js";
 import { Pill, Card, STitle, Btn, ErrBox } from "./ui.jsx";
@@ -50,7 +50,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const dayOff = bounds.off || publicHoliday;
   const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
   const role = user?.role;
-  const canUseBreakButtons = role === "Employee" || role === "Manager" || isHrEmployeeRole(role);
+  const canUseBreakButtons = hasOwnAttendance(role);
   const checkedIn = today?.checkIn && isAttendanceInProgress(user, today, key, now);
   const onBreak = isOnBreak(today);
   const daySt = dayStatusPill(resolveDayStatus(user, today, key, holidays, now));

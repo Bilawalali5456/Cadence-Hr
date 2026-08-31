@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Clock, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, hasOwnAttendance, isManagerDesignation, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout, apiFetchShortLeave, apiFetchLeave, apiFetchAttendance } from "../api.js";
-import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox } from "../components/ui.jsx";
+import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { EmployeeShiftPanel } from "../components/EmployeeShiftPanel.jsx";
 import { IssueWarningModal, warningTypeLabel } from "../components/IssueWarningModal.jsx";
@@ -21,12 +21,12 @@ function upsertAtt(list, record) {
   return [...arr, record];
 }
 
-/** WFH portal check-in / check-out for Employee, Manager, HR Employee on approved WFH days. */
+/** WFH portal check-in / check-out for attendance-tracked roles on approved WFH days. */
 function WfhPortalActions({ user, attendance, setAttendance, leaveRequests }) {
   const [wfhLoading, setWfhLoading] = useState(false);
   const [wfhMsg, setWfhMsg] = useState("");
   const role = user?.role;
-  const canWfhRole = role === "Employee" || role === "Manager" || role === "HR Employee";
+  const canWfhRole = hasOwnAttendance(role);
   const today = todayKey();
   const myToday = getUserTodayRecord(attendance, user.id, user);
   const hasWfhToday = (leaveRequests || []).some(r =>
@@ -274,12 +274,12 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   const [warnTgt, setWarnTgt] = useState(null);
   const [warnDefaultReason, setWarnDefaultReason] = useState("");
 
-  if ((role === "Employee" || role === "Manager") && !opsDashboard) {
+  if (isStaffRole(role) && !opsDashboard) {
     return (
       <div className="space-y-5 max-w-3xl">
         <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
           <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
-          <div className="text-sm opacity-70 mt-0.5">{me.title || me.role} · Shift {formatShiftRange(me)}</div>
+          <div className="text-sm opacity-70 mt-0.5">{me.title || (isManagerDesignation(me) ? "Manager" : me.role)} · Shift {formatShiftRange(me)}</div>
         </div>
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
         <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
@@ -416,7 +416,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
 
   return (
     <div className="space-y-5">
-      {(role === "Employee" || role === "Manager" || isHrEmployeeRole(role)) && (
+      {hasOwnAttendance(role) && (
         <>
           <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
           <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
@@ -458,7 +458,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
               <div key={user.id} className="py-3 flex items-center gap-3 flex-wrap">
                 <Avatar name={user.name} />
                 <div className="flex-1 min-w-44">
-                  <div className="text-sm font-medium text-slate-800">{user.name}</div>
+                  <div className="text-sm font-medium text-slate-800"><UserDisplayName user={user} /></div>
                   <div className="text-xs text-slate-500">{lateCount} late arrivals this month</div>
                 </div>
                 <Pill tone="amber">{lateCount} late</Pill>
@@ -543,7 +543,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
                 <div key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar name={u.name} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-slate-800">{u.name}</div>
+                    <UserDisplayName user={u} className="text-sm font-medium text-slate-800" />
                     <div className="text-xs text-slate-400">
                       {formatShiftRange(u)} · {inLabel}{outLabel}
                       {r?.autoCheckout && outIso ? " (auto)" : ""}
@@ -578,7 +578,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
               <div key={u.id} className="py-2.5 flex items-center gap-3">
                 <Avatar name={u.name} />
                 <div className="flex-1">
-                  <div className="text-sm font-medium text-slate-800">{u.name}</div>
+                  <div className="text-sm font-medium text-slate-800"><UserDisplayName user={u} className="text-sm font-medium text-slate-800" /></div>
                   <div className="text-xs text-slate-400">{u.email}</div>
                 </div>
                 <Pill tone="amber"><Timer size={12} />Setup pending</Pill>
@@ -598,7 +598,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
               <div key={u.id} className="py-2.5 flex items-center gap-3">
                 <Avatar name={u.name} />
                 <div className="flex-1">
-                  <div className="text-sm font-medium text-slate-800">{u.name}</div>
+                  <div className="text-sm font-medium text-slate-800"><UserDisplayName user={u} className="text-sm font-medium text-slate-800" /></div>
                   <div className="text-xs text-slate-400">{u.role} · {u.dept || "—"}</div>
                 </div>
                 {u.status === "active" ? <Pill tone="green">Active</Pill> : <Pill tone="slate">Inactive</Pill>}

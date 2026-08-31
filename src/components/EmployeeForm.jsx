@@ -105,11 +105,17 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700">{form.role || "HR Admin"}</div>
           </div>
         ) : (
-          <SelectInput label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })}
+          <SelectInput label="Role" value={form.role} onChange={v => setForm({ ...form, role: v, designation: v === "Employee" ? (form.designation || "") : "" })}
             options={roleOptions || [
               { value: "Employee", label: "Employee" },
-              { value: "Manager", label: "Manager" },
               { value: "HR Employee", label: "HR Employee" },
+            ]} />
+        )}
+        {form.role === "Employee" && !lockRole && (
+          <SelectInput label="Designation" value={form.designation || ""} onChange={v => setForm({ ...form, designation: v })}
+            options={[
+              { value: "", label: "Employee" },
+              { value: "Manager", label: "Manager" },
             ]} />
         )}
         <SelectInput label="Employment type" value={form.type} onChange={v => setForm({ ...form, type: v })}

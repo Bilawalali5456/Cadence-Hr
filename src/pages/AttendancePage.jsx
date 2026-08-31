@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
 import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
-import { Pill, Avatar, Card, STitle } from "../components/ui.jsx";
+import { Pill, Avatar, Card, STitle, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
@@ -887,7 +887,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       <div className="flex items-center gap-2">
                         <Avatar name={u.name} size={7} />
                         <div>
-                          <div className="font-medium text-slate-800">{u.name}</div>
+                          <UserDisplayName user={u} />
                           <div className="text-xs text-slate-400">{formatShiftRange(u, rowDate)}</div>
                         </div>
                       </div>

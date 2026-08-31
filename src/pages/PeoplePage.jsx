@@ -3,7 +3,7 @@ import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Ph
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
 import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule, shiftConfigEqual } from "../utils.js";
-import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox } from "../components/ui.jsx";
+import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
 import { IssueWarningModal, warningTypeLabel, warningTypeTone } from "../components/IssueWarningModal.jsx";
@@ -21,12 +21,10 @@ export function PeoplePage({
   const formRoleOptions = (isHrAdminRole(currentUser.role) || isExecutiveRole(currentUser.role))
     ? [
         { value: "Employee", label: "Employee" },
-        { value: "Manager", label: "Manager" },
         { value: "HR Employee", label: "HR Employee" },
       ]
     : [
         { value: "Employee", label: "Employee" },
-        { value: "Manager", label: "Manager" },
       ];
   const [q,         setQ]         = useState("");
   const [sel,       setSel]       = useState(null);
@@ -51,7 +49,7 @@ export function PeoplePage({
 
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
-    status: "active", role: "Employee", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
+    status: "active", role: "Employee", designation: "", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
     guardianName: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 20,
     weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
@@ -69,6 +67,8 @@ export function PeoplePage({
     setEditTgt(u);
     setForm({
       ...u,
+      role: u.role === "Manager" ? "Employee" : u.role,
+      designation: u.designation || (u.role === "Manager" ? "Manager" : ""),
       cnic: getUserCnic(u),
       graceMinutes: s.graceMinutes,
       breakMinutes: s.breakMinutes,
@@ -98,9 +98,11 @@ export function PeoplePage({
     if (users.find(u => u.email.trim().toLowerCase() === email.toLowerCase())) { setFerr("This email already exists."); return; }
     const tempPw = genTempPw();
     const role = form.role || "Employee";
-    const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, ...rest } = form;
+    const designation = role === "Employee" ? String(form.designation || "").trim() : "";
+    const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, designation: _d, ...rest } = form;
     const newUser = {
-      ...rest, name: form.name.trim(), email, cnicEnc: encryptSensitive(cnicDigits),
+      ...rest, name: form.name.trim(), email, role, designation,
+      cnicEnc: encryptSensitive(cnicDigits),
       shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
       shiftId: null,
       id: genId(), password: tempPw, leaveBalance: DEFAULT_ANNUAL_LEAVE, skills: [], firstLogin: true, tempPassword: tempPw,
@@ -142,7 +144,7 @@ export function PeoplePage({
     const cnicDigits = normalizeCnic(form.cnic);
     if (users.find(u => cnicDigitsForUser(u) === cnicDigits && u.id !== editTgt.id)) { setFerr("This CNIC is already registered to another employee."); return; }
     if (users.find(u => u.email.toLowerCase() === form.email.toLowerCase() && u.id !== editTgt.id)) { setFerr("This email is already used by another account."); return; }
-    const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, ...rest } = form;
+    const { password, tempPassword, cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, designation, ...rest } = form;
     const newShift = buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule });
     if (!shiftConfigEqual(newShift, editTgt.shift)) {
       const ok = window.confirm(
@@ -153,6 +155,7 @@ export function PeoplePage({
     const updated = {
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
+      designation: rest.role === "Employee" ? String(designation || "").trim() : "",
       cnicEnc: encryptSensitive(cnicDigits),
       shift: newShift,
       shiftId: null,
@@ -399,7 +402,7 @@ export function PeoplePage({
                   <button onClick={() => { setSel(u); setSelTab("Overview"); }} className="flex items-center gap-3 text-left">
                     <Avatar name={u.name} />
                     <div>
-                      <div className="font-medium text-slate-800">{u.name}</div>
+                      <UserDisplayName user={u} />
                       <div className="text-xs text-slate-400">{u.email}</div>
                     </div>
                   </button>
@@ -533,7 +536,7 @@ export function PeoplePage({
                 <div className="flex items-center gap-3">
                   <Avatar name={sel.name} size={12} />
                   <div>
-                    <div className="text-lg font-semibold" style={{ color: B.dark }}>{sel.name}</div>
+                    <UserDisplayName user={sel} className="text-lg font-semibold" />
                     <div className="text-sm text-slate-500">{sel.title || sel.role} · {sel.dept}</div>
                   </div>
                 </div>

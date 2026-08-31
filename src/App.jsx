@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
-import { Avatar, Btn } from "./components/ui.jsx";
+import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
+import { Avatar, Btn, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
 import { ForcePasswordChange } from "./pages/ForcePasswordChange.jsx";
@@ -434,13 +434,13 @@ export default function App() {
 
   const role = currentUser.role;
   const rosterUsers = canFetchUserRoster(role) ? users : [];
-  // Employee and Manager share the same portal sidebar (ignore RBAC gaps like missing view_attendance).
+  // Employee portal sidebar (legacy Manager role until DB migration completes).
   const STAFF_PORTAL_IDS = new Set([
     "home", "attendance", "shortleave", "payroll", "leave",
     "holidays", "policies", "assets", "announcements", "myprofile", "settings",
   ]);
   const nav  = NAV.filter(n => {
-    if (role === "Employee" || role === "Manager") return STAFF_PORTAL_IDS.has(n.id);
+    if (hasStaffPortalRole(role)) return STAFF_PORTAL_IDS.has(n.id);
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;
@@ -498,7 +498,7 @@ export default function App() {
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
               <Avatar name={currentUser.name} size={7} />
               <div className="text-left hidden sm:block">
-                <div className="text-xs font-medium text-slate-800 leading-tight">{currentUser.name}</div>
+                <UserDisplayName user={currentUser} className="text-xs font-medium text-slate-800 leading-tight" />
                 <div className="text-xs text-slate-400 leading-tight">{role}</div>
               </div>
               <ChevronDown size={14} className="text-slate-400" />

@@ -109,6 +109,7 @@ const userToJs = (r) => ({
   email: r.email,
   password: r.password,
   role: r.role,
+  designation: r.designation || "",
   title: r.title,
   dept: r.dept,
   team: r.team,
@@ -417,19 +418,20 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
         : (existingShiftHistory[u.id] != null ? JSON.stringify(parseShiftHistory(existingShiftHistory[u.id])) : "[]");
       await client.query(
         `INSERT INTO users (
-           id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
+           id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
            leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
            guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
            bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+           $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
          )
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
            email = EXCLUDED.email,
            password = EXCLUDED.password,
            role = EXCLUDED.role,
+           designation = EXCLUDED.designation,
            title = EXCLUDED.title,
            dept = EXCLUDED.dept,
            team = EXCLUDED.team,
@@ -457,7 +459,7 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
            shift_id = EXCLUDED.shift_id,
            shift_history = EXCLUDED.shift_history`,
         [
-          u.id, u.name, u.email, password, u.role, u.title || "", u.dept || "", u.team || "",
+          u.id, u.name, u.email, password, u.role, u.designation || "", u.title || "", u.dept || "", u.team || "",
           u.type || "Full-time", u.hired || "", u.salary || "", u.phone || "", u.status || "active",
           u.leaveBalance ?? 24, 0, JSON.stringify(u.skills || []),
           firstLogin, null, u.cnicEnc || null, u.maritalStatus || "",
@@ -984,6 +986,23 @@ app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
 });
 
+/** Forward-only: merge legacy Manager role into Employee + designation. */
+async function migrateManagerRoleToEmployee() {
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT DEFAULT ''`);
+  const { rowCount } = await pool.query(
+    `UPDATE users
+     SET role = 'Employee',
+         designation = CASE
+           WHEN COALESCE(NULLIF(TRIM(designation), ''), '') = '' THEN 'Manager'
+           ELSE designation
+         END
+     WHERE role = 'Manager'`
+  );
+  if (rowCount > 0) {
+    console.log(`✓ Migrated ${rowCount} Manager account(s) to Employee (designation=Manager)`);
+  }
+}
+
 /** Apply schema.sql on every startup — creates missing tables/columns/seeds safely. */
 async function ensureSchema() {
   const schema = readFileSync(path.join(__dirname, "schema.sql"), "utf8");
@@ -1120,6 +1139,7 @@ ensureSchema()
     console.log("✓ Sessions persisted in PostgreSQL (user_sessions)");
   })
   .then(() => migratePlaintextPasswords())
+  .then(() => migrateManagerRoleToEmployee())
   .then(() => applyBiometricTimezoneFix().catch((e) => {
     console.error("Biometric timezone fix failed (continuing startup):", e.message);
   }))

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Save, Landmark } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
 import { can, isStaffRole, isHrEmployeeRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
-import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox } from "../components/ui.jsx";
+import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox, UserDisplayName } from "../components/ui.jsx";
 import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll } from "../api.js";
 
 export function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
@@ -284,7 +284,7 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <Avatar name={u.name} size={7} />
-                        <div className="font-medium text-slate-800">{u.name}</div>
+                        <UserDisplayName user={u} />
                       </div>
                     </td>
                     <td className="px-4 py-3"><Pill tone={isHrAdminRole(u.role) ? "dark" : "slate"}>{u.role}</Pill></td>
@@ -363,7 +363,7 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
                     <div className="flex items-center gap-2">
                       <Avatar name={u.name} size={7} />
                       <div>
-                        <div className="font-medium text-slate-800">{u.name}</div>
+                        <UserDisplayName user={u} />
                         <div className="text-xs text-slate-400">{u.title || u.role}</div>
                       </div>
                     </div>

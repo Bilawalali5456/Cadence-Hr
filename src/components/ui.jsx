@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Eye, EyeOff, Lock, AlertCircle } from "lucide-react";
 import { B } from "../brand.jsx";
+import { isManagerDesignation } from "../utils.js";
 
 export function Pill({ tone = "slate", children }) {
   const map = {
@@ -25,6 +26,18 @@ export function Avatar({ name = "?", size = 8 }) {
       className="rounded-full flex items-center justify-center text-xs font-bold shrink-0 select-none">
       {ini}
     </div>
+  );
+}
+
+/** Name with optional Manager badge when user.designation === 'Manager'. */
+export function UserDisplayName({ user, name, className = "font-medium text-slate-800", showBadge = true }) {
+  const displayName = name || user?.name || "";
+  const manager = showBadge && user && isManagerDesignation(user);
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap min-w-0">
+      <span className={className}>{displayName}</span>
+      {manager && <Pill tone="blue">Manager</Pill>}
+    </span>
   );
 }
 

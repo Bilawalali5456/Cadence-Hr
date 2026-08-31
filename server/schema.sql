@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   email                       TEXT UNIQUE NOT NULL,
   password                    TEXT NOT NULL,
   role                        TEXT NOT NULL DEFAULT 'Employee',
+  designation                 TEXT DEFAULT '',
   title                       TEXT DEFAULT '',
   dept                        TEXT DEFAULT '',
   team                        TEXT DEFAULT '',
@@ -259,6 +260,7 @@ ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_by_role TEXT;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_on TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_history JSONB DEFAULT '[]'::jsonb;
 
 -- Daily attendance view (processed first/last scan — not raw punches)

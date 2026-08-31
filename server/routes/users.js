@@ -14,7 +14,7 @@ function hashPasswordIfNeeded(pw) {
 
 /** Explicit column list so shift_history is always fetched from DB. */
 export const USER_SELECT_SQL = `
-  SELECT id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
+  SELECT id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
     leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
     guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
     bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
@@ -36,6 +36,7 @@ function userRowToJs(r) {
     email: r.email,
     password: r.password,
     role: r.role,
+    designation: r.designation || "",
     title: r.title,
     dept: r.dept,
     team: r.team,
@@ -127,6 +128,7 @@ function buildUserInsertValues(u, { passwordHash, firstLogin, existing } = {}) {
   const team = u.team ?? (existing?.team ?? "");
   const dept = u.dept ?? (existing?.dept ?? "");
   const title = u.title ?? (existing?.title ?? "");
+  const designation = u.designation ?? (existing?.designation ?? "");
 
   return [
     u.id,
@@ -134,6 +136,7 @@ function buildUserInsertValues(u, { passwordHash, firstLogin, existing } = {}) {
     u.email ?? existing?.email ?? "",
     passwordHash,
     u.role ?? existing?.role ?? "Employee",
+    designation,
     title,
     dept,
     team,
@@ -227,16 +230,17 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
 
       await pool.query(
         `INSERT INTO users (
-          id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
+          id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
           leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
           guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
           bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
           password = EXCLUDED.password,
           role = EXCLUDED.role,
+          designation = EXCLUDED.designation,
           title = EXCLUDED.title,
           dept = EXCLUDED.dept,
           team = EXCLUDED.team,
@@ -348,16 +352,17 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
 
       await pool.query(
         `INSERT INTO users (
-          id, name, email, password, role, title, dept, team, type, hired, salary, phone, status,
+          id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
           leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
           guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
           bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
           password = EXCLUDED.password,
           role = EXCLUDED.role,
+          designation = EXCLUDED.designation,
           title = EXCLUDED.title,
           dept = EXCLUDED.dept,
           team = EXCLUDED.team,

@@ -1,4 +1,4 @@
-import { Users, Briefcase, Check, User, Shield, ShieldCheck } from "lucide-react";
+import { Briefcase, Check, User, Shield, ShieldCheck } from "lucide-react";
 import { B } from "./brand.jsx";
 
 export const DEFAULT_COMPANY = { officeStart: "09:00", graceMinutes: 15, currency: "PKR" };
@@ -14,6 +14,20 @@ export function can(roleName, permission, roles = []) {
 }
 
 export function isStaffRole(role) {
+  return role === "Employee" || role === "Manager";
+}
+
+/** True when user is a manager by designation (role merged into Employee). */
+export function isManagerDesignation(user) {
+  if (!user) return false;
+  const d = String(user.designation || "").trim().toLowerCase();
+  if (d === "manager") return true;
+  // Legacy rows not yet migrated on first load
+  return user.role === "Manager";
+}
+
+/** Staff self-service portal (Employee role + legacy Manager until migrated). */
+export function hasStaffPortalRole(role) {
   return role === "Employee" || role === "Manager";
 }
 
@@ -1713,18 +1727,25 @@ export function cnicDigitsForUser(user) {
 
 export const LOGIN_ROLES = [
   {
-    id: "Admin",
-    label: "Admin",
-    icon: Shield,
-    color: B.red,
-    description: "Manage employees, payroll, attendance & settings",
+    id: "Executive",
+    label: "Executive",
+    icon: Briefcase,
+    color: "#0f4c75",
+    description: "Company overview, reports & analytics",
   },
   {
     id: "HR Employee",
     label: "HR Employee",
     icon: ShieldCheck,
     color: "#6366f1",
-    description: "Full HR admin access with own attendance tracking",
+    description: "HR operations with own attendance tracking",
+  },
+  {
+    id: "Admin",
+    label: "Admin",
+    icon: Shield,
+    color: B.red,
+    description: "Manage employees, payroll, attendance & settings",
   },
   {
     id: "Employee",
@@ -1733,27 +1754,13 @@ export const LOGIN_ROLES = [
     color: B.dark,
     description: "Check in, view payslips, request leave",
   },
-  {
-    id: "Manager",
-    label: "Manager",
-    icon: Users,
-    color: B.darkMid,
-    description: "Approve leave, oversee team attendance & requests",
-  },
-  {
-    id: "Executive",
-    label: "Executive",
-    icon: Briefcase,
-    color: "#0f4c75",
-    description: "Company overview, reports & analytics",
-  },
 ];
 
 export function loginRoleMatchesSelection(selectedRole, actualRole) {
   if (selectedRole === actualRole) return true;
   // Login card shows "Admin"; DB role remains "HR Admin".
   if (selectedRole === "Admin" && actualRole === "HR Admin") return true;
-  // Managers use the employee portal; Employee card still accepts Manager accounts.
+  // Legacy Manager accounts (pre-migration) may still have role=Manager in DB.
   if (selectedRole === "Employee" && actualRole === "Manager") return true;
   return false;
 }
