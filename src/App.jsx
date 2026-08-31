@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -25,6 +25,16 @@ import { BiometricPage } from "./pages/BiometricPage.jsx";
 
 const ADMIN_SIDEBAR_IDS = new Set(["assets"]);
 const HOME_NAV = { id: "home", label: "Home", icon: LayoutDashboard };
+/** Regular Employee portal tabs (no Assets). */
+const STAFF_PORTAL_IDS = new Set([
+  "attendance", "shortleave", "payroll", "leave",
+  "holidays", "policies", "announcements", "myprofile", "settings",
+]);
+/** Manager designation: Assets yes; Announcements & Policies hidden. */
+const MANAGER_PORTAL_IDS = new Set([
+  "attendance", "shortleave", "payroll", "leave",
+  "holidays", "assets", "myprofile", "settings",
+]);
 const ADMIN_SELF_SERVICE_IDS = new Set([
   "attendance", "shortleave", "payroll", "leave",
   "announcements", "policies", "myprofile", "settings",
@@ -286,11 +296,15 @@ export default function App() {
     if (!allowed) setRoute("home");
   }, [route, session?.userId, users]);
 
-  /* ── Block Assets for roles without module access (HR Employee, regular Employee) ── */
+  /* ── Block staff routes outside their portal (Assets, Announcements, Policies) ── */
   useEffect(() => {
     const user = session?.userId ? users.find(u => u.id === session.userId) : null;
     if (!user) return;
     if (route === "assets" && !canAccessAssetsModule(user, roles)) {
+      setRoute("home");
+      return;
+    }
+    if (isManagerDesignation(user) && (route === "announcements" || route === "policies")) {
       setRoute("home");
     }
   }, [route, session?.userId, users, roles]);
@@ -462,15 +476,14 @@ export default function App() {
 
   const role = currentUser.role;
   const rosterUsers = canFetchUserRoster(role) ? users : [];
-  // Employee portal sidebar (legacy Manager role until DB migration completes).
-  const STAFF_PORTAL_IDS = new Set([
-    "attendance", "shortleave", "payroll", "leave",
-    "holidays", "policies", "announcements", "myprofile", "settings",
-  ]);
+  const isManagerPortal = isManagerDesignation(currentUser);
   const navItems = NAV.filter(n => {
-    if (n.id === "assets" && !canAccessAssetsModule(currentUser, roles)) return false;
     if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
-    if (hasStaffPortalRole(role)) return STAFF_PORTAL_IDS.has(n.id);
+    if (hasStaffPortalRole(role)) {
+      const allowed = isManagerPortal ? MANAGER_PORTAL_IDS : STAFF_PORTAL_IDS;
+      return allowed.has(n.id);
+    }
+    if (n.id === "assets" && !canAccessAssetsModule(currentUser, roles)) return false;
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);
     if (!n.permission) return true;
