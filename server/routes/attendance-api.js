@@ -8,6 +8,7 @@ import {
   isLateCheckIn,
   computeBiometricDayStatus,
 } from "../lib/attendanceSync.js";
+import { reconcileLatePenaltiesForEmployeeMonth, reconcileLatePenaltiesForRange } from "../lib/latePenalties.js";
 
 /**
  * Short-leave ms overlapping [checkIn, checkOut] only.
@@ -433,6 +434,8 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         ]
       );
     }
+
+    await reconcileLatePenaltiesForEmployeeMonth(c, userId, dateKey.slice(0, 7));
   }
 
   app.post("/api/attendance", requireHrAdmin, async (req, res) => {
@@ -534,6 +537,18 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
 
       const sql = `SELECT * FROM attendance ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY date DESC`;
       const { rows } = await pool.query(sql, params);
+
+      if (dateFrom && dateTo) {
+        const userIds = !roleCanViewAll
+          ? [actor.id]
+          : (userId ? [userId] : null);
+        try {
+          await reconcileLatePenaltiesForRange(pool, dateFrom, dateTo, userIds);
+        } catch (penErr) {
+          console.error("GET /api/attendance late-penalty reconcile warning:", penErr.message);
+        }
+      }
+
       res.json(rows.map(attToJs));
     } catch (e) {
       console.error("GET /api/attendance error:", e.message);
@@ -714,6 +729,9 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         );
         inserted = created[0];
       }
+
+      const monthKey = today.slice(0, 7);
+      await reconcileLatePenaltiesForEmployeeMonth(pool, actor.id, monthKey);
 
       res.json(attToJs(inserted));
     } catch (e) {

@@ -84,6 +84,17 @@ export async function apiFetchAttendance(params = {}) {
   return sanitizeAttendance(data);
 }
 
+export async function apiFetchLatePenalties(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  const data = await apiGetJson(`/late-penalties${q}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiFetchMyLatePenalty(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiGetJson(`/late-penalties/me${q}`);
+}
+
 export async function apiFetchLeave() {
   return sanitizeLeaveRequests(await apiGetJson("/leave"));
 }

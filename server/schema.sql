@@ -508,6 +508,27 @@ CREATE TRIGGER trg_attendance_updated_at
   BEFORE UPDATE ON attendance
   FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
 
+-- Late penalty tracking (3 lates/month → 1 Annual Leave or salary deduction)
+CREATE TABLE IF NOT EXISTS late_penalties (
+  id                TEXT PRIMARY KEY,
+  employee_id       TEXT NOT NULL REFERENCES users(id),
+  month             TEXT NOT NULL,
+  late_count        INTEGER NOT NULL DEFAULT 0,
+  leaves_deducted   INTEGER NOT NULL DEFAULT 0,
+  salary_deductions INTEGER NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (employee_id, month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_late_penalties_month ON late_penalties (month);
+CREATE INDEX IF NOT EXISTS idx_late_penalties_employee ON late_penalties (employee_id);
+
+DROP TRIGGER IF EXISTS trg_late_penalties_updated_at ON late_penalties;
+CREATE TRIGGER trg_late_penalties_updated_at
+  BEFORE UPDATE ON late_penalties
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
 DROP TRIGGER IF EXISTS trg_policies_ts_updated ON policies;
 CREATE TRIGGER trg_policies_ts_updated
   BEFORE INSERT OR UPDATE ON policies

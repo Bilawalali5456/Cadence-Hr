@@ -1999,6 +1999,49 @@ export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
   ).length;
 }
 
+/** Late penalty tracking starts September 2026 (forward-only). */
+export const LATE_PENALTY_MONTH_FLOOR = "2026-09";
+
+export function isLatePenaltyMonth(monthKey) {
+  return !!monthKey && monthKey >= LATE_PENALTY_MONTH_FLOOR;
+}
+
+export function nextLatePenaltyThreshold(lateCount) {
+  const n = Number(lateCount || 0);
+  if (n <= 0) return 3;
+  return Math.ceil((n + 1) / 3) * 3;
+}
+
+export function formatLatePenaltyBadge(penalty) {
+  if (!penalty?.month || !isLatePenaltyMonth(penalty.month)) return null;
+  const lateCount = Number(penalty.lateCount || 0);
+  const nextAt = nextLatePenaltyThreshold(lateCount);
+  let text = `Lates: ${lateCount}/${nextAt}`;
+  const parts = [];
+  if (penalty.leavesDeducted > 0) parts.push(`${penalty.leavesDeducted} leave deducted`);
+  if (penalty.salaryDeductions > 0) {
+    parts.push(`${penalty.salaryDeductions} salary deduction${penalty.salaryDeductions === 1 ? "" : "s"}`);
+  }
+  if (parts.length) text += ` — ${parts.join(", ")}`;
+  return text;
+}
+
+export function formatLatePenaltyDeductions(penalty) {
+  if (!penalty) return "—";
+  const parts = [];
+  if (penalty.leavesDeducted > 0) parts.push(`${penalty.leavesDeducted} leave`);
+  if (penalty.salaryDeductions > 0) parts.push(`${penalty.salaryDeductions} salary`);
+  return parts.length ? parts.join(" + ") : "—";
+}
+
+export function latePenaltiesByEmployee(penalties) {
+  const map = {};
+  for (const p of penalties || []) {
+    if (p?.employeeId) map[p.employeeId] = p;
+  }
+  return map;
+}
+
 /** Count approved paid/unpaid leave working days overlapping a payroll month. */
 export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;

@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser } from "../utils.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold } from "../utils.js";
 import { Pill, Avatar, Card, STitle, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
-import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave } from "../api.js";
+import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave, apiFetchLatePenalties, apiFetchMyLatePenalty } from "../api.js";
+
+function LatePenaltyBadge({ penalty }) {
+  const label = formatLatePenaltyBadge(penalty);
+  if (!label) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      {label}
+    </div>
+  );
+}
 
 /** Load attendance for the UI selection; re-poll so App refresh never replaces with "today/month". */
 function useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance) {
@@ -119,6 +129,7 @@ function AdminEmployeeAttendanceDetail({
   leaveRequests,
   holidays,
   now,
+  penalty = null,
 }) {
   const [employeeAttendance, setEmployeeAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -186,12 +197,19 @@ function AdminEmployeeAttendanceDetail({
           </select>
         </div>
 
+        {isLatePenaltyMonth(month) && penalty && (
+          <div className="mt-4">
+            <LatePenaltyBadge penalty={{ ...penalty, month }} />
+          </div>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5 text-sm">
           {[
             ["Present", summary.totalPresentDays],
             ["Absent", summary.totalAbsentDays],
             ["Late", summary.totalLateDays],
             ["Working / Required", `${formatDurationMs(summary.totalWorkingMs)} / ${formatDurationMs(summary.totalRequiredMs)}`],
+            ...(isLatePenaltyMonth(month) ? [["Deductions", formatLatePenaltyDeductions(penalty)]] : []),
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg border border-slate-200 p-3">
               <div className="text-xs text-slate-400">{label}</div>
@@ -287,6 +305,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
   const [selectedDate, setSelectedDate] = useState(() => todayKey());
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), monthOptions));
   const [now, setNow] = useState(() => new Date());
+  const [myPenalty, setMyPenalty] = useState(null);
 
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
 
@@ -294,6 +313,21 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!isLatePenaltyMonth(month)) {
+      setMyPenalty(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetchMyLatePenalty(month)
+      .then(data => { if (!cancelled) setMyPenalty(data); })
+      .catch(e => {
+        console.error("Failed to fetch late penalty:", e?.message || e);
+        if (!cancelled) setMyPenalty(null);
+      });
+    return () => { cancelled = true; };
+  }, [month]);
 
   const isToday = selectedDate === todayKey(now);
   const dailyRecord = viewMode === "daily"
@@ -323,6 +357,10 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
         ))}
       </div>
 
+      {isLatePenaltyMonth(month) && myPenalty && (
+        <LatePenaltyBadge penalty={{ ...myPenalty, month }} />
+      )}
+
       {viewMode === "monthly" ? (
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
@@ -341,6 +379,11 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
             ["Absent days", monthSummary.totalAbsentDays],
             ["Late days", monthSummary.totalLateDays],
             ["Approved leave", monthSummary.approvedLeaveDays],
+            ...(isLatePenaltyMonth(month) ? [
+              ["Penalty lates", myPenalty?.lateCount ?? 0],
+              ["Leave deducted", myPenalty?.leavesDeducted ?? 0],
+              ["Salary deductions", myPenalty?.salaryDeductions ?? 0],
+            ] : []),
             ["Working hours", formatDurationMs(monthSummary.totalWorkingMs)],
             ["Break time", formatDurationMs(monthSummary.totalBreakMs)],
             ["Required hours", formatDurationMs(monthSummary.totalRequiredMs)],
@@ -472,11 +515,29 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [monthlySearch, setMonthlySearch] = useState("");
+  const [latePenalties, setLatePenalties] = useState([]);
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!isLatePenaltyMonth(month)) {
+      setLatePenalties([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetchLatePenalties(month)
+      .then(list => { if (!cancelled) setLatePenalties(Array.isArray(list) ? list : []); })
+      .catch(e => {
+        console.error("Failed to fetch late penalties:", e?.message || e);
+        if (!cancelled) setLatePenalties([]);
+      });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const penaltyMap = latePenaltiesByEmployee(latePenalties);
   const canManageCorrections = isHrOpsRole(currentUser.role) || isExecutiveRole(currentUser.role);
   const correctionAudit = isExecutiveRole(currentUser.role)
     ? flattenCorrectionAuditLog(attendance, users)
@@ -727,6 +788,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           leaveRequests={leaveRequests}
           holidays={holidays}
           now={now}
+          penalty={penaltyMap[detailUser.id] || null}
         />
       ) : (
       <Card className="overflow-hidden">
@@ -765,17 +827,19 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[1180px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Present", "Absent", "Late", "Approved leave", "Working hours", "Break time", "Required hours", "Payable days"].map(h => (
+                {["Employee", "Present", "Absent", "Late", ...(isLatePenaltyMonth(month) ? ["Penalty", "Deductions"] : []), "Approved leave", "Working hours", "Break time", "Required hours", "Payable days"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {monthlyRows.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={isLatePenaltyMonth(month) ? 11 : 9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : filteredMonthlyRows.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
-              ) : filteredMonthlyRows.map(({ user, summary }) => (
+                <tr><td colSpan={isLatePenaltyMonth(month) ? 11 : 9} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
+              ) : filteredMonthlyRows.map(({ user, summary }) => {
+                const penalty = penaltyMap[user.id];
+                return (
                 <tr
                   key={user.id}
                   className="border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50/80"
@@ -794,13 +858,21 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                   <td className="px-4 py-3">{summary.totalPresentDays}</td>
                   <td className="px-4 py-3">{summary.totalAbsentDays}</td>
                   <td className="px-4 py-3">{summary.totalLateDays}</td>
+                  {isLatePenaltyMonth(month) && (
+                    <>
+                      <td className="px-4 py-3 tabular-nums">
+                        {penalty ? `${penalty.lateCount}/${nextLatePenaltyThreshold(penalty.lateCount)}` : "0/3"}
+                      </td>
+                      <td className="px-4 py-3">{formatLatePenaltyDeductions(penalty)}</td>
+                    </>
+                  )}
                   <td className="px-4 py-3">{summary.approvedLeaveDays}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalWorkingMs)}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalBreakMs)}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalRequiredMs)}</td>
                   <td className="px-4 py-3">{summary.payableDays}</td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
