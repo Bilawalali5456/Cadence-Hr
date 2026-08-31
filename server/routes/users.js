@@ -1,5 +1,6 @@
 import bcryptjs from "bcryptjs";
-import { HR_ADMIN_ROLES, canManageTargetRole, canAssignRole } from "../lib/auth.js";
+import { HR_OPS_ROLES, ASSET_MANAGER_ROLES, actorCanAssignRole } from "../lib/rbac.js";
+import { canManageTargetRole } from "../lib/auth.js";
 import { buildShiftHistoryOnChange, parseShiftHistory, shiftsEqual } from "../lib/shiftHistory.js";
 
 function isBcryptHash(pw) {
@@ -194,7 +195,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       const targetId = String(req.params.id || "").trim();
       if (!targetId) return res.status(400).json({ error: "User id is required" });
 
-      const canViewAll = HR_ADMIN_ROLES.includes(actor.role);
+      const canViewAll = HR_OPS_ROLES.includes(actor.role);
       if (!canViewAll && actor.id !== targetId) {
         return res.status(403).json({ error: "Forbidden — cannot view other users" });
       }
@@ -219,7 +220,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       }
 
       const newRole = u.role || "Employee";
-      if (!canAssignRole(actor.role, newRole)) {
+      if (!actorCanAssignRole(actor.role, newRole)) {
         return res.status(403).json({ error: `Forbidden — cannot create users with role ${newRole}` });
       }
 
@@ -287,7 +288,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       const targetId = String(req.params.id || "").trim();
       if (!targetId) return res.status(400).json({ error: "User id is required" });
 
-      const canHr = HR_ADMIN_ROLES.includes(actor.role);
+      const canHr = HR_OPS_ROLES.includes(actor.role);
       if (!canHr && actor.id !== targetId) {
         return res.status(403).json({ error: "Forbidden — cannot edit other users" });
       }
@@ -307,7 +308,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         body = { ...bodyRaw };
         delete body.role;
         delete body.salary;
-        if (actor.role === "HR Employee" || actor.role === "HR Admin") {
+        if (actor.role === "HR Employee") {
           // Keep password reset for self via settings elsewhere; strip elevated fields.
           delete body.password;
         }
@@ -317,13 +318,13 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         const mayManageExecutive =
           existing.role === "Executive"
           && actor.id !== targetId
-          && canAssignRole(actor.role, "Executive");
+          && actorCanAssignRole(actor.role, "Executive");
         if (!canManageTargetRole(actor.role, existing.role) && !mayManageExecutive) {
           return res.status(403).json({ error: "Forbidden — cannot manage this user (role hierarchy)" });
         }
         body = { ...bodyRaw };
         if (body.role !== undefined && body.role !== existing.role) {
-          if (!canAssignRole(actor.role, body.role)) {
+          if (!actorCanAssignRole(actor.role, body.role)) {
             return res.status(403).json({ error: `Forbidden — cannot assign role ${body.role}` });
           }
         }

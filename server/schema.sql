@@ -210,11 +210,9 @@ CREATE TABLE IF NOT EXISTS roles (
 
 -- Seed RBAC role definitions
 INSERT INTO roles (id, name, permissions) VALUES
-('HR Admin', 'HR Admin', '[
-  "view_dashboard","view_people","manage_employees","manage_executives",
-  "view_attendance","view_attendance_reports","approve_short_leave","approve_leave","view_leave",
-  "view_policies","manage_policies","view_assets","view_all_assets","manage_assets",
-  "view_announcements","manage_announcements","manage_company_settings","view_payroll","manage_payroll"
+('Admin', 'Admin', '[
+  "view_dashboard","view_attendance","view_leave","view_payroll",
+  "view_policies","view_assets","view_all_assets","manage_assets","view_announcements"
 ]'::jsonb),
 ('HR Employee', 'HR Employee', '[
   "view_dashboard","view_people","manage_employees","manage_executives",
@@ -241,7 +239,7 @@ ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, permissions = EXCLUDED.perm
 
 -- Seed default admin (only if users table is empty)
 INSERT INTO users (id, name, email, password, role, title, dept, team, type, hired, status, leave_balance, sick_balance, first_login, shift)
-SELECT 'u-admin', 'Admin', 'admin@adforce.com', 'Admin@123', 'HR Admin', 'HR Administrator', 'Management', 'HQ', 'Full-time', '2024-01-01', 'active', 24, 0, false,
+SELECT 'u-admin', 'Admin', 'admin@adforce.com', 'Admin@123', 'Admin', 'HR Administrator', 'Management', 'HQ', 'Full-time', '2024-01-01', 'active', 24, 0, false,
   '{"shiftStart":"09:00","shiftEnd":"18:00","graceMinutes":15,"breakMinutes":60,"checkoutGraceMinutes":20}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM users);
 

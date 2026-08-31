@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Clock, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, hasOwnAttendance, isManagerDesignation, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, hasOwnAttendance, isManagerDesignation, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout, apiFetchShortLeave, apiFetchLeave, apiFetchAttendance } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox, UserDisplayName } from "../components/ui.jsx";
@@ -274,12 +274,33 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
   const [warnTgt, setWarnTgt] = useState(null);
   const [warnDefaultReason, setWarnDefaultReason] = useState("");
 
-  if (isStaffRole(role) && !opsDashboard) {
+  if ((isStaffRole(role) || isAdminRole(role)) && !opsDashboard) {
+    const quickActions = isAdminRole(role)
+      ? [
+          ["Submit leave request", "leave"],
+          ["Submit short leave", "shortleave"],
+          ["My payroll slip", "payroll"],
+          ["Attendance history", "attendance"],
+          ["Announcements", "announcements"],
+          ["Company policies", "policies"],
+          ["My profile", "myprofile"],
+          ["Account settings", "settings"],
+        ]
+      : [
+          ["Submit leave request", "leave"],
+          ["My profile", "myprofile"],
+          ["Account settings", "settings"],
+          ["Attendance history", "attendance"],
+        ];
     return (
       <div className="space-y-5 max-w-3xl">
         <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>
           <div className="text-lg font-bold">Welcome, {me.name.split(" ")[0]}</div>
-          <div className="text-sm opacity-70 mt-0.5">{me.title || (isManagerDesignation(me) ? "Manager" : me.role)} · Shift {formatShiftRange(me)}</div>
+          <div className="text-sm opacity-70 mt-0.5">
+            {isAdminRole(role)
+              ? `${me.title || "Admin"} · Admin Portal`
+              : `${me.title || (isManagerDesignation(me) ? "Manager" : me.role)} · Shift ${formatShiftRange(me)}`}
+          </div>
         </div>
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
         <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
@@ -293,7 +314,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
         <Card className="p-4">
           <STitle>Quick actions</STitle>
           <div className="space-y-2">
-            {[["Submit leave request", "leave"], ["My profile", "myprofile"], ["Account settings", "settings"], ["Attendance history", "attendance"]].map(([l, r]) => (
+            {quickActions.map(([l, r]) => (
               <button key={r} onClick={() => setRoute(r)}
                 className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-between border border-slate-200 hover:bg-slate-50"
                 style={{ color: B.dark }}>

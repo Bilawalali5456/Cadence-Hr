@@ -1,7 +1,7 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_OPS_ROLES } from "../lib/rbac.js";
 
 function isHr(role) {
-  return HR_ADMIN_ROLES.includes(role);
+  return HR_OPS_ROLES.includes(role);
 }
 
 async function applyApprovedShortLeaveToAttendance(c, sl) {

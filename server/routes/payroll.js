@@ -1,4 +1,4 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_OPS_ROLES } from "../lib/rbac.js";
 
 function slipToJs(data) {
   // Stored as JSON in payroll.data; pg typically returns it as an object already.
@@ -9,7 +9,7 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin) {
   app.get("/api/payroll", requireAuth, async (req, res) => {
     try {
       const actor = req.authUser;
-      const roleCanViewAll = HR_ADMIN_ROLES.includes(actor.role);
+      const roleCanViewAll = HR_OPS_ROLES.includes(actor.role);
 
       const month = String(req.query.month || "").trim();
       const userId = String(req.query.userId || "").trim();

@@ -1,4 +1,4 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_OPS_ROLES } from "../lib/rbac.js";
 
 function warningToJs(r) {
   return {
@@ -17,7 +17,7 @@ export function registerWarningsRoutes(app, pool, requireAuth, requireHrAdmin) {
     try {
       const actor = req.authUser;
       const userId = String(req.query.userId || "").trim();
-      const roleCanViewAll = HR_ADMIN_ROLES.includes(actor.role);
+      const roleCanViewAll = HR_OPS_ROLES.includes(actor.role);
 
       const params = [];
       const where = [];
@@ -78,7 +78,7 @@ export function registerWarningsRoutes(app, pool, requireAuth, requireHrAdmin) {
     if (!id) return res.status(400).json({ error: "id is required" });
 
     const actor = req.authUser;
-    const isHr = HR_ADMIN_ROLES.includes(actor.role);
+    const isHr = HR_OPS_ROLES.includes(actor.role);
 
     try {
       const { rows: existingRows } = await pool.query("SELECT * FROM warnings WHERE id = $1", [id]);

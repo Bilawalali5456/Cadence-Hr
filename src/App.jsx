@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, Btn, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -23,16 +23,21 @@ import { HolidaysPage } from "./pages/HolidaysPage.jsx";
 import { ReportsPage } from "./pages/ReportsPage.jsx";
 import { BiometricPage } from "./pages/BiometricPage.jsx";
 
+const ADMIN_SIDEBAR_IDS = new Set(["home", "assets"]);
+const ADMIN_SELF_SERVICE_IDS = new Set([
+  "attendance", "shortleave", "payroll", "leave",
+  "announcements", "policies", "myprofile", "settings",
+]);
+
 const NAV = [
-  { id: "home",          label: "Home",          icon: LayoutDashboard, permission: "view_dashboard" },
   { id: "people",        label: "People",         icon: Users,           permission: "view_people" },
   { id: "executives",    label: "Executives",     icon: Briefcase,       permission: "manage_executives" },
   { id: "attendance",    label: "Attendance",     icon: Clock,           permission: "view_attendance" },
   { id: "shortleave",    label: "Short Leave",    icon: Timer,           permission: "view_leave" },
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
-  { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Admin", "HR Employee", "Executive"] },
-  { id: "biometric",     label: "Biometric",      icon: Fingerprint,     roles: ["HR Admin", "HR Employee", "Executive"] },
+  { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Employee", "Executive"] },
+  { id: "biometric",     label: "Biometric",      icon: Fingerprint,     roles: ["HR Employee", "Executive"] },
   { id: "holidays",      label: "Holidays",       icon: Calendar,        permission: null },
   { id: "policies",      label: "Policies",       icon: FileText,        permission: "view_policies" },
   { id: "assets",        label: "Assets",         icon: Package,         permission: "view_assets" },
@@ -267,6 +272,14 @@ export default function App() {
     refreshModule(route, roleHint);
   }, [route, session?.token, dbStatus]);
 
+  /* ── Admin: block direct navigation to HR ops routes ── */
+  useEffect(() => {
+    const r = users.find(u => u.id === session?.userId)?.role;
+    if (!r || !isAdminRole(r)) return;
+    const allowed = ADMIN_SIDEBAR_IDS.has(route) || ADMIN_SELF_SERVICE_IDS.has(route);
+    if (!allowed) setRoute("home");
+  }, [route, session?.userId, users]);
+
   /* ── Live poll while Attendance / Biometric / Home tab is open ── */
   useEffect(() => {
     if (dbStatus !== "ready" || !session?.token) return;
@@ -440,6 +453,7 @@ export default function App() {
     "holidays", "policies", "assets", "announcements", "myprofile", "settings",
   ]);
   const nav  = NAV.filter(n => {
+    if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
     if (hasStaffPortalRole(role)) return STAFF_PORTAL_IDS.has(n.id);
     if (n.roles) return n.roles.includes(role);
     if (n.id === "myprofile") return hasOwnAttendance(role) || isStaffRole(role);

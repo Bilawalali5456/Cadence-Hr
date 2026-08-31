@@ -1,4 +1,4 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_OPS_ROLES } from "../lib/rbac.js";
 import { karachiDateKey } from "../lib/admsHelpers.js";
 
 const EPOCH = "1970-01-01T00:00:00.000Z";
@@ -34,7 +34,7 @@ export const ROUTE_TO_BADGE_TAB = {
 };
 
 function isStaff(role) {
-  return HR_ADMIN_ROLES.includes(role);
+  return HR_OPS_ROLES.includes(role);
 }
 
 async function countOne(pool, sql, params) {

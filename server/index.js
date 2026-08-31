@@ -30,9 +30,14 @@ import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
   revokeAllUserSessions, cleanupExpiredSessions, startSessionCleanupScheduler,
-  createRequireAuth, createRequireHrAdmin,
-  HR_ADMIN_ROLES, canManageTargetRole, setSessionCookie, clearSessionCookie,
+  createRequireAuth,
+  canManageTargetRole, setSessionCookie, clearSessionCookie,
 } from "./lib/auth.js";
+import {
+  createRequireHrOps,
+  createRequireAssetManager,
+  canViewAllAttendance,
+} from "./lib/rbac.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
 dotenv.config();
@@ -40,7 +45,8 @@ dotenv.config();
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const requireAuth = createRequireAuth(pool);
-const requireHrAdmin = createRequireHrAdmin(pool);
+const requireHrOps = createRequireHrOps(pool);
+const requireAssetManager = createRequireAssetManager(pool);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -93,8 +99,8 @@ function resolveFirstLoginForSave(u, existingFirstLogin) {
   return !!u.firstLogin;
 }
 
-function canViewAllAttendance(role) {
-  return HR_ADMIN_ROLES.includes(role);
+function canViewAllAttendanceRole(role) {
+  return canViewAllAttendance(role);
 }
 
 async function resolveRequestUser(req) {
@@ -394,7 +400,7 @@ async function replaceAll(table, rows, insertFn) {
   }
 }
 
-app.put("/api/users", requireHrAdmin, async (req, res) => {
+app.put("/api/users", requireHrOps, async (req, res) => {
   const client = await pool.connect();
   try {
     const body = Array.isArray(req.body) ? req.body : [];
@@ -489,7 +495,7 @@ app.put("/api/users", requireHrAdmin, async (req, res) => {
   }
 });
 
-app.delete("/api/users/:userId", requireHrAdmin, async (req, res) => {
+app.delete("/api/users/:userId", requireHrOps, async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
     if (!userId) return res.status(400).json({ error: "Employee id is required." });
@@ -657,7 +663,7 @@ app.post("/api/change-password", requireAuth, async (req, res) => {
   }
 });
 
-app.put("/api/attendance", requireHrAdmin, async (req, res) => {
+app.put("/api/attendance", requireHrOps, async (req, res) => {
   try {
     await replaceAll("attendance", req.body, (c, a) =>
       c.query(
@@ -731,7 +737,7 @@ app.put("/api/short-leave", requireAuth, async (req, res) => {
   }
 });
 
-app.put("/api/announcements", requireHrAdmin, async (req, res) => {
+app.put("/api/announcements", requireHrOps, async (req, res) => {
   try {
     await replaceAll("announcements", req.body, (c, a) =>
       c.query(
@@ -746,7 +752,7 @@ app.put("/api/announcements", requireHrAdmin, async (req, res) => {
   }
 });
 
-app.put("/api/payroll", requireHrAdmin, async (req, res) => {
+app.put("/api/payroll", requireHrOps, async (req, res) => {
   try {
     await replaceAll("payroll", req.body, (c, s) =>
       c.query(
@@ -847,7 +853,7 @@ app.post("/api/notifications/read-all", async (req, res) => {
   }
 });
 
-app.put("/api/holidays", requireHrAdmin, async (req, res) => {
+app.put("/api/holidays", requireHrOps, async (req, res) => {
   try {
     await replaceAll("holidays", req.body, (c, h) =>
       c.query(
@@ -965,26 +971,46 @@ app.post("/api/send-warning-email", async (req, res) => {
 });
 
 registerAttendanceApi(app, pool);
-registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAdmin);
-registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin);
-registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin);
+registerAttendanceRestRoutes(app, pool, requireAuth, requireHrOps);
+registerLeaveRoutes(app, pool, requireAuth, requireHrOps);
+registerShortLeaveRoutes(app, pool, requireAuth, requireHrOps);
 registerBadgesRoutes(app, pool, requireAuth);
-registerAnnouncementsRoutes(app, pool, requireAuth, requireHrAdmin);
-registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin);
-registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin);
-registerPoliciesRoutes(app, pool, requireAuth, requireHrAdmin);
-registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin);
-registerWarningsRoutes(app, pool, requireAuth, requireHrAdmin);
-registerShiftsRoutes(app, pool, requireAuth, requireHrAdmin);
-registerCompanyRoutes(app, pool, requireAuth, requireHrAdmin);
-registerRolesRoutes(app, pool, requireAuth, requireHrAdmin);
-registerUsersRoutes(app, pool, requireAuth, requireHrAdmin);
+registerAnnouncementsRoutes(app, pool, requireAuth, requireHrOps);
+registerPayrollRoutes(app, pool, requireAuth, requireHrOps);
+registerHolidaysRoutes(app, pool, requireAuth, requireHrOps);
+registerPoliciesRoutes(app, pool, requireAuth, requireHrOps);
+registerAssetsRoutes(app, pool, requireAuth, requireAssetManager);
+registerWarningsRoutes(app, pool, requireAuth, requireHrOps);
+registerShiftsRoutes(app, pool, requireAuth, requireHrOps);
+registerCompanyRoutes(app, pool, requireAuth, requireHrOps);
+registerRolesRoutes(app, pool, requireAuth, requireHrOps);
+registerUsersRoutes(app, pool, requireAuth, requireHrOps);
 
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));
 app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
 });
+
+/** Forward-only: rename legacy HR Admin role to assets-only Admin. */
+async function migrateHrAdminToAdminRole() {
+  const adminPermissions = [
+    "view_dashboard", "view_attendance", "view_leave", "view_payroll",
+    "view_policies", "view_assets", "view_all_assets", "manage_assets", "view_announcements",
+  ];
+  await pool.query(
+    `INSERT INTO roles (id, name, permissions) VALUES ($1, $2, $3::jsonb)
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, permissions = EXCLUDED.permissions`,
+    ["Admin", "Admin", JSON.stringify(adminPermissions)]
+  );
+  const { rowCount } = await pool.query(
+    `UPDATE users SET role = 'Admin' WHERE role = 'HR Admin'`
+  );
+  await pool.query(`DELETE FROM roles WHERE id = 'HR Admin'`);
+  if (rowCount > 0) {
+    console.log(`✓ Migrated ${rowCount} HR Admin account(s) to Admin (assets-only)`);
+  }
+}
 
 /** Forward-only: merge legacy Manager role into Employee + designation. */
 async function migrateManagerRoleToEmployee() {
@@ -1140,6 +1166,7 @@ ensureSchema()
   })
   .then(() => migratePlaintextPasswords())
   .then(() => migrateManagerRoleToEmployee())
+  .then(() => migrateHrAdminToAdminRole())
   .then(() => applyBiometricTimezoneFix().catch((e) => {
     console.error("Biometric timezone fix failed (continuing startup):", e.message);
   }))

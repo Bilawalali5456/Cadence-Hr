@@ -1,4 +1,4 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { HR_OPS_ROLES } from "../lib/rbac.js";
 import { karachiDateKey, karachiTimestampText } from "../lib/admsHelpers.js";
 import {
   syncAttendanceFromLogs,
@@ -51,7 +51,7 @@ function genAttId() {
 }
 
 function roleHasNoAttendance(role) {
-  return role === "HR Admin" || role === "Executive";
+  return role === "Executive";
 }
 
 function attToJs(r) {
@@ -488,7 +488,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       }
 
       const actor = req.authUser;
-      const roleCanViewAll = HR_ADMIN_ROLES.includes(actor.role);
+      const roleCanViewAll = HR_OPS_ROLES.includes(actor.role);
 
       const month = String(req.query.month || "").trim();
       const date = String(req.query.date || "").slice(0, 10);

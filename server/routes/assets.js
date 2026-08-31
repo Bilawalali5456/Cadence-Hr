@@ -1,4 +1,4 @@
-import { HR_ADMIN_ROLES } from "../lib/auth.js";
+import { ASSET_MANAGER_ROLES } from "../lib/rbac.js";
 
 function parseReturnLog(value) {
   if (!value) return null;
@@ -144,7 +144,7 @@ async function upsertAsset(pool, a, existing = null) {
   return assetToJs(rows[0]);
 }
 
-export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
+export function registerAssetsRoutes(app, pool, requireAuth, requireAssetManager) {
   app.get("/api/assets", requireAuth, async (req, res) => {
     try {
       const actor = req.authUser;
@@ -152,7 +152,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
       const { rows } = await pool.query("SELECT * FROM assets ORDER BY name");
       let list = rows.map(assetToJs);
 
-      if (!HR_ADMIN_ROLES.includes(actor.role)) {
+      if (!ASSET_MANAGER_ROLES.includes(actor.role)) {
         list = list.filter((a) => a.assignedTo === actor.id);
       }
 
@@ -163,7 +163,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
     }
   });
 
-  app.post("/api/assets", requireHrAdmin, async (req, res) => {
+  app.post("/api/assets", requireAssetManager, async (req, res) => {
     const r = req.body || {};
     const id = r.id || `ast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const name = (r.name || "").trim();
@@ -186,7 +186,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
     if (!id) return res.status(400).json({ error: "id is required" });
 
     const actor = req.authUser;
-    const isHr = HR_ADMIN_ROLES.includes(actor.role);
+    const isHr = ASSET_MANAGER_ROLES.includes(actor.role);
 
     try {
       const { rows: existingRows } = await pool.query("SELECT * FROM assets WHERE id = $1", [id]);
@@ -223,7 +223,7 @@ export function registerAssetsRoutes(app, pool, requireAuth, requireHrAdmin) {
     }
   });
 
-  app.delete("/api/assets/:id", requireHrAdmin, async (req, res) => {
+  app.delete("/api/assets/:id", requireAssetManager, async (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "id is required" });
 

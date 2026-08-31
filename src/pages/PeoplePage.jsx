@@ -154,7 +154,7 @@ export function PeoplePage({
     }
     const updated = {
       ...rest,
-      role: isHrAdminRole(editTgt.role) ? "HR Admin" : rest.role,
+      role: isHrAdminRole(editTgt.role) ? "Admin" : rest.role,
       designation: rest.role === "Employee" ? String(designation || "").trim() : "",
       cnicEnc: encryptSensitive(cnicDigits),
       shift: newShift,
@@ -408,7 +408,7 @@ export function PeoplePage({
                   </button>
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  <Pill tone={u.role === "HR Admin" ? "dark" : "slate"}>{u.role}</Pill>
+                  <Pill tone={u.role === "Admin" ? "dark" : "slate"}>{u.role}</Pill>
                 </td>
                 <td className="px-4 py-3 hidden lg:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
                 <td className="px-4 py-3 hidden sm:table-cell">
@@ -438,9 +438,9 @@ export function PeoplePage({
                     {canManageHrAdmin(currentUser, u, roles) && (
                       <>
                         <button onClick={() => openReset(u)} className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600" title="Reset credentials"><RefreshCw size={14} /></button>
-                        <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600" title="Edit HR Admin"><Edit2 size={14} /></button>
+                        <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600" title="Edit Admin"><Edit2 size={14} /></button>
                         {u.id !== "u-admin" && (
-                          <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Remove HR Admin"><Trash2 size={14} /></button>
+                          <button onClick={() => openDel(u)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600" title="Remove Admin"><Trash2 size={14} /></button>
                         )}
                       </>
                     )}
@@ -469,7 +469,7 @@ export function PeoplePage({
       </Modal>
 
       {/* Edit */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={isHrAdminRole(editTgt?.role) ? "Edit HR Admin" : "Edit employee"} wide>
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={isHrAdminRole(editTgt?.role) ? "Edit Admin" : "Edit employee"} wide>
         <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} roleOptions={formRoleOptions} />
         <div className="flex gap-2 mt-4">
           <Btn onClick={saveEdit}><Save size={14} />Save changes</Btn>
@@ -478,7 +478,7 @@ export function PeoplePage({
       </Modal>
 
       {/* Delete */}
-      <Modal open={delOpen} onClose={() => !delBusy && setDelOpen(false)} title={isHrAdminRole(delTgt?.role) ? "Remove HR Admin" : "Delete employee"}>
+      <Modal open={delOpen} onClose={() => !delBusy && setDelOpen(false)} title={isHrAdminRole(delTgt?.role) ? "Remove Admin" : "Delete employee"}>
         <div className="flex gap-3 items-start p-3 rounded-lg border mb-4" style={{ background: B.redLight, borderColor: B.redBorder }}>
           <AlertTriangle size={18} style={{ color: B.red }} className="shrink-0 mt-0.5" />
           <div>
@@ -674,7 +674,7 @@ export function PeoplePage({
                 <div className="space-y-3">
                   <div className="p-3 rounded-lg" style={{ background: B.darkLight }}>
                     <div className="text-xs font-medium mb-1" style={{ color: B.dark }}>Role</div>
-                    <Pill tone={sel.role === "HR Admin" ? "dark" : "slate"}>{sel.role}</Pill>
+                    <Pill tone={sel.role === "Admin" ? "dark" : "slate"}>{sel.role}</Pill>
                   </div>
                   <div className="flex justify-between border-b border-slate-50 pb-2">
                     <span className="text-slate-400">First login pending</span>

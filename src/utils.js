@@ -31,17 +31,22 @@ export function hasStaffPortalRole(role) {
   return role === "Employee" || role === "Manager";
 }
 
+/** Assets-only Admin role (legacy DB value "HR Admin" until migration completes). */
+export function isAdminRole(role) {
+  return role === "Admin" || role === "HR Admin";
+}
+
 export function isHrAdminRole(role) {
-  return role === "HR Admin";
+  return isAdminRole(role);
 }
 
 export function isHrEmployeeRole(role) {
   return role === "HR Employee";
 }
 
-/** Admin powers without necessarily being classic HR Admin (includes HR Employee). */
+/** HR Employee operational powers (people, payroll, attendance reports). */
 export function isHrOpsRole(role) {
-  return isHrAdminRole(role) || isHrEmployeeRole(role);
+  return isHrEmployeeRole(role);
 }
 
 export function isExecutiveRole(role) {
@@ -50,7 +55,7 @@ export function isExecutiveRole(role) {
 
 /** Roles that clock in/out and appear on attendance rosters. */
 export function hasOwnAttendance(role) {
-  return isStaffRole(role) || isHrEmployeeRole(role);
+  return isStaffRole(role) || isHrEmployeeRole(role) || isAdminRole(role);
 }
 
 /** Admin portal (People, Reports, Biometric, org attendance, etc.). */
@@ -90,8 +95,7 @@ export function isHrAdminRequest(req, users) {
 }
 
 export function canSelfSubmitLeave(role) {
-  // Admin / Executive do not apply for leave — they approve others.
-  return isStaffRole(role) || isHrEmployeeRole(role);
+  return isStaffRole(role) || isHrEmployeeRole(role) || isAdminRole(role);
 }
 
 export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
@@ -204,9 +208,7 @@ export function canEditPerson(actor, target, roles) {
   if (isExecutiveRole(target.role)) return false;
   if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
   if (isHrEmployeeRole(target.role)) {
-    // Only Admin / Executive may manage HR Employee (not peers, not self).
-    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
-      && can(actor.role, "manage_employees", roles);
+    return isExecutiveRole(actor.role) && can(actor.role, "manage_employees", roles);
   }
   if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) {
     return canManageTargetRole(actor.role, target.role) || isHrOpsRole(actor.role) || isExecutiveRole(actor.role);
@@ -220,8 +222,7 @@ export function canDeletePerson(actor, target, roles) {
   if (isExecutiveRole(target.role)) return false;
   if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
   if (isHrEmployeeRole(target.role)) {
-    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
-      && can(actor.role, "manage_employees", roles);
+    return isExecutiveRole(actor.role) && can(actor.role, "manage_employees", roles);
   }
   if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) return true;
   return false;
@@ -235,8 +236,7 @@ export function canResetPersonCredentials(actor, target, roles) {
   }
   if (isHrAdminRole(target.role)) return canManageHrAdmin(actor, target, roles);
   if (isHrEmployeeRole(target.role)) {
-    return (isHrAdminRole(actor.role) || isExecutiveRole(actor.role))
-      && can(actor.role, "manage_employees", roles);
+    return isExecutiveRole(actor.role) && can(actor.role, "manage_employees", roles);
   }
   if (isStaffRole(target.role) && can(actor.role, "manage_employees", roles)) return true;
   return false;
@@ -291,9 +291,7 @@ export function peopleRoster(users, viewerRole) {
       ...users.filter(u => isStaffRole(u.role)),
     ]);
   }
-  if (isHrAdminRole(viewerRole) || isHrEmployeeRole(viewerRole)) {
-    // Admin & HR Employee: same People visibility (HR Employees + staff). Peer HR Employee
-    // edits stay blocked by canEditPerson; Super Authority (manage HR Admin) stays Executive-only.
+  if (isHrEmployeeRole(viewerRole)) {
     return sortHrAdminFirst([
       ...hrEmployeeRoster(users),
       ...users.filter(u => isStaffRole(u.role)),
@@ -1745,7 +1743,7 @@ export const LOGIN_ROLES = [
     label: "Admin",
     icon: Shield,
     color: B.red,
-    description: "Manage employees, payroll, attendance & settings",
+    description: "Manage company assets & equipment",
   },
   {
     id: "Employee",
@@ -1758,7 +1756,7 @@ export const LOGIN_ROLES = [
 
 export function loginRoleMatchesSelection(selectedRole, actualRole) {
   if (selectedRole === actualRole) return true;
-  // Login card shows "Admin"; DB role remains "HR Admin".
+  // Legacy pre-migration accounts may still have role=HR Admin in DB.
   if (selectedRole === "Admin" && actualRole === "HR Admin") return true;
   // Legacy Manager accounts (pre-migration) may still have role=Manager in DB.
   if (selectedRole === "Employee" && actualRole === "Manager") return true;

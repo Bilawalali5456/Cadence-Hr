@@ -36,7 +36,7 @@ function getTransporter() {
 
 function roleLabel(role) {
   if (role === "Executive") return "Executive";
-  if (role === "HR Admin") return "HR Admin";
+  if (role === "Admin" || role === "HR Admin") return "Admin";
   return "Employee";
 }
 
