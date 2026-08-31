@@ -30,11 +30,8 @@ const STAFF_PORTAL_IDS = new Set([
   "attendance", "shortleave", "payroll", "leave",
   "holidays", "policies", "announcements", "myprofile", "settings",
 ]);
-/** Manager designation: Assets yes; Announcements & Policies hidden. */
-const MANAGER_PORTAL_IDS = new Set([
-  "attendance", "shortleave", "payroll", "leave",
-  "holidays", "assets", "myprofile", "settings",
-]);
+/** Manager designation: regular Employee portal + Assets. */
+const MANAGER_PORTAL_IDS = new Set([...STAFF_PORTAL_IDS, "assets"]);
 const ADMIN_SELF_SERVICE_IDS = new Set([
   "attendance", "shortleave", "payroll", "leave",
   "announcements", "policies", "myprofile", "settings",
@@ -296,15 +293,11 @@ export default function App() {
     if (!allowed) setRoute("home");
   }, [route, session?.userId, users]);
 
-  /* ── Block staff routes outside their portal (Assets, Announcements, Policies) ── */
+  /* ── Block staff routes outside their portal (e.g. Assets without access) ── */
   useEffect(() => {
     const user = session?.userId ? users.find(u => u.id === session.userId) : null;
     if (!user) return;
     if (route === "assets" && !canAccessAssetsModule(user, roles)) {
-      setRoute("home");
-      return;
-    }
-    if (isManagerDesignation(user) && (route === "announcements" || route === "policies")) {
       setRoute("home");
     }
   }, [route, session?.userId, users, roles]);
