@@ -30,7 +30,7 @@ export function Avatar({ name = "?", size = 8 }) {
 }
 
 /** Name with optional Manager badge when user.designation === 'Manager'. */
-export function UserDisplayName({ user, name, className = "font-medium text-slate-800", showBadge = true }) {
+export function UserDisplayName({ user, name, className = "font-medium text-slate-800", showBadge = false }) {
   const displayName = name || user?.name || "";
   const manager = showBadge && user && isManagerDesignation(user);
   return (

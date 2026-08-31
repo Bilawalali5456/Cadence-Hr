@@ -402,7 +402,7 @@ export function PeoplePage({
                   <button onClick={() => { setSel(u); setSelTab("Overview"); }} className="flex items-center gap-3 text-left">
                     <Avatar name={u.name} />
                     <div>
-                      <UserDisplayName user={u} />
+                      <UserDisplayName user={u} showBadge />
                       <div className="text-xs text-slate-400">{u.email}</div>
                     </div>
                   </button>
@@ -536,7 +536,7 @@ export function PeoplePage({
                 <div className="flex items-center gap-3">
                   <Avatar name={sel.name} size={12} />
                   <div>
-                    <UserDisplayName user={sel} className="text-lg font-semibold" />
+                    <UserDisplayName user={sel} className="text-lg font-semibold" showBadge />
                     <div className="text-sm text-slate-500">{sel.title || sel.role} · {sel.dept}</div>
                   </div>
                 </div>

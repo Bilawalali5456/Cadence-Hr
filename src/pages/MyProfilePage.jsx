@@ -67,7 +67,7 @@ export function MyProfilePage({ currentUser, users, setUsers, onLogout, warnings
       <div className="flex items-center gap-4 mb-6 p-5 rounded-xl text-white" style={{ background: B.dark }}>
         <Avatar name={me.name} size={14} />
         <div>
-          <UserDisplayName user={me} className="text-lg font-bold" />
+          <UserDisplayName user={me} className="text-lg font-bold" showBadge />
           <div className="text-sm opacity-70">{me.title || (isManagerDesignation(me) ? "Manager" : me.role)} · {me.dept}</div>
           <div className="text-xs opacity-50 mt-0.5">{me.email}</div>
         </div>
