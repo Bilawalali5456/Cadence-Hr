@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold } from "../utils.js";
-import { Pill, Avatar, Card, STitle, UserDisplayName } from "../components/ui.jsx";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold, isOvertimeEligibleDate, formatExtraMinutes, overtimeDisplayStatus, overtimeStatusTone, overtimeByDate } from "../utils.js";
+import { Pill, Avatar, Card, STitle, UserDisplayName, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
-import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave, apiFetchLatePenalties, apiFetchMyLatePenalty } from "../api.js";
+import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave, apiFetchLatePenalties, apiFetchMyLatePenalty, apiFetchOvertime, apiSubmitOvertimeReason, apiHrReviewOvertime, apiExecReviewOvertime } from "../api.js";
 
 function LatePenaltyBadge({ penalty }) {
   const label = formatLatePenaltyBadge(penalty);
@@ -15,6 +15,113 @@ function LatePenaltyBadge({ penalty }) {
     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
       {label}
     </div>
+  );
+}
+
+function OvertimeReasonForm({ request, onSaved }) {
+  const [reason, setReason] = useState(request?.reason || "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const canEdit = request?.hrStatus === "pending" && request?.execStatus !== "approved";
+
+  async function submit() {
+    setMsg("");
+    if (!reason.trim()) { setMsg("error:Please enter a reason."); return; }
+    setBusy(true);
+    try {
+      const saved = await apiSubmitOvertimeReason(request.id, reason.trim());
+      onSaved?.(saved);
+      setMsg("ok:Reason submitted for HR approval.");
+    } catch (e) {
+      setMsg(`error:${e.message || "Submit failed"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Pill tone={overtimeStatusTone(request)}>{overtimeDisplayStatus(request)}</Pill>
+      {canEdit ? (
+        <>
+          <textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            rows={2}
+            placeholder="Why did you stay late?"
+            className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
+          />
+          <Btn size="sm" disabled={busy} onClick={submit}>{busy ? "Submitting…" : "Submit reason"}</Btn>
+        </>
+      ) : (
+        <div className="text-xs text-slate-500 whitespace-pre-wrap">{request.reason || "—"}</div>
+      )}
+      {msg.startsWith("ok:") && <OkBox msg={msg.slice(3)} />}
+      {msg.startsWith("error:") && <ErrBox msg={msg.slice(6)} />}
+    </div>
+  );
+}
+
+function OvertimeApprovalPanel({ requests, currentUser, onUpdate }) {
+  const [comments, setComments] = useState({});
+  const [busyId, setBusyId] = useState(null);
+
+  const isExec = isExecutiveRole(currentUser.role);
+  const isHr = isHrOpsRole(currentUser.role);
+
+  const pendingHr = (requests || []).filter(r =>
+    isHr && !isExec && r.hrStatus === "pending" && String(r.reason || "").trim()
+  );
+  const pendingExec = (requests || []).filter(r =>
+    isExec && r.hrStatus === "approved" && r.execStatus === "pending"
+  );
+  const visible = isExec ? pendingExec : pendingHr;
+  if (!visible.length) return null;
+
+  async function review(req, level, status) {
+    setBusyId(req.id);
+    try {
+      const comment = comments[req.id] || "";
+      const saved = level === "exec"
+        ? await apiExecReviewOvertime(req.id, status, comment)
+        : await apiHrReviewOvertime(req.id, status, comment);
+      onUpdate?.(saved);
+    } catch (e) {
+      console.error("Overtime review failed:", e.message || e);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Card className="p-5 border-blue-200">
+      <STitle>{isExec ? "Overtime — Executive approval" : "Overtime — HR approval"}</STitle>
+      <div className="space-y-4">
+        {visible.map(req => (
+          <div key={req.id} className="p-3 rounded-lg border border-slate-100 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 justify-between">
+              <div>
+                <div className="text-sm font-medium text-slate-800">{req.employeeName || req.employeeId}</div>
+                <div className="text-xs text-slate-500">{formatDate(req.date)} · Extra {formatExtraMinutes(req.extraMinutes)}</div>
+              </div>
+              <Pill tone={overtimeStatusTone(req)}>{overtimeDisplayStatus(req)}</Pill>
+            </div>
+            <div className="text-sm text-slate-700 whitespace-pre-wrap">{req.reason}</div>
+            <textarea
+              value={comments[req.id] || ""}
+              onChange={e => setComments(c => ({ ...c, [req.id]: e.target.value }))}
+              rows={1}
+              placeholder="Optional comment"
+              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
+            />
+            <div className="flex gap-2">
+              <Btn size="sm" disabled={busyId === req.id} onClick={() => review(req, isExec ? "exec" : "hr", "approved")}>Approve</Btn>
+              <Btn size="sm" variant="danger" disabled={busyId === req.id} onClick={() => review(req, isExec ? "exec" : "hr", "rejected")}>Reject</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -130,6 +237,7 @@ function AdminEmployeeAttendanceDetail({
   holidays,
   now,
   penalty = null,
+  overtimeRequests = [],
 }) {
   const [employeeAttendance, setEmployeeAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -171,6 +279,8 @@ function AdminEmployeeAttendanceDetail({
         })
         .reverse()
     : [];
+  const overtimeMap = overtimeByDate(overtimeRequests);
+  const showOvertime = isOvertimeEligibleDate(`${month}-01`);
 
   return (
     <div className="space-y-5">
@@ -227,16 +337,16 @@ function AdminEmployeeAttendanceDetail({
           <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Check-in", "Check-out", "Working hours", "Status"].map(h => (
+                {["Date", "Check-in", "Check-out", "Working hours", "Status", ...(showOvertime ? ["Extra hours"] : [])].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={showOvertime ? 6 : 5} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : dailyRows.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No days in this period.</td></tr>
+                <tr><td colSpan={showOvertime ? 6 : 5} className="px-4 py-8 text-center text-slate-400">No days in this period.</td></tr>
               ) : dailyRows.map(({ dateKey, record, status, rowNow }) => {
                 const ds = drillDownStatusPill(status, record);
                 const showLate = record?.checkIn && (record.late || isLateCheckIn(record.checkIn, user, holidays));
@@ -258,6 +368,16 @@ function AdminEmployeeAttendanceDetail({
                     <td className="px-4 py-3">
                       <Pill tone={ds.tone}>{ds.label}</Pill>
                     </td>
+                    {showOvertime && (
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {overtimeMap[dateKey] ? (
+                          <span className="font-medium text-blue-700">
+                            Extra: {formatExtraMinutes(overtimeMap[dateKey].extraMinutes)}
+                            <span className="block text-slate-400 mt-0.5">{overtimeDisplayStatus(overtimeMap[dateKey])}</span>
+                          </span>
+                        ) : "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -306,6 +426,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
   const [month, setMonth] = useState(() => clampMonthKey(monthKey(), monthOptions));
   const [now, setNow] = useState(() => new Date());
   const [myPenalty, setMyPenalty] = useState(null);
+  const [overtimeRequests, setOvertimeRequests] = useState([]);
 
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
 
@@ -328,6 +449,23 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
       });
     return () => { cancelled = true; };
   }, [month]);
+
+  useEffect(() => {
+    if (!isOvertimeEligibleDate(`${month}-01`)) {
+      setOvertimeRequests([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetchOvertime(month)
+      .then(list => { if (!cancelled) setOvertimeRequests(Array.isArray(list) ? list : []); })
+      .catch(e => {
+        console.error("Failed to fetch overtime:", e?.message || e);
+        if (!cancelled) setOvertimeRequests([]);
+      });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const overtimeMap = overtimeByDate(overtimeRequests);
 
   const isToday = selectedDate === todayKey(now);
   const dailyRecord = viewMode === "daily"
@@ -411,7 +549,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
           <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Check in", "Break", "Check out", "Working hours", "Status"].map(h => (
+                {["Date", "Check in", "Break", "Check out", "Working hours", "Status", ...(isOvertimeEligibleDate(selectedDate) ? ["Extra hours"] : [])].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
@@ -422,6 +560,7 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                 const dateKey = selectedDate;
                 const liveNow = isToday ? now : new Date(`${dateKey}T23:59:59`);
                 const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays, isToday ? now : liveNow), r);
+                const ot = overtimeMap[dateKey];
                 return (
                   <tr className="border-b border-slate-100">
                     <td className="px-4 py-3 text-slate-700">{formatDate(dateKey)}</td>
@@ -439,6 +578,13 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                     <td className="px-4 py-3">
                       <Pill tone={ds.tone}>{ds.label}</Pill>
                     </td>
+                    {isOvertimeEligibleDate(selectedDate) && (
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {ot ? (
+                          <span className="font-medium text-blue-700">Extra: {formatExtraMinutes(ot.extraMinutes)}</span>
+                        ) : "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })()}
@@ -455,17 +601,18 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
           <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Date", "Check in", "Break", "Check out", "Working hours", "Status"].map(h => (
+                {["Date", "Check in", "Break", "Check out", "Working hours", "Status", ...(isOvertimeEligibleDate(`${month}-01`) ? ["Extra hours"] : [])].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {history.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
+                <tr><td colSpan={isOvertimeEligibleDate(`${month}-01`) ? 7 : 6} className="px-4 py-8 text-center text-slate-400">No attendance records yet.</td></tr>
               ) : history.map(r => {
                 const dateKey = r?.date ?? todayKey();
                 const ds = dayStatusPill(resolveDayStatus(user, r, dateKey, holidays), r);
+                const ot = overtimeMap[dateKey];
                 return (
                   <tr key={r.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(r.date)}</td>
@@ -488,6 +635,13 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
                         )}
                       </span>
                     </td>
+                    {isOvertimeEligibleDate(`${month}-01`) && (
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {ot ? (
+                          <span className="font-medium text-blue-700">Extra: {formatExtraMinutes(ot.extraMinutes)}</span>
+                        ) : "—"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -495,6 +649,40 @@ export function EmployeeAttendanceHistory({ user, attendance, setAttendance, lea
           </table>
         </div>
       </Card>
+      )}
+
+      {viewMode === "monthly" && isOvertimeEligibleDate(`${month}-01`) && overtimeRequests.length > 0 && (
+        <Card className="p-5">
+          <STitle>Extra hours — reason &amp; approval</STitle>
+          <div className="space-y-4 mt-3">
+            {overtimeRequests.map(req => (
+              <div key={req.id} className="p-3 rounded-lg border border-slate-100">
+                <div className="text-sm font-medium text-slate-800 mb-1">
+                  {formatDate(req.date)} · Extra {formatExtraMinutes(req.extraMinutes)}
+                </div>
+                <OvertimeReasonForm
+                  request={req}
+                  onSaved={saved => setOvertimeRequests(prev => prev.map(r => r.id === saved.id ? saved : r))}
+                />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {viewMode === "daily" && isOvertimeEligibleDate(selectedDate) && overtimeMap[selectedDate] && (
+        <Card className="p-5">
+          <STitle>Extra hours — {formatDate(selectedDate)}</STitle>
+          <div className="mt-3">
+            <div className="text-sm font-medium text-blue-700 mb-2">
+              Extra: {formatExtraMinutes(overtimeMap[selectedDate].extraMinutes)}
+            </div>
+            <OvertimeReasonForm
+              request={overtimeMap[selectedDate]}
+              onSaved={saved => setOvertimeRequests(prev => prev.map(r => r.id === saved.id ? saved : r))}
+            />
+          </div>
+        </Card>
       )}
     </div>
   );
@@ -516,6 +704,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [statusFilter, setStatusFilter] = useState("All");
   const [monthlySearch, setMonthlySearch] = useState("");
   const [latePenalties, setLatePenalties] = useState([]);
+  const [overtimeRequests, setOvertimeRequests] = useState([]);
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
@@ -538,6 +727,31 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   }, [month]);
 
   const penaltyMap = latePenaltiesByEmployee(latePenalties);
+
+  useEffect(() => {
+    if (!isOvertimeEligibleDate(`${month}-01`)) {
+      setOvertimeRequests([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetchOvertime(month)
+      .then(list => { if (!cancelled) setOvertimeRequests(Array.isArray(list) ? list : []); })
+      .catch(e => {
+        console.error("Failed to fetch overtime:", e?.message || e);
+        if (!cancelled) setOvertimeRequests([]);
+      });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const showOvertimeMonth = isOvertimeEligibleDate(`${month}-01`);
+  const overtimeTotalsByEmployee = {};
+  for (const r of overtimeRequests || []) {
+    const id = r?.employeeId;
+    if (!id) continue;
+    if (!overtimeTotalsByEmployee[id]) overtimeTotalsByEmployee[id] = { days: 0, minutes: 0 };
+    overtimeTotalsByEmployee[id].days += 1;
+    overtimeTotalsByEmployee[id].minutes += Number(r.extraMinutes || 0);
+  }
   const canManageCorrections = isHrOpsRole(currentUser.role) || isExecutiveRole(currentUser.role);
   const correctionAudit = isExecutiveRole(currentUser.role)
     ? flattenCorrectionAuditLog(attendance, users)
@@ -743,6 +957,14 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
         </Card>
       )}
 
+      {showOvertimeMonth && (isHrOpsRole(currentUser.role) || isExecutiveRole(currentUser.role)) && (
+        <OvertimeApprovalPanel
+          requests={overtimeRequests}
+          currentUser={currentUser}
+          onUpdate={saved => setOvertimeRequests(prev => prev.map(r => r.id === saved.id ? saved : r))}
+        />
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Checked in", value: checkedInCount, icon: LogIn },
@@ -789,6 +1011,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           holidays={holidays}
           now={now}
           penalty={penaltyMap[detailUser.id] || null}
+          overtimeRequests={(overtimeRequests || []).filter(r => r.employeeId === detailUser.id)}
         />
       ) : (
       <Card className="overflow-hidden">
@@ -827,18 +1050,19 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
           <table className="w-full text-sm min-w-[1180px]">
             <thead>
               <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Employee", "Present", "Absent", "Late", ...(isLatePenaltyMonth(month) ? ["Penalty", "Deductions"] : []), "Approved leave", "Working hours", "Break time", "Required hours", "Payable days"].map(h => (
+                {["Employee", "Present", "Absent", "Late", ...(isLatePenaltyMonth(month) ? ["Penalty", "Deductions"] : []), ...(showOvertimeMonth ? ["Extra hours"] : []), "Approved leave", "Working hours", "Break time", "Required hours", "Payable days"].map(h => (
                   <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {monthlyRows.length === 0 ? (
-                <tr><td colSpan={isLatePenaltyMonth(month) ? 11 : 9} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
+                <tr><td colSpan={(isLatePenaltyMonth(month) ? 11 : 9) + (showOvertimeMonth ? 1 : 0)} className="px-4 py-8 text-center text-slate-400">No employees on file.</td></tr>
               ) : filteredMonthlyRows.length === 0 ? (
-                <tr><td colSpan={isLatePenaltyMonth(month) ? 11 : 9} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
+                <tr><td colSpan={(isLatePenaltyMonth(month) ? 11 : 9) + (showOvertimeMonth ? 1 : 0)} className="px-4 py-8 text-center text-slate-400">No employees found.</td></tr>
               ) : filteredMonthlyRows.map(({ user, summary }) => {
                 const penalty = penaltyMap[user.id];
+                const otTotal = overtimeTotalsByEmployee[user.id];
                 return (
                 <tr
                   key={user.id}
@@ -865,6 +1089,13 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       </td>
                       <td className="px-4 py-3">{formatLatePenaltyDeductions(penalty)}</td>
                     </>
+                  )}
+                  {showOvertimeMonth && (
+                    <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
+                      {otTotal
+                        ? `${otTotal.days} day${otTotal.days === 1 ? "" : "s"} · ${formatExtraMinutes(otTotal.minutes)}`
+                        : "—"}
+                    </td>
                   )}
                   <td className="px-4 py-3">{summary.approvedLeaveDays}</td>
                   <td className="px-4 py-3 tabular-nums">{formatDurationMs(summary.totalWorkingMs)}</td>

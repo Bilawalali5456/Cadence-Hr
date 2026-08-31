@@ -529,6 +529,34 @@ CREATE TRIGGER trg_late_penalties_updated_at
   BEFORE UPDATE ON late_penalties
   FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
 
+-- Overtime / extra hours beyond shift end + checkout grace
+CREATE TABLE IF NOT EXISTS overtime_requests (
+  id                TEXT PRIMARY KEY,
+  employee_id       TEXT NOT NULL REFERENCES users(id),
+  date              TEXT NOT NULL,
+  extra_minutes     INTEGER NOT NULL DEFAULT 0,
+  reason            TEXT DEFAULT '',
+  hr_status         TEXT NOT NULL DEFAULT 'pending',
+  hr_reviewed_by    TEXT,
+  hr_reviewed_at    TIMESTAMPTZ,
+  hr_comment        TEXT DEFAULT '',
+  exec_status       TEXT NOT NULL DEFAULT 'pending',
+  exec_reviewed_by  TEXT,
+  exec_reviewed_at  TIMESTAMPTZ,
+  exec_comment      TEXT DEFAULT '',
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (employee_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_overtime_requests_date ON overtime_requests (date);
+CREATE INDEX IF NOT EXISTS idx_overtime_requests_employee ON overtime_requests (employee_id);
+
+DROP TRIGGER IF EXISTS trg_overtime_requests_updated_at ON overtime_requests;
+CREATE TRIGGER trg_overtime_requests_updated_at
+  BEFORE UPDATE ON overtime_requests
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
 DROP TRIGGER IF EXISTS trg_policies_ts_updated ON policies;
 CREATE TRIGGER trg_policies_ts_updated
   BEFORE INSERT OR UPDATE ON policies

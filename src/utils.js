@@ -2042,6 +2042,50 @@ export function latePenaltiesByEmployee(penalties) {
   return map;
 }
 
+/** Overtime tracking starts September 2026 (forward-only). */
+export const OVERTIME_DATE_FLOOR = "2026-09-01";
+
+export function isOvertimeEligibleDate(dateKey) {
+  const d = String(dateKey || "").slice(0, 10);
+  return d >= OVERTIME_DATE_FLOOR;
+}
+
+export function formatExtraMinutes(minutes) {
+  const m = Math.max(0, Number(minutes || 0));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (h > 0 && r > 0) return `${h} hr${h === 1 ? "" : "s"} ${r} min`;
+  if (h > 0) return `${h} hr${h === 1 ? "" : "s"}`;
+  return `${r} min`;
+}
+
+export function overtimeDisplayStatus(req) {
+  if (!req) return null;
+  if (req.hrStatus === "rejected") return "Rejected (HR)";
+  if (req.execStatus === "approved") return "Approved";
+  if (req.execStatus === "rejected") return "Rejected (Executive)";
+  if (req.hrStatus === "approved") return "Pending Executive Approval";
+  if (String(req.reason || "").trim()) return "Pending HR Approval";
+  return "Reason required";
+}
+
+export function overtimeStatusTone(req) {
+  const label = overtimeDisplayStatus(req);
+  if (label === "Approved") return "green";
+  if (label?.startsWith("Rejected")) return "red";
+  if (label === "Pending Executive Approval") return "blue";
+  if (label === "Pending HR Approval") return "amber";
+  return "slate";
+}
+
+export function overtimeByDate(requests) {
+  const map = {};
+  for (const r of requests || []) {
+    if (r?.date) map[r.date] = r;
+  }
+  return map;
+}
+
 /** Count approved paid/unpaid leave working days overlapping a payroll month. */
 export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;

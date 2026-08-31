@@ -95,6 +95,45 @@ export async function apiFetchMyLatePenalty(month) {
   return apiGetJson(`/late-penalties/me${q}`);
 }
 
+export async function apiFetchOvertime(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  const data = await apiGetJson(`/overtime${q}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiSubmitOvertimeReason(id, reason) {
+  const res = await apiFetch(`${API_URL}/overtime/${encodeURIComponent(id)}/reason`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ reason }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiHrReviewOvertime(id, status, comment = "") {
+  const res = await apiFetch(`${API_URL}/overtime/${encodeURIComponent(id)}/hr-review`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ status, comment }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiExecReviewOvertime(id, status, comment = "") {
+  const res = await apiFetch(`${API_URL}/overtime/${encodeURIComponent(id)}/exec-review`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ status, comment }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
 export async function apiFetchLeave() {
   return sanitizeLeaveRequests(await apiGetJson("/leave"));
 }
