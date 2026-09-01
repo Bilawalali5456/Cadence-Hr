@@ -53,6 +53,13 @@ async function getOrCreatePenaltyRow(client, employeeId, monthKey) {
 export async function reconcileLatePenaltiesForEmployeeMonth(client, employeeId, monthKey) {
   if (!employeeId || !isLatePenaltyMonth(monthKey)) return null;
 
+  const { rows: userRows } = await client.query(
+    `SELECT role FROM users WHERE id = $1 LIMIT 1`,
+    [employeeId]
+  );
+  const role = userRows[0]?.role;
+  if (role === "Admin" || role === "HR Admin") return null;
+
   const bounds = monthBounds(monthKey);
   if (!bounds) return null;
 
@@ -155,7 +162,7 @@ export async function fetchLatePenaltiesForMonth(pool, monthKey, { employeeId = 
     `SELECT lp.*, u.name AS employee_name
      FROM late_penalties lp
      JOIN users u ON u.id = lp.employee_id
-     WHERE ${where}
+     WHERE ${where} AND u.role NOT IN ('Admin', 'HR Admin')
      ORDER BY u.name`,
     params
   );

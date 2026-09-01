@@ -79,9 +79,9 @@ export function isExecutiveRole(role) {
   return role === "Executive";
 }
 
-/** Roles that clock in/out and appear on attendance rosters. */
+/** Roles that clock in/out and appear on employee attendance/payroll rosters (not assets-only Admin). */
 export function hasOwnAttendance(role) {
-  return isStaffRole(role) || isHrEmployeeRole(role) || isAdminRole(role);
+  return isStaffRole(role) || isHrEmployeeRole(role);
 }
 
 /** Admin portal (People, Reports, Biometric, org attendance, etc.). */
@@ -127,7 +127,9 @@ export function canSelfSubmitLeave(role) {
 export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
   const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
-  if (isExecutiveRole(role)) return list;
+  if (isExecutiveRole(role)) {
+    return list.filter(r => !isHrAdminRequest(r, users));
+  }
   if (isHrOpsRole(role)) {
     return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
@@ -140,7 +142,9 @@ export function visibleShortLeaveRequests(requests, currentUser, users, roles) {
 export function visibleLeaveRequests(requests, currentUser, users, roles) {
   const list = (requests || []).filter(r => r && r.userId);
   const role = currentUser.role;
-  if (isExecutiveRole(role)) return list;
+  if (isExecutiveRole(role)) {
+    return list.filter(r => !isHrAdminRequest(r, users));
+  }
   if (isHrOpsRole(role)) {
     return list.filter(r => r.userId === currentUser.id || !isHrAdminRequest(r, users));
   }
@@ -300,19 +304,13 @@ export function sortHrAdminFirst(users) {
 }
 
 export function attendanceVisibleUserIds(users, viewerRole) {
-  const tracked = employeeRoster(users).map(u => u.id);
-  if (isExecutiveRole(viewerRole)) {
-    return new Set([...tracked, ...hrAdminRoster(users).map(u => u.id)]);
-  }
-  // HR Admin & HR Employee see all attendance-tracked users (incl. HR Employees).
-  return new Set(tracked);
+  return new Set(employeeRoster(users).map(u => u.id));
 }
 
-/** Staff roster for People / profile lists. */
+/** Staff roster for People / profile lists (excludes assets-only Admin). */
 export function peopleRoster(users, viewerRole) {
   if (isExecutiveRole(viewerRole)) {
     return sortHrAdminFirst([
-      ...hrAdminRoster(users),
       ...hrEmployeeRoster(users),
       ...users.filter(u => isStaffRole(u.role)),
     ]);

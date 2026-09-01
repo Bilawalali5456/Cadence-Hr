@@ -1,34 +1,49 @@
-import { getUserShift, shiftEndIso } from "./attendanceSync.js";
+import { getUserShift, requiredDutyMs } from "./attendanceSync.js";
 import { monthDateRange } from "./latePenalties.js";
 
 /** Forward-only: overtime detection starts September 2026. */
 export const OVERTIME_DATE_FLOOR = "2026-09-01";
 
-export const OVERTIME_MIN_MINUTES = 15;
+/** Minimum extra working time beyond required shift hours (1 hour). */
+export const OVERTIME_MIN_MINUTES = 60;
+
+const ASSETS_ONLY_ADMIN_ROLES = new Set(["Admin", "HR Admin"]);
 
 export function isOvertimeEligibleDate(dateKey) {
   const d = String(dateKey || "").slice(0, 10);
   return d >= OVERTIME_DATE_FLOOR;
 }
 
-/** Minutes beyond shift end + checkout grace (minimum 15 to count). */
-export function computeExtraMinutes(user, dateKey, checkOutIso) {
-  if (!checkOutIso || !user || !dateKey) return 0;
+function isAssetsOnlyAdminRole(role) {
+  return ASSETS_ONLY_ADMIN_ROLES.has(role);
+}
+
+/**
+ * Extra minutes when actual working hours exceed required shift hours by >= 1 hour.
+ * Uses attendance.working_ms (net of breaks) vs shift window minus break minutes.
+ */
+export function computeExtraMinutes(user, dateKey, attRow) {
+  if (!user || !dateKey || !attRow) return 0;
   if (!isOvertimeEligibleDate(dateKey)) return 0;
+
+  const checkOut = attRow.check_out || attRow.checkOut;
+  if (!checkOut) return 0;
 
   const shift = getUserShift(user, dateKey);
   if (shift.off) return 0;
 
-  const shiftEnd = new Date(shiftEndIso(user, dateKey));
-  if (!Number.isFinite(shiftEnd.getTime())) return 0;
+  const workingMs = attRow.working_ms != null
+    ? Number(attRow.working_ms)
+    : (attRow.workingMs != null ? Number(attRow.workingMs) : NaN);
+  if (!Number.isFinite(workingMs) || workingMs <= 0) return 0;
 
-  const graceMs = (shift.checkoutGraceMinutes ?? 20) * 60000;
-  const overtimeStart = new Date(shiftEnd.getTime() + graceMs);
-  const checkOut = new Date(checkOutIso);
-  if (!Number.isFinite(checkOut.getTime()) || checkOut <= overtimeStart) return 0;
+  const requiredMs = requiredDutyMs(user, dateKey);
+  if (!Number.isFinite(requiredMs) || requiredMs <= 0) return 0;
 
-  const extraMinutes = Math.floor((checkOut.getTime() - overtimeStart.getTime()) / 60000);
-  return extraMinutes >= OVERTIME_MIN_MINUTES ? extraMinutes : 0;
+  const extraMs = workingMs - requiredMs;
+  if (extraMs < OVERTIME_MIN_MINUTES * 60000) return 0;
+
+  return Math.floor(extraMs / 60000);
 }
 
 export function overtimeToJs(row) {
@@ -60,7 +75,7 @@ function isFinalized(row) {
 
 async function loadUser(client, userId) {
   const { rows } = await client.query(
-    `SELECT id, name, role, shift, status FROM users WHERE id = $1 LIMIT 1`,
+    `SELECT id, name, role, designation, shift, status FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
   return rows[0] || null;
@@ -80,8 +95,9 @@ export async function syncOvertimeForAttendance(client, attRow, userHint = null)
 
   const user = userHint || await loadUser(client, userId);
   if (!user || user.status !== "active") return null;
+  if (isAssetsOnlyAdminRole(user.role)) return null;
 
-  const extraMinutes = computeExtraMinutes(user, dateKey, checkOut);
+  const extraMinutes = computeExtraMinutes(user, dateKey, attRow);
 
   const { rows: existingRows } = await client.query(
     `SELECT * FROM overtime_requests WHERE employee_id = $1 AND date = $2 LIMIT 1`,
@@ -131,13 +147,15 @@ export async function syncOvertimeForRange(client, dateFrom, dateTo, userIds = n
   let userFilter = "";
   if (Array.isArray(userIds) && userIds.length) {
     params.push(userIds);
-    userFilter = ` AND user_id = ANY($${params.length})`;
+    userFilter = ` AND a.user_id = ANY($${params.length})`;
   }
 
   const { rows } = await client.query(
-    `SELECT * FROM attendance
-     WHERE date >= $1 AND date <= $2
-       AND check_out IS NOT NULL AND check_out <> ''
+    `SELECT a.* FROM attendance a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.date >= $1 AND a.date <= $2
+       AND a.check_out IS NOT NULL AND a.check_out <> ''
+       AND u.role NOT IN ('Admin', 'HR Admin')
        ${userFilter}`,
     params
   );
@@ -149,7 +167,7 @@ export async function syncOvertimeForRange(client, dateFrom, dateTo, userIds = n
 
 export async function fetchOvertimeRequests(pool, { employeeId = null, month = null } = {}) {
   const params = [];
-  const where = ["1=1"];
+  const where = ["u.role NOT IN ('Admin', 'HR Admin')"];
 
   if (employeeId) {
     params.push(employeeId);
