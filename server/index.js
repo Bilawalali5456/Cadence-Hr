@@ -193,6 +193,13 @@ const leaveToJs = (r) => ({
   paidDays: r.paid_days != null ? Number(r.paid_days) : undefined,
   unpaidDays: r.unpaid_days != null ? Number(r.unpaid_days) : undefined,
   payTag: r.pay_tag || undefined,
+  reviewedBy: r.reviewed_by_name || undefined,
+  reviewedById: r.reviewed_by || null,
+  reviewedByName: r.reviewed_by_name || undefined,
+  reviewedByRole: r.reviewed_by_role || undefined,
+  reviewedOn: r.status_changed_at
+    ? new Date(r.status_changed_at).toLocaleString()
+    : undefined,
 });
 
 const shortLeaveToJs = (r) => ({
@@ -208,7 +215,26 @@ const shortLeaveToJs = (r) => ({
   reason: r.reason,
   status: r.status,
   submitted: r.submitted,
+  reviewedBy: r.reviewed_by_name || undefined,
+  reviewedById: r.reviewed_by || null,
+  reviewedByName: r.reviewed_by_name || undefined,
+  reviewedByRole: r.reviewed_by_role || undefined,
+  reviewedOn: r.status_changed_at
+    ? new Date(r.status_changed_at).toLocaleString()
+    : undefined,
 });
+
+const LEAVE_SELECT_SQL = `
+  SELECT lr.*, ru.name AS reviewed_by_name, ru.role AS reviewed_by_role
+  FROM leave_requests lr
+  LEFT JOIN users ru ON ru.id = lr.reviewed_by
+`;
+
+const SHORT_LEAVE_SELECT_SQL = `
+  SELECT sl.*, ru.name AS reviewed_by_name, ru.role AS reviewed_by_role
+  FROM short_leave_requests sl
+  LEFT JOIN users ru ON ru.id = sl.reviewed_by
+`;
 
 const annToJs = (r) => ({
   id: r.id,
@@ -350,8 +376,8 @@ app.get("/api/leave", requireAuth, async (req, res) => {
   try {
     const actor = req.authUser;
     const { rows } = canViewAllAttendance(actor.role)
-      ? await pool.query("SELECT * FROM leave_requests ORDER BY id DESC")
-      : await pool.query("SELECT * FROM leave_requests WHERE user_id = $1 ORDER BY id DESC", [actor.id]);
+      ? await pool.query(`${LEAVE_SELECT_SQL} ORDER BY lr.id DESC`)
+      : await pool.query(`${LEAVE_SELECT_SQL} WHERE lr.user_id = $1 ORDER BY lr.id DESC`, [actor.id]);
     res.json(rows.map(leaveToJs));
   } catch (e) {
     console.error("GET /api/leave error:", e.message);
@@ -363,8 +389,8 @@ app.get("/api/short-leave", requireAuth, async (req, res) => {
   try {
     const actor = req.authUser;
     const { rows } = canViewAllAttendance(actor.role)
-      ? await pool.query("SELECT * FROM short_leave_requests ORDER BY id DESC")
-      : await pool.query("SELECT * FROM short_leave_requests WHERE user_id = $1 ORDER BY id DESC", [actor.id]);
+      ? await pool.query(`${SHORT_LEAVE_SELECT_SQL} ORDER BY sl.id DESC`)
+      : await pool.query(`${SHORT_LEAVE_SELECT_SQL} WHERE sl.user_id = $1 ORDER BY sl.id DESC`, [actor.id]);
     res.json(rows.map(shortLeaveToJs));
   } catch (e) {
     console.error("GET /api/short-leave error:", e.message);

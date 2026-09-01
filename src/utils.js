@@ -192,15 +192,24 @@ export function buildApprovalDecision(approver, newStatus) {
   return {
     status: newStatus,
     reviewedBy: approver.name,
+    reviewedByName: approver.name,
+    reviewedById: approver.id,
     reviewedOn: new Date().toLocaleString(),
     reviewedByRole: approver.role,
   };
 }
 
+function approverFallbackLabel(req) {
+  if (isExecutiveRole(req?.reviewedByRole)) return "Executive";
+  if (isHrEmployeeRole(req?.reviewedByRole)) return "HR Employee";
+  if (reviewerAuthorityTier(req) >= 2) return "Executive";
+  return "HR Employee";
+}
+
 export function approvalStatusLabel(req) {
   if (!req || req.status === "pending") return null;
-  const byExecutive = reviewerAuthorityTier(req) >= 2;
-  const actor = byExecutive ? "Executive" : "Admin";
+  const name = req.reviewedByName || req.reviewedBy;
+  const actor = name || approverFallbackLabel(req);
   if (req.status === "approved") return `Approved by ${actor}`;
   if (req.status === "rejected") return `Rejected by ${actor}`;
   return null;

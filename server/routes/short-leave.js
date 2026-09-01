@@ -69,8 +69,8 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
 
     await c.query(
       `INSERT INTO short_leave_requests (
-         id, user_id, emp_name, date, from_time, to_time, start_iso, end_iso, minutes, reason, status, submitted
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         id, user_id, emp_name, date, from_time, to_time, start_iso, end_iso, minutes, reason, status, submitted, reviewed_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO UPDATE SET
          user_id = EXCLUDED.user_id,
          emp_name = EXCLUDED.emp_name,
@@ -83,6 +83,11 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
          reason = EXCLUDED.reason,
          status = EXCLUDED.status,
          submitted = EXCLUDED.submitted,
+         reviewed_by = CASE
+           WHEN EXCLUDED.status IN ('approved', 'rejected') THEN EXCLUDED.reviewed_by
+           WHEN EXCLUDED.status = 'pending' THEN NULL
+           ELSE short_leave_requests.reviewed_by
+         END,
          updated_at = NOW(),
          status_changed_at = CASE
            WHEN short_leave_requests.status IS DISTINCT FROM EXCLUDED.status THEN NOW()
@@ -101,6 +106,7 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
         r.reason || "",
         r.status || "pending",
         r.submitted || "",
+        r.reviewedBy || null,
       ]
     );
   }
@@ -154,9 +160,15 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
       if (r.minutes == null && prev) r.minutes = prev.minutes;
       if (r.reason == null && prev) r.reason = prev.reason;
 
+      const newStatus = r.status || "pending";
+      if (newStatus === "approved" || newStatus === "rejected") {
+        r.reviewedBy = req.authUser.id;
+      } else if (newStatus === "pending") {
+        r.reviewedBy = null;
+      }
+
       await upsertShortLeave(c, r);
 
-      const newStatus = r.status || "pending";
       if (newStatus === "approved") {
         await applyApprovedShortLeaveToAttendance(c, r);
       } else if (prevStatus === "approved" && newStatus === "rejected") {

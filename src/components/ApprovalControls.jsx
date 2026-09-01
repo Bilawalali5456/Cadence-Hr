@@ -4,10 +4,11 @@ import { approvalStatusLabel } from "../utils.js";
 import { Pill } from "./ui.jsx";
 
 export function ApprovalReviewMeta({ req }) {
-  if (!req?.reviewedBy) return null;
+  const who = req?.reviewedByName || req?.reviewedBy;
+  if (!who) return null;
   return (
     <div className="text-xs text-slate-400 mt-0.5">
-      {req.reviewedBy} · {req.reviewedOn}
+      {who}{req.reviewedOn ? ` · ${req.reviewedOn}` : ""}
     </div>
   );
 }
