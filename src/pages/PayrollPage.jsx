@@ -3,9 +3,9 @@ import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Save, Landmar
 import { B, AdforceLogo } from "../brand.jsx";
 import { can, isStaffRole, isHrEmployeeRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
 import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox, UserDisplayName } from "../components/ui.jsx";
-import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll } from "../api.js";
+import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll, apiFetchAttendance } from "../api.js";
 
-export function PayrollPage({ currentUser, users, attendance, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
+export function PayrollPage({ currentUser, users, attendance: _attendanceProp, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
   const canManage = can(currentUser.role, "manage_payroll", roles);
   const canViewOrgPayroll = can(currentUser.role, "view_payroll", roles) && isExecutiveRole(currentUser.role);
   const [month, setMonth] = useState(monthKey());
@@ -13,6 +13,8 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
   const [slipView, setSlipView] = useState(null); // slip being viewed
   const [genForm, setGenForm] = useState({ basic: "", allowance: "0", bonus: "0", deduction: "0", note: "" });
   const [genErr, setGenErr] = useState("");
+  const [monthAttendance, setMonthAttendance] = useState([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
 
   const staff = canManage
     ? users.filter(u => u.status === "active" && (isStaffRole(u.role) || isHrEmployeeRole(u.role)))
@@ -34,6 +36,25 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
     return () => { cancelled = true; };
   }, [month, setPayroll]);
 
+  // Fetch attendance for the selected payroll month (App prop may only hold today/current route data).
+  useEffect(() => {
+    let cancelled = false;
+    setAttendanceLoading(true);
+    (async () => {
+      try {
+        const list = await apiFetchAttendance({ month });
+        if (cancelled) return;
+        setMonthAttendance(Array.isArray(list) ? list : []);
+      } catch (e) {
+        console.error("Failed to fetch payroll attendance:", e?.message || e);
+        if (!cancelled) setMonthAttendance([]);
+      } finally {
+        if (!cancelled) setAttendanceLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [month]);
+
   function openGenerate(u) {
     const existing = monthSlips.find(s => s.userId === u.id);
     if (existing) { setSlipView(existing); return; }
@@ -44,12 +65,16 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
   }
 
   async function generateSlip() {
+    if (attendanceLoading) {
+      setGenErr("Still loading attendance for this month. Please wait.");
+      return;
+    }
     const basic = parseFloat(genForm.basic) || 0;
     if (basic <= 0) { setGenErr("Enter a valid basic salary."); return; }
     setGenErr("");
     const workDays    = workingDaysInMonth(month, holidays);
-    const presentDays = presentDaysInMonth(attendance, genFor.id, month, holidays);
-    const lateDays    = lateDaysInMonth(attendance, genFor.id, month, users, holidays);
+    const presentDays = presentDaysInMonth(monthAttendance, genFor.id, month, holidays);
+    const lateDays    = lateDaysInMonth(monthAttendance, genFor.id, month, users, holidays);
     const paidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "paid", holidays);
     const unpaidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "unpaid", holidays);
     const absentDays  = Math.max(0, workDays - presentDays - paidLeaveDays);
@@ -274,10 +299,12 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
             <tbody>
               {staff.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No active people on file.</td></tr>
+              ) : attendanceLoading ? (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading attendance for {monthLabel(month)}…</td></tr>
               ) : staff.map(u => {
                 const slip = monthSlips.find(s => s.userId === u.id);
-                const present = presentDaysInMonth(attendance, u.id, month, holidays);
-                const late = lateDaysInMonth(attendance, u.id, month, users, holidays);
+                const present = presentDaysInMonth(monthAttendance, u.id, month, holidays);
+                const late = lateDaysInMonth(monthAttendance, u.id, month, users, holidays);
                 const workDays = workingDaysInMonth(month, holidays);
                 return (
                   <tr key={u.id} className="border-b border-slate-100 last:border-0">
@@ -352,10 +379,12 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
           <tbody>
             {staff.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No active employees.</td></tr>
+            ) : attendanceLoading ? (
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading attendance for {monthLabel(month)}…</td></tr>
             ) : staff.map(u => {
               const slip = monthSlips.find(s => s.userId === u.id);
-              const present = presentDaysInMonth(attendance, u.id, month, holidays);
-              const late = lateDaysInMonth(attendance, u.id, month, users, holidays);
+              const present = presentDaysInMonth(monthAttendance, u.id, month, holidays);
+              const late = lateDaysInMonth(monthAttendance, u.id, month, users, holidays);
               const workDays = workingDaysInMonth(month, holidays);
               return (
                 <tr key={u.id} className="border-b border-slate-100 last:border-0">
@@ -378,7 +407,7 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
                       : <Pill tone="slate">Not generated</Pill>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Btn size="sm" variant={slip ? "ghost" : "primary"} onClick={() => openGenerate(u)}>
+                    <Btn size="sm" variant={slip ? "ghost" : "primary"} onClick={() => openGenerate(u)} disabled={!slip && attendanceLoading}>
                       {slip ? "View slip" : "Generate"}
                     </Btn>
                   </td>
@@ -395,8 +424,8 @@ export function PayrollPage({ currentUser, users, attendance, payroll, setPayrol
           <div className="space-y-4">
             <div className="p-3 rounded-lg text-xs grid grid-cols-3 gap-2 text-center" style={{ background: B.darkLight, color: B.dark }}>
               <div><b>{workingDaysInMonth(month, holidays)}</b><br />working days</div>
-              <div><b>{presentDaysInMonth(attendance, genFor.id, month, holidays)}</b><br />present</div>
-              <div><b>{lateDaysInMonth(attendance, genFor.id, month, users, holidays)}</b><br />late</div>
+              <div><b>{attendanceLoading ? "…" : presentDaysInMonth(monthAttendance, genFor.id, month, holidays)}</b><br />present</div>
+              <div><b>{attendanceLoading ? "…" : lateDaysInMonth(monthAttendance, genFor.id, month, users, holidays)}</b><br />late</div>
             </div>
             <TextInput label={`Basic salary (${cur})`} type="number" value={genForm.basic} onChange={v => setGenForm({ ...genForm, basic: v })} required placeholder="e.g. 80000" />
             <div className="grid grid-cols-3 gap-3">
