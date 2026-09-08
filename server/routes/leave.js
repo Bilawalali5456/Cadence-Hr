@@ -275,9 +275,11 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
 
       const actor = req.authUser;
       const targetUserId = String(rows[0].user_id);
-      if (!isHr(actor.role) && String(actor.id) !== targetUserId) {
+      const isOwnerPending = String(actor.id) === targetUserId && rows[0].status === "pending";
+      const isExecutive = actor.role === "Executive";
+      if (!isExecutive && !isOwnerPending) {
         await c.query("ROLLBACK").catch(() => {});
-        return res.status(403).json({ error: "Forbidden — cannot cancel other user's leave" });
+        return res.status(403).json({ error: "Forbidden — only Executive can delete leave requests" });
       }
 
       if (rows[0].status === "approved") {

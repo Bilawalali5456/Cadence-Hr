@@ -197,19 +197,12 @@ export function buildApprovalDecision(approver, newStatus) {
   };
 }
 
-function approverFallbackLabel(req) {
-  if (isExecutiveRole(req?.reviewedByRole)) return "Executive";
-  if (isHrEmployeeRole(req?.reviewedByRole)) return "HR Employee";
-  if (reviewerAuthorityTier(req) >= 2) return "Executive";
-  return "Executive";
-}
-
 export function approvalStatusLabel(req) {
   if (!req || req.status === "pending") return null;
-  const name = req.reviewedByName || req.reviewedBy;
-  const actor = name || approverFallbackLabel(req);
-  if (req.status === "approved") return `Approved by ${actor}`;
-  if (req.status === "rejected") return `Rejected by ${actor}`;
+  const name = String(req.reviewedByName || "").trim() || String(req.reviewedBy || "").trim();
+  // Old records (no reviewed_by) — do not invent "Approved by Executive"
+  if (req.status === "approved") return name ? `Approved by ${name}` : "Approved";
+  if (req.status === "rejected") return name ? `Rejected by ${name}` : "Rejected";
   return null;
 }
 
@@ -275,22 +268,16 @@ export function canResetPersonCredentials(actor, target, roles) {
 
 export function canDeleteLeaveRecord(actor, req, users, roles) {
   if (!req || !actor) return false;
+  // Owner may cancel their own pending request
   if (req.userId === actor.id && req.status === "pending") return true;
-  if (isExecutiveRole(actor.role)) return true;
-  const requester = users.find(u => u.id === req.userId);
-  if (isHrAdminRole(requester?.role)) return canManageHrAdmin(actor, requester, roles);
-  if (!can(actor.role, "approve_leave", roles)) return false;
-  return isHrOpsRole(actor.role) || actor.role === "Manager";
+  // Only Executive may delete others' leave requests (not HR Employee)
+  return isExecutiveRole(actor.role);
 }
 
 export function canDeleteShortLeaveRecord(actor, req, users, roles) {
   if (!req || !actor) return false;
   if (req.userId === actor.id && req.status === "pending") return true;
-  if (isExecutiveRole(actor.role)) return true;
-  const requester = users.find(u => u.id === req.userId);
-  if (isHrAdminRequest(req, users)) return canManageHrAdmin(actor, requester, roles);
-  if (!can(actor.role, "approve_short_leave", roles)) return false;
-  return isHrOpsRole(actor.role) || actor.role === "Manager";
+  return isExecutiveRole(actor.role);
 }
 
 export function sortHrAdminFirst(users) {
