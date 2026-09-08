@@ -1,75 +1,66 @@
 import { HR_OPS_ROLES } from "../lib/rbac.js";
+import {
+  allocateAnnualLeaveDates,
+  enumerateWeekdays,
+  getMonthlyAnnualUsage,
+  isMonthlyAnnualLeaveMonth,
+  MONTHLY_ANNUAL_LEAVE_LIMIT,
+} from "../lib/monthlyAnnualLeave.js";
 
 function isHr(role) {
   return HR_OPS_ROLES.includes(role);
+}
+
+function isExecutive(role) {
+  return role === "Executive";
 }
 
 function genAttId() {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Weekdays (Mon–Fri) between fromKey and toKey inclusive (YYYY-MM-DD). */
-function enumerateWeekdays(fromKey, toKey) {
-  const from = String(fromKey || "").slice(0, 10);
-  const to = String(toKey || "").slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
-    return [];
+async function upsertAttendanceDay(c, { userId, date, status, source }) {
+  const { rows } = await c.query(
+    `SELECT id, status, source, check_in FROM attendance
+     WHERE user_id = $1 AND date = $2
+     LIMIT 1`,
+    [userId, date]
+  );
+  const existing = rows[0];
+  if (existing) {
+    const src = String(existing.source || "").toLowerCase();
+    if (src === "biometric" || src === "wfh") return;
+    await c.query(
+      `UPDATE attendance
+       SET status = $1, source = $2,
+           check_in = NULL, check_out = NULL
+       WHERE id = $3`,
+      [status, source, existing.id]
+    );
+    return;
   }
-  const [fy, fm, fd] = from.split("-").map(Number);
-  const [ty, tm, td] = to.split("-").map(Number);
-  const days = [];
-  const cur = new Date(Date.UTC(fy, fm - 1, fd));
-  const end = new Date(Date.UTC(ty, tm - 1, td));
-  while (cur <= end) {
-    const dow = cur.getUTCDay(); // 0 = Sunday, 6 = Saturday
-    if (dow !== 0 && dow !== 6) {
-      const y = cur.getUTCFullYear();
-      const m = String(cur.getUTCMonth() + 1).padStart(2, "0");
-      const d = String(cur.getUTCDate()).padStart(2, "0");
-      days.push(`${y}-${m}-${d}`);
-    }
-    cur.setUTCDate(cur.getUTCDate() + 1);
-  }
-  return days;
+
+  await c.query(
+    `INSERT INTO attendance (
+       id, user_id, date, check_in, check_out, breaks, short_leaves,
+       auto_checkout, working_ms, total_break_ms, status, late, source
+     ) VALUES ($1,$2,$3,NULL,NULL,'[]'::jsonb,'[]'::jsonb,false,NULL,NULL,$4,false,$5)`,
+    [`${genAttId()}-${date}`, userId, date, status, source]
+  );
 }
 
-async function applyApprovedLeaveAttendance(c, leave) {
+async function applyApprovedLeaveAttendance(c, leave, { leaveDates = null, absentDates = [] } = {}) {
   const userId = leave.userId || leave.user_id;
   const from = leave.from || leave.from_date;
   const to = leave.to || leave.to_date;
   if (!userId || !from || !to) return;
 
-  for (const date of enumerateWeekdays(from, to)) {
-    const { rows } = await c.query(
-      `SELECT id, status, source, check_in FROM attendance
-       WHERE user_id = $1 AND date = $2
-       LIMIT 1`,
-      [userId, date]
-    );
-    const existing = rows[0];
-    if (existing) {
-      const source = String(existing.source || "").toLowerCase();
-      // Never overwrite real biometric / WFH attendance
-      if (source === "biometric" || source === "wfh") continue;
-      if (String(existing.status || "") === "Absent") {
-        await c.query(
-          `UPDATE attendance
-           SET status = 'On Leave', source = 'leave',
-               check_in = NULL, check_out = NULL
-           WHERE id = $1`,
-          [existing.id]
-        );
-      }
-      continue;
-    }
-
-    await c.query(
-      `INSERT INTO attendance (
-         id, user_id, date, check_in, check_out, breaks, short_leaves,
-         auto_checkout, working_ms, total_break_ms, status, late, source
-       ) VALUES ($1,$2,$3,NULL,NULL,'[]'::jsonb,'[]'::jsonb,false,NULL,NULL,'On Leave',false,'leave')`,
-      [`${genAttId()}-${date}`, userId, date]
-    );
+  const dates = leaveDates || enumerateWeekdays(from, to);
+  for (const date of dates) {
+    await upsertAttendanceDay(c, { userId, date, status: "On Leave", source: "leave" });
+  }
+  for (const date of absentDates) {
+    await upsertAttendanceDay(c, { userId, date, status: "Absent", source: "annual-limit-absent" });
   }
 }
 
@@ -82,7 +73,7 @@ async function removeLeaveAttendance(c, leave) {
   await c.query(
     `DELETE FROM attendance
      WHERE user_id = $1
-       AND source = 'leave'
+       AND source IN ('leave', 'annual-limit-absent')
        AND date >= $2
        AND date <= $3`,
     [userId, String(from).slice(0, 10), String(to).slice(0, 10)]
@@ -147,7 +138,6 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
     try {
       await c.query("BEGIN");
       const l = req.body || {};
-      // If employee submits with a userId mismatch, disallow.
       if (!isHr(req.authUser.role) && String(l.userId) !== String(req.authUser.id)) {
         return res.status(403).json({ error: "Forbidden — cannot submit for other user" });
       }
@@ -163,7 +153,7 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
     }
   });
 
-  // HR approves/rejects: PUT /api/leave/:id
+  // Executive approves/rejects: PUT /api/leave/:id
   app.put("/api/leave/:id", requireHrAdmin, async (req, res) => {
     const c = await pool.connect();
     try {
@@ -172,7 +162,7 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
       if (!id) return res.status(400).json({ error: "id is required" });
 
       const { rows: prevRows } = await c.query(
-        `SELECT id, user_id, type, from_date, to_date, status
+        `SELECT id, user_id, type, from_date, to_date, status, paid_days, unpaid_days, days, pay_tag
          FROM leave_requests WHERE id = $1 LIMIT 1`,
         [id]
       );
@@ -180,23 +170,58 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
       const prevStatus = prev?.status || "";
 
       const l = { ...(req.body || {}), id };
-      // Prefer DB user/dates if body omits them
       if (!l.userId && prev) l.userId = prev.user_id;
       if (!l.from && prev) l.from = prev.from_date;
       if (!l.to && prev) l.to = prev.to_date;
       if (!l.type && prev) l.type = prev.type;
+      if (l.paidDays == null && prev) l.paidDays = prev.paid_days;
+      if (l.unpaidDays == null && prev) l.unpaidDays = prev.unpaid_days;
+      if (l.days == null && prev) l.days = prev.days;
+      if (!l.payTag && prev) l.payTag = prev.pay_tag;
 
       const newStatus = l.status || "pending";
+      if (
+        (newStatus === "approved" || newStatus === "rejected")
+        && newStatus !== prevStatus
+        && !isExecutive(req.authUser.role)
+      ) {
+        await c.query("ROLLBACK").catch(() => {});
+        return res.status(403).json({ error: "Forbidden — only Executive can approve or reject leave requests" });
+      }
+
+      let warning = null;
+      let monthlyLimitExceeded = false;
+      let leaveDates = null;
+      let absentDates = [];
+
       if (newStatus === "approved" || newStatus === "rejected") {
         l.reviewedBy = req.authUser.id;
       } else if (newStatus === "pending") {
         l.reviewedBy = null;
       }
 
+      if (newStatus === "approved" && String(l.type || "") === "Annual") {
+        const alloc = await allocateAnnualLeaveDates(c, l.userId, l.from, l.to, { excludeLeaveId: id });
+        leaveDates = alloc.leaveDates;
+        absentDates = alloc.absentDates;
+        l.paidDays = alloc.paidDays;
+        // Keep any unpaid portion from balance shortfall; add over-limit days as unpaid-absent
+        const priorUnpaid = Number(l.unpaidDays || 0);
+        l.unpaidDays = priorUnpaid + alloc.unpaidOrAbsentDays;
+        if (alloc.monthlyLimitExceeded) {
+          monthlyLimitExceeded = true;
+          warning = alloc.warnings[0]
+            || `Employee has already used ${MONTHLY_ANNUAL_LEAVE_LIMIT}/${MONTHLY_ANNUAL_LEAVE_LIMIT} monthly Annual Leaves. Extra day(s) marked Absent.`;
+          if (alloc.paidDays === 0) {
+            l.payTag = "Unpaid";
+          }
+        }
+      }
+
       await upsertLeaveRecord(c, l);
 
       if (newStatus === "approved") {
-        await applyApprovedLeaveAttendance(c, l);
+        await applyApprovedLeaveAttendance(c, l, { leaveDates, absentDates });
       } else if (prevStatus === "approved" && newStatus === "rejected") {
         await removeLeaveAttendance(c, {
           userId: l.userId || prev?.user_id,
@@ -205,8 +230,23 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
         });
       }
 
+      const monthKey = String(l.from || "").slice(0, 7);
+      let monthlyAnnualUsed = 0;
+      if (isMonthlyAnnualLeaveMonth(monthKey)) {
+        const usage = await getMonthlyAnnualUsage(c, l.userId, monthKey);
+        monthlyAnnualUsed = usage.used;
+      }
+
       await c.query("COMMIT");
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        warning,
+        monthlyLimitExceeded,
+        monthlyAnnualUsed,
+        monthlyAnnualLimit: MONTHLY_ANNUAL_LEAVE_LIMIT,
+        paidDays: l.paidDays ?? null,
+        unpaidDays: l.unpaidDays ?? null,
+      });
     } catch (e) {
       await c.query("ROLLBACK").catch(() => {});
       console.error("PUT /api/leave/:id error:", e.message);
@@ -240,7 +280,6 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
         return res.status(403).json({ error: "Forbidden — cannot cancel other user's leave" });
       }
 
-      // If an approved leave is deleted, clear synthetic On Leave attendance rows
       if (rows[0].status === "approved") {
         await removeLeaveAttendance(c, {
           userId: rows[0].user_id,

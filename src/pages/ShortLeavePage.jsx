@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrAdminRole, canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, todayKey, monthKey, formatDate, buildApprovalDecision } from "../utils.js";
+import { canSelfSubmitLeave, visibleShortLeaveRequests, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, buildShortLeaveRequest, todayKey, monthKey, formatDate, buildApprovalDecision } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { apiCreateShortLeaveRequest, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchShortLeave, apiFetchAttendance } from "../api.js";
@@ -72,9 +72,7 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
       return;
     }
     setForm({ date: todayKey(), from: "", to: "", reason: "" });
-    setMsg(isHrAdminRole(currentUser.role)
-      ? "ok:Short leave request submitted. An executive will review it."
-      : "ok:Short leave request submitted. HR will review it shortly.");
+    setMsg("ok:Short leave request submitted for executive approval.");
     setTimeout(() => setMsg(""), 4000);
   }
 
@@ -84,9 +82,7 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
       <Card className="p-5">
         <STitle>Submit short leave request</STitle>
         <p className="text-xs text-slate-500 mb-4">
-          {isHrAdminRole(currentUser.role)
-            ? "Request partial-day leave. Executives must approve before it is applied to your attendance."
-            : "Request partial-day leave (e.g. doctor visit, personal errand). HR must approve before it is applied to your attendance."}
+          Request partial-day leave (e.g. doctor visit, personal errand). An executive must approve before it is applied to your attendance.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TextInput label="Date" type="date" value={form.date} onChange={v => setForm({ ...form, date: v })} required />
@@ -111,6 +107,9 @@ export function ShortLeavePage({ currentUser, requests = [], setRequests, users,
           <h3 className="text-sm font-semibold" style={{ color: B.dark }}>
             {listHasApprovals ? "Short leave requests" : "My short leave requests"}
           </h3>
+          {!listHasApprovals && visibleReqs.some(r => r.userId !== currentUser.id) && (
+            <p className="text-xs text-slate-400 mt-0.5">View only — Executives approve short leave requests.</p>
+          )}
         </div>
         {visibleReqs.length === 0 ? (
           <div className="p-8 text-center text-slate-400 text-sm">No short leave requests yet.</div>

@@ -1,3 +1,8 @@
+import {
+  getMonthlyAnnualUsage,
+  isMonthlyAnnualLeaveMonth,
+} from "./monthlyAnnualLeave.js";
+
 /** Forward-only: late penalty tracking starts September 2026. */
 export const LATE_PENALTY_MONTH_FLOOR = "2026-09";
 
@@ -82,7 +87,21 @@ export async function reconcileLatePenaltiesForEmployeeMonth(client, employeeId,
       [employeeId]
     );
     const balance = Number(userRows[0]?.leave_balance ?? 0);
-    if (balance > 0) {
+
+    // Monthly Annual Leave cap (approved leave days + late-penalty deductions) — forward from Sep 2026.
+    let canDeductLeave = balance > 0;
+    if (canDeductLeave && isMonthlyAnnualLeaveMonth(monthKey)) {
+      // Exclude current leaves_deducted so remaining reflects approved leave + already-applied late leaves.
+      const usage = await getMonthlyAnnualUsage(client, employeeId, monthKey);
+      // usage.used already includes leavesDeducted from DB row; use leaveDays + leavesDeducted after update.
+      // Before applying this new leave deduction, remaining quota = limit - (leaveDays + current leavesDeducted).
+      const usedBeforeThis = (usage.leaveDays || 0) + leavesDeducted;
+      if (usedBeforeThis >= (usage.limit || 2)) {
+        canDeductLeave = false;
+      }
+    }
+
+    if (canDeductLeave) {
       await client.query(
         `UPDATE users SET leave_balance = GREATEST(0, leave_balance - 1) WHERE id = $1`,
         [employeeId]

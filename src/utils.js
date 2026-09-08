@@ -157,35 +157,33 @@ export function visibleLeaveRequests(requests, currentUser, users, roles) {
 export function canApproveShortLeaveRequest(approver, req, users, roles) {
   if (!req) return false;
   if (req.userId === approver.id) return false;
-  if (!can(approver.role, "approve_short_leave", roles)) return false;
-  if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrOpsRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
+  // Leave / short-leave approvals are Executive-only.
+  return isExecutiveRole(approver.role);
 }
 
 export function canApproveLeaveRequest(approver, req, users, roles) {
   if (!req) return false;
   if (req.userId === approver.id) return false;
-  if (!can(approver.role, "approve_leave", roles)) return false;
-  if (isHrAdminRequest(req, users)) return isExecutiveRole(approver.role);
-  return isHrOpsRole(approver.role) || isExecutiveRole(approver.role) || approver.role === "Manager";
+  // Leave / short-leave approvals are Executive-only.
+  return isExecutiveRole(approver.role);
 }
 
-/** Executive super-authority: reverse or change any leave decision after HR/others have acted. */
+/** Executive super-authority: reverse or change any leave decision after others have acted. */
 export function canOverrideLeaveDecision(actor) {
   return !!actor && isExecutiveRole(actor.role);
 }
 
-/** Authority tier for approval hierarchy: Executive (2) > Admin/HR Employee/Manager (1). */
+/** Authority tier for approval hierarchy: Executive (2) > others (0 for leave approvals). */
 export function approvalAuthorityTier(role) {
   if (isExecutiveRole(role)) return 2;
-  if (isHrOpsRole(role) || role === "Manager") return 1;
   return 0;
 }
 
 export function reviewerAuthorityTier(req) {
   if (!req || req.status === "pending") return 0;
   if (req.reviewedByRole) return approvalAuthorityTier(req.reviewedByRole);
-  return 1;
+  // Legacy reviews without role — treat as non-executive
+  return 0;
 }
 
 export function buildApprovalDecision(approver, newStatus) {
@@ -203,7 +201,7 @@ function approverFallbackLabel(req) {
   if (isExecutiveRole(req?.reviewedByRole)) return "Executive";
   if (isHrEmployeeRole(req?.reviewedByRole)) return "HR Employee";
   if (reviewerAuthorityTier(req) >= 2) return "Executive";
-  return "HR Employee";
+  return "Executive";
 }
 
 export function approvalStatusLabel(req) {
@@ -215,22 +213,16 @@ export function approvalStatusLabel(req) {
   return null;
 }
 
-/** Leave/WFH: pending — Admin or Executive; decided — Executive may override Admin, Admin cannot override Executive. */
+/** Leave/WFH status changes — Executive only. */
 export function canChangeLeaveRequestStatus(approver, req, users, roles) {
   if (!req || !approver || req.userId === approver.id) return false;
-  if (req.status === "pending") return canApproveLeaveRequest(approver, req, users, roles);
-  if (approvalAuthorityTier(approver.role) < 1) return false;
-  if (isExecutiveRole(approver.role)) return true;
-  return reviewerAuthorityTier(req) < 2;
+  return isExecutiveRole(approver.role);
 }
 
-/** Short leave — same hierarchy as leave/WFH approvals. */
+/** Short leave status changes — Executive only. */
 export function canChangeShortLeaveRequestStatus(approver, req, users, roles) {
   if (!req || !approver || req.userId === approver.id) return false;
-  if (req.status === "pending") return canApproveShortLeaveRequest(approver, req, users, roles);
-  if (approvalAuthorityTier(approver.role) < 1) return false;
-  if (isExecutiveRole(approver.role)) return true;
-  return reviewerAuthorityTier(req) < 2;
+  return isExecutiveRole(approver.role);
 }
 
 export function canManageHrAdmin(actor, target, roles) {
@@ -1584,6 +1576,47 @@ export function leaveTypeLabel(type) {
   if (type === "Unpaid") return "Unpaid Leave";
   if (type === "WFH") return "Work from Home";
   return "Annual Leave";
+}
+
+/** Forward-only monthly Annual Leave cap (calendar month). */
+export const MONTHLY_ANNUAL_LEAVE_LIMIT = 2;
+export const MONTHLY_ANNUAL_LEAVE_FLOOR = "2026-09";
+
+export function isMonthlyAnnualLeaveMonth(monthKey) {
+  return !!monthKey && monthKey >= MONTHLY_ANNUAL_LEAVE_FLOOR;
+}
+
+/** Count approved Annual Leave working days for an employee in a month (from leave request list). */
+export function countMonthlyAnnualLeaveUsed(leaveRequests, userId, monthKey) {
+  if (!userId || !isMonthlyAnnualLeaveMonth(monthKey)) return 0;
+  const { start, end } = monthDateRange(monthKey);
+  if (!start || !end) return 0;
+  let used = 0;
+  for (const r of leaveRequests || []) {
+    if (!r || r.userId !== userId || r.status !== "approved" || r.type !== "Annual") continue;
+    if (!r.from || !r.to) continue;
+    if (r.to < start || r.from > end) continue;
+    const days = enumerateWorkingDays(r.from, r.to);
+    const overlap = days.filter(d => d >= start && d <= end);
+    const paid = leavePaidDays(r);
+    if (days.length <= 1 || paid >= days.length) {
+      used += overlap.length;
+    } else {
+      let paidLeft = paid;
+      for (const d of days) {
+        if (paidLeft <= 0) break;
+        paidLeft -= 1;
+        if (d >= start && d <= end) used += 1;
+      }
+    }
+  }
+  return used;
+}
+
+export function monthlyAnnualLeaveLabel(monthKey, used) {
+  if (!isMonthlyAnnualLeaveMonth(monthKey)) return null;
+  const u = Math.max(0, Number(used || 0));
+  return `${monthLabel(monthKey)}: ${u}/${MONTHLY_ANNUAL_LEAVE_LIMIT} Annual Leaves used`;
 }
 
 export function computeLeavePaySplit(type, days, availableBalance) {

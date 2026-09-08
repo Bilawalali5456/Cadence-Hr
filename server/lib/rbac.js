@@ -108,3 +108,27 @@ export function createRequireAssetManager(pool) {
     }
   };
 }
+
+/** Require Executive only (e.g. leave / short-leave approvals). */
+export function createRequireExecutive(pool) {
+  return async function requireExecutive(req, res, next) {
+    try {
+      const token = extractSessionToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Authentication required", reason: "missing_token" });
+      }
+      const user = await resolveAuthenticatedUser(pool, req);
+      if (!user) {
+        return res.status(401).json({ error: "Authentication required", reason: "invalid_or_expired_session" });
+      }
+      if (user.role !== "Executive") {
+        return res.status(403).json(authFailPayload(req, "executive_only"));
+      }
+      req.authUser = user;
+      next();
+    } catch (e) {
+      console.error("[rbac] requireExecutive error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  };
+}

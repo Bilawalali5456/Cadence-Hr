@@ -1,7 +1,13 @@
 import React, { useState } from "react";
-import { Check, X, Send, Trash2 } from "lucide-react";
+import { Send, Trash2 } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, isHrAdminRole, canSelfSubmitLeave, visibleLeaveRequests, canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays, leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision, monthKey } from "../utils.js";
+import {
+  DEFAULT_ANNUAL_LEAVE, isExecutiveRole, canSelfSubmitLeave, visibleLeaveRequests,
+  canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays,
+  leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision, monthKey,
+  monthLabel, countMonthlyAnnualLeaveUsed, monthlyAnnualLeaveLabel, isMonthlyAnnualLeaveMonth,
+  MONTHLY_ANNUAL_LEAVE_LIMIT,
+} from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
@@ -21,6 +27,9 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     : null;
   const visibleReqs = visibleLeaveRequests(requests, currentUser, users, roles);
   const listHasApprovals = visibleReqs.some(r => canChangeLeaveRequestStatus(currentUser, r, users, roles));
+  const formMonth = form.from ? String(form.from).slice(0, 7) : monthKey();
+  const myMonthlyUsed = countMonthlyAnnualLeaveUsed(requests, currentUser.id, formMonth);
+  const myMonthlyLabel = form.type === "Annual" ? monthlyAnnualLeaveLabel(formMonth, myMonthlyUsed) : null;
 
   async function adjustBalanceAndPersist(userId, type, delta) {
     if (type === "Unpaid" || type === "WFH" || delta === 0) return;
@@ -30,7 +39,6 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     try {
       await apiUpdateUser(userId, { leaveBalance: next });
     } catch (e) {
-      // If permissions don’t allow direct user updates yet, we rely on existing App sync.
       console.error("Persist leaveBalance failed:", e.message || e);
     }
   }
@@ -73,9 +81,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
       await apiCreateLeaveRequest(payload);
       setRequests(p => [...p, payload]);
       setForm({ type: "Annual", from: "", to: "", note: "" });
-      setMsg(warn || (isHrAdminRole(currentUser.role)
-        ? "ok:Leave request submitted for executive approval."
-        : "ok:Leave request submitted."));
+      setMsg(warn || "ok:Leave request submitted for executive approval.");
       setTimeout(() => setMsg(""), 6000);
     } catch (e) {
       setMsg(`error:${e.message || e}`);
@@ -87,17 +93,38 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     if (!req || !canChangeLeaveRequestStatus(currentUser, req, users, roles)) return;
     const prev = req.status;
     if (prev === newStatus) return;
+
+    if (newStatus === "approved" && req.type === "Annual") {
+      const month = String(req.from || "").slice(0, 7);
+      const used = req.monthlyAnnualUsed ?? countMonthlyAnnualLeaveUsed(requests, req.userId, month);
+      if (isMonthlyAnnualLeaveMonth(month) && used >= MONTHLY_ANNUAL_LEAVE_LIMIT) {
+        const ok = window.confirm(
+          `${req.empName} has already used ${used}/${MONTHLY_ANNUAL_LEAVE_LIMIT} monthly Annual Leaves (${monthLabel(month)}).\n\n` +
+          `Approving will mark extra day(s) as Absent (leave balance will not be deducted for those days).\n\nContinue?`
+        );
+        if (!ok) return;
+      }
+    }
+
     const paid = leavePaidDays(req);
     const patch = buildApprovalDecision(currentUser, newStatus);
     const nextReq = { ...req, ...patch, status: newStatus };
     const note = buildLeaveStatusNotification(req, newStatus);
-    if (note && setNotifications) setNotifications(prev => [...prev, note]);
+    if (note && setNotifications) setNotifications(prevN => [...prevN, note]);
 
     try {
-      if (newStatus === "approved" && prev !== "approved") await adjustBalanceAndPersist(req.userId, req.type, -paid);
-      if (prev === "approved" && newStatus !== "approved")  await adjustBalanceAndPersist(req.userId, req.type, +paid);
-
-      await apiUpdateLeaveRequest(id, nextReq);
+      const result = await apiUpdateLeaveRequest(id, nextReq);
+      const effectivePaid = result?.paidDays != null ? Number(result.paidDays) : paid;
+      if (newStatus === "approved" && prev !== "approved") {
+        await adjustBalanceAndPersist(req.userId, req.type, -effectivePaid);
+      }
+      if (prev === "approved" && newStatus !== "approved") {
+        await adjustBalanceAndPersist(req.userId, req.type, +paid);
+      }
+      if (result?.warning) {
+        setMsg(`warn:${result.warning}`);
+        setTimeout(() => setMsg(""), 8000);
+      }
       await refreshLeaveData();
     } catch (e) {
       setMsg(`error:${e.message || e}`);
@@ -121,13 +148,22 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
     <div className="space-y-5 max-w-3xl">
       {canSubmit && (
       <>
-      <div className="grid grid-cols-1 gap-3 max-w-xs">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <Card className="p-4">
           <div className="text-xs text-slate-400">Annual leave balance</div>
           <div className="text-2xl font-bold tabular-nums" style={{ color: B.dark }}>
             {available} <span className="text-sm font-normal text-slate-400">of {DEFAULT_ANNUAL_LEAVE} days</span>
           </div>
         </Card>
+        {isMonthlyAnnualLeaveMonth(formMonth) && (
+          <Card className="p-4">
+            <div className="text-xs text-slate-400">Monthly Annual Leave</div>
+            <div className="text-2xl font-bold tabular-nums" style={{ color: B.dark }}>
+              {myMonthlyUsed}<span className="text-sm font-normal text-slate-400"> / {MONTHLY_ANNUAL_LEAVE_LIMIT} used</span>
+            </div>
+            <div className="text-xs text-slate-400 mt-1">{monthLabel(formMonth)}</div>
+          </Card>
+        )}
       </div>
 
       <Card className="p-5">
@@ -142,7 +178,7 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
           <div className="flex items-end">
             <div className="text-xs text-slate-500 pb-2">
               {form.type === "WFH" ? (
-                <>Submit a WFH request for admin approval. Manual check-in is enabled on approved WFH days only.</>
+                <>Submit a WFH request for executive approval. Manual check-in is enabled on approved WFH days only.</>
               ) : (
                 <>Remaining balance: <b style={{ color: B.dark }}>{available} days</b>
                 {previewDays > 0 && <> · Requesting <b>{previewDays}</b> working day{previewDays !== 1 ? "s" : ""}</>}</>
@@ -157,6 +193,12 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none resize-none" />
           </div>
         </div>
+        {myMonthlyLabel && (
+          <div className={`mt-3 p-3 rounded-lg text-xs border ${myMonthlyUsed >= MONTHLY_ANNUAL_LEAVE_LIMIT ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-slate-50 border-slate-200 text-slate-600"}`}>
+            Monthly usage: {myMonthlyLabel}
+            {myMonthlyUsed >= MONTHLY_ANNUAL_LEAVE_LIMIT && " — further Annual Leave days this month may be marked Absent."}
+          </div>
+        )}
         {form.type !== "WFH" && previewSplit?.unpaidDays > 0 && (
           <div className="mt-3 p-3 rounded-lg text-xs bg-amber-50 border border-amber-200 text-amber-800">
             You have insufficient leave balance. {previewSplit.unpaidDays} day{previewSplit.unpaidDays !== 1 ? "s" : ""} will be deducted from your salary as unpaid leave.
@@ -172,20 +214,45 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
       </>
       )}
 
+      {!canSubmit && msg && (
+        <div>
+          {msg.startsWith("error:") && <ErrBox msg={msg.replace("error:", "")} />}
+          {msg.startsWith("warn:") && (
+            <div className="p-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800">{msg.replace("warn:", "")}</div>
+          )}
+        </div>
+      )}
+
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200">
-          <h3 className="text-sm font-semibold" style={{ color: B.dark }}>{listHasApprovals ? "Leave requests" : "My requests"}</h3>
+          <h3 className="text-sm font-semibold" style={{ color: B.dark }}>
+            {listHasApprovals ? "Leave requests" : (isExecutiveRole(currentUser.role) ? "Leave requests" : "My requests")}
+          </h3>
+          {!listHasApprovals && !isExecutiveRole(currentUser.role) && visibleReqs.some(r => r.userId !== currentUser.id) && (
+            <p className="text-xs text-slate-400 mt-0.5">View only — Executives approve leave requests.</p>
+          )}
         </div>
         {visibleReqs.length === 0
           ? <div className="p-8 text-center text-slate-400 text-sm">No leave requests yet.</div>
           : (
             <div className="divide-y divide-slate-100">
-              {visibleReqs.map(r => (
+              {visibleReqs.map(r => {
+                const rMonth = String(r.from || "").slice(0, 7);
+                const used = r.monthlyAnnualUsed ?? countMonthlyAnnualLeaveUsed(requests, r.userId, rMonth);
+                const showMonthly = r.type === "Annual" && isMonthlyAnnualLeaveMonth(rMonth);
+                const atLimit = showMonthly && used >= MONTHLY_ANNUAL_LEAVE_LIMIT;
+                return (
                 <div key={r.id} className="px-5 py-3 flex items-center gap-3 flex-wrap">
                   <Avatar name={r.empName} />
                   <div className="flex-1 min-w-40">
                     <div className="text-sm font-medium text-slate-800">{r.empName}</div>
                     <div className="text-xs text-slate-500">{leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
+                    {showMonthly && (
+                      <div className={`text-xs mt-0.5 ${atLimit ? "text-amber-700 font-medium" : "text-slate-400"}`}>
+                        {monthlyAnnualLeaveLabel(rMonth, used)}
+                        {atLimit && r.status === "pending" ? " — at monthly limit" : ""}
+                      </div>
+                    )}
                     {r.note && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.note}"</div>}
                     <ApprovalReviewMeta req={r} />
                   </div>
@@ -210,7 +277,8 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )
         }

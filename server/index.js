@@ -30,6 +30,11 @@ import { parseShiftHistory } from "./lib/shiftHistory.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
 import {
+  getMonthlyAnnualUsage,
+  isMonthlyAnnualLeaveMonth,
+  MONTHLY_ANNUAL_LEAVE_LIMIT,
+} from "./lib/monthlyAnnualLeave.js";
+import {
   createSession, resolveAuthenticatedUser, extractSessionToken, revokeSession,
   revokeAllUserSessions, cleanupExpiredSessions, startSessionCleanupScheduler,
   createRequireAuth,
@@ -378,7 +383,25 @@ app.get("/api/leave", requireAuth, async (req, res) => {
     const { rows } = canViewAllAttendance(actor.role)
       ? await pool.query(`${LEAVE_SELECT_SQL} ORDER BY lr.id DESC`)
       : await pool.query(`${LEAVE_SELECT_SQL} WHERE lr.user_id = $1 ORDER BY lr.id DESC`, [actor.id]);
-    res.json(rows.map(leaveToJs));
+
+    const usageCache = new Map();
+    const list = [];
+    for (const row of rows) {
+      const js = leaveToJs(row);
+      const monthKey = String(js.from || "").slice(0, 7);
+      if (isMonthlyAnnualLeaveMonth(monthKey) && js.userId) {
+        const cacheKey = `${js.userId}:${monthKey}`;
+        if (!usageCache.has(cacheKey)) {
+          const usage = await getMonthlyAnnualUsage(pool, js.userId, monthKey);
+          usageCache.set(cacheKey, usage.used);
+        }
+        js.monthlyAnnualUsed = usageCache.get(cacheKey);
+        js.monthlyAnnualLimit = MONTHLY_ANNUAL_LEAVE_LIMIT;
+        js.monthlyAnnualMonth = monthKey;
+      }
+      list.push(js);
+    }
+    res.json(list);
   } catch (e) {
     console.error("GET /api/leave error:", e.message);
     res.status(500).json({ error: e.message });

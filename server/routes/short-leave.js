@@ -161,6 +161,15 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
       if (r.reason == null && prev) r.reason = prev.reason;
 
       const newStatus = r.status || "pending";
+      if (
+        (newStatus === "approved" || newStatus === "rejected")
+        && newStatus !== prevStatus
+        && req.authUser.role !== "Executive"
+      ) {
+        await c.query("ROLLBACK").catch(() => {});
+        return res.status(403).json({ error: "Forbidden — only Executive can approve or reject short leave requests" });
+      }
+
       if (newStatus === "approved" || newStatus === "rejected") {
         r.reviewedBy = req.authUser.id;
       } else if (newStatus === "pending") {
