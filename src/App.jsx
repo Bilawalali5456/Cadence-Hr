@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, apiBootstrap, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, SESSION_EXPIRED_EVENT, apiBootstrap, apiHealthCheck, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, applyAutoCheckouts, monthKey } from "./utils.js";
-import { Avatar, Btn, UserDisplayName } from "./components/ui.jsx";
+import { Avatar, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
 import { ForcePasswordChange } from "./pages/ForcePasswordChange.jsx";
@@ -118,12 +118,13 @@ export default function App() {
   });
   const [route,         setRoute]         = useState("home");
   const [roleMenu,      setRoleMenu]      = useState(false);
-  const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | error
+  const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | unavailable
   const [syncBanner,    setSyncBanner]    = useState(null);
   const [badges,        setBadges]        = useState({});
   const loadedRef = useRef(false);
   const ignoreSyncUntilRef = useRef(0);
   const refreshInFlightRef = useRef(null);
+  const bootstrappingRef = useRef(false);
 
   function markRemoteApply() {
     ignoreSyncUntilRef.current = Date.now() + 800;
@@ -131,6 +132,89 @@ export default function App() {
 
   function canFetchUserRoster(role) {
     return hasAdminPortalAccess(role);
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /** Retry /api/health up to 5 times with 3s gaps before giving up. */
+  async function waitForHealth(maxAttempts = 5, delayMs = 3000) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await apiHealthCheck();
+        return true;
+      } catch {
+        if (attempt < maxAttempts) await sleep(delayMs);
+      }
+    }
+    return false;
+  }
+
+  async function applyBootstrapPayload(d) {
+    markRemoteApply();
+    setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
+    setRoles(d.roles || []);
+    setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
+    setUsers(d.currentUser ? [d.currentUser] : []);
+    loadedRef.current = true;
+    setDbStatus("ready");
+    const s = loadSession();
+    if (s?.token) {
+      try {
+        const rosterOk = canFetchUserRoster(d.currentUser?.role);
+        const [us, notifs] = await Promise.all([
+          rosterOk ? apiFetchUsers() : apiFetchUsers({ selfOnly: true }),
+          apiFetchNotifications(),
+        ]);
+        markRemoteApply();
+        setUsers(us);
+        setNotifications(sanitizeNotifications(notifs));
+      } catch (e) {
+        console.error("Post-bootstrap hydrate failed:", e);
+      }
+      await refreshModule("home", d.currentUser?.role);
+    }
+  }
+
+  async function bootstrapApp({ withHealthRetries = true } = {}) {
+    if (bootstrappingRef.current) return false;
+    bootstrappingRef.current = true;
+    try {
+      if (withHealthRetries) {
+        const healthy = await waitForHealth(5, 3000);
+        if (!healthy) return false;
+      } else {
+        try {
+          await apiHealthCheck();
+        } catch {
+          return false;
+        }
+      }
+
+      try {
+        const d = await apiBootstrap();
+        await applyBootstrapPayload(d);
+        return true;
+      } catch (e) {
+        // Expired session: token cleared by api layer — load shell as guest and show login.
+        if (e?.status === 401 || !loadSession()?.token) {
+          try {
+            setSession(null);
+            const d = await apiBootstrap();
+            await applyBootstrapPayload(d);
+            return true;
+          } catch (e2) {
+            console.error("Guest bootstrap failed:", e2);
+            return false;
+          }
+        }
+        console.error("Bootstrap failed:", e);
+        return false;
+      }
+    } finally {
+      bootstrappingRef.current = false;
+    }
   }
 
   /** Refresh only the collections needed for the active tab (no full page reload). */
@@ -243,40 +327,44 @@ export default function App() {
     }
   }
 
-  /* ── Load shell from bootstrap, then hydrate active module ── */
+  /* ── Load shell: health retries → bootstrap; soft recovery on failure ── */
   useEffect(() => {
-    apiBootstrap()
-      .then(async d => {
-        markRemoteApply();
-        setCompany({ ...DEFAULT_COMPANY, ...(d.company || {}) });
-        setRoles(d.roles || []);
-        setHolidays(sanitizeHolidays(d.holidays ?? loadHolidays()));
-        setUsers(d.currentUser ? [d.currentUser] : []);
-        loadedRef.current = true;
-        setDbStatus("ready");
-        const s = loadSession();
-        if (s?.token) {
-          try {
-            const rosterOk = canFetchUserRoster(d.currentUser?.role);
-            const [us, notifs] = await Promise.all([
-              // Employees/Managers: never hit GET /api/users (403 in console).
-              rosterOk ? apiFetchUsers() : apiFetchUsers({ selfOnly: true }),
-              apiFetchNotifications(),
-            ]);
-            markRemoteApply();
-            setUsers(us);
-            setNotifications(sanitizeNotifications(notifs));
-          } catch (e) {
-            console.error("Post-bootstrap hydrate failed:", e);
-          }
-          await refreshModule("home", d.currentUser?.role);
-        }
-      })
-      .catch(e => {
-        console.error("Database connection failed:", e);
-        setDbStatus("error");
-      });
+    let cancelled = false;
+    (async () => {
+      setDbStatus("loading");
+      const ok = await bootstrapApp({ withHealthRetries: true });
+      if (cancelled) return;
+      if (!ok) setDbStatus("unavailable");
+    })();
+    return () => { cancelled = true; };
   }, []);
+
+  /* ── Session expired (401): clear UI session → login, no error screen ── */
+  useEffect(() => {
+    function onSessionExpired() {
+      setSession(null);
+      setRoute("home");
+      setRoleMenu(false);
+      setBadges({});
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+  }, []);
+
+  /* ── While unavailable: quiet background recovery every 10s ── */
+  useEffect(() => {
+    if (dbStatus !== "unavailable") return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      const ok = await bootstrapApp({ withHealthRetries: false });
+      if (cancelled) return;
+      if (ok) setDbStatus("ready");
+    }, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [dbStatus]);
 
   /* ── On tab change (and after DB ready): fetch that module's APIs ── */
   useEffect(() => {
@@ -418,39 +506,39 @@ export default function App() {
     setUsers(us => us.map(u => u.id === session.userId ? { ...u, firstLogin: false, tempPassword: undefined, password: undefined } : u));
   }
 
-  /* ── Database status screens ── */
+  /* ── Loading / soft-unavailable screens (never show technical DB errors) ── */
   if (dbStatus === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: B.dark }}>
-        <div className="text-center">
+        <div className="text-center px-6">
           <AdforceLogo boxWidth={200} boxHeight={80} align="center" className="mx-auto" />
           <div className="mt-6 flex items-center justify-center gap-2 text-white/70 text-sm">
             <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-            Connecting to database...
+            Loading Cadence HR...
           </div>
         </div>
       </div>
     );
   }
 
-  if (dbStatus === "error") {
+  if (dbStatus === "unavailable") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4" style={{ background: B.dark }}>
-        <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl p-8">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: B.redLight }}>
-              <AlertTriangle size={20} style={{ color: B.red }} />
-            </div>
-            <h2 className="text-lg font-bold" style={{ color: B.dark }}>Cannot connect to database</h2>
-          </div>
-          <p className="text-sm text-slate-600 mb-4">The app could not reach the backend server. Make sure it is running:</p>
-          <div className="p-4 rounded-lg bg-slate-900 text-emerald-400 text-xs font-mono space-y-1 mb-4">
-            <div># In a separate terminal:</div>
-            <div>cd server</div>
-            <div>npm run dev</div>
-          </div>
-          <p className="text-xs text-slate-400 mb-4">Also check PostgreSQL is running (Windows Services → postgresql) and server/.env has the correct password.</p>
-          <Btn onClick={() => window.location.reload()}><RefreshCw size={14} />Retry connection</Btn>
+        <div className="w-full max-w-md text-center px-6">
+          <AdforceLogo boxWidth={180} boxHeight={72} align="center" className="mx-auto" />
+          <p className="mt-8 text-white text-base font-medium leading-relaxed">
+            Cadence HR is temporarily unavailable. Please try again in a few minutes.
+          </p>
+          <p className="mt-3 text-white/50 text-xs">Checking again automatically…</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-8 inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold text-white"
+            style={{ background: B.red }}
+          >
+            <RefreshCw size={14} />
+            Refresh
+          </button>
         </div>
       </div>
     );

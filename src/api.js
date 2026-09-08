@@ -3,6 +3,7 @@ import { monthKey } from "./utils.js";
 export const API_URL = "/api";
 export const SESSION_STORAGE_KEY = "adforce-hr-session"; // login session stays in browser
 export const HOLIDAYS_STORAGE_KEY = "adforce-hr-holidays";
+export const SESSION_EXPIRED_EVENT = "cadence:session-expired";
 
 /** Auth headers for API calls. Sends Bearer + X-Session-Token (nginx often strips Authorization). */
 function authHeaders() {
@@ -20,12 +21,37 @@ function authHeaders() {
   }
 }
 
+/** Clear stored session and notify App to show login (no error screens). */
+export function clearSessionAndRedirectToLogin() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+  }
+}
+
+function shouldTreatAsSessionExpired(url, status) {
+  if (status !== 401) return false;
+  const path = String(url || "");
+  // Login failures must not clear session / redirect
+  if (path.includes("/login")) return false;
+  return true;
+}
+
 /** Same-origin fetch that always sends cookies (session cookie backup). */
 function apiFetch(url, options = {}) {
   return fetch(url, {
     ...options,
     credentials: "include",
     headers: { ...(options.headers || {}) },
+  }).then((res) => {
+    if (shouldTreatAsSessionExpired(url, res.status)) {
+      clearSessionAndRedirectToLogin();
+    }
+    return res;
   });
 }
 
@@ -35,8 +61,22 @@ export function persistSessionToken(userId, token) {
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ userId, token }));
 }
 
+/** Lightweight DB/API liveness check. */
+export async function apiHealthCheck() {
+  const res = await apiFetch(`${API_URL}/health?v=${Date.now()}`);
+  if (!res.ok) throw new Error("Health check failed");
+  const data = await res.json().catch(() => ({}));
+  if (data && data.ok === false) throw new Error(data.error || "Database unavailable");
+  return data;
+}
+
 export async function apiBootstrap() {
   const res = await apiFetch(`${API_URL}/bootstrap?v=${Date.now()}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    const err = new Error("Session expired");
+    err.status = 401;
+    throw err;
+  }
   if (!res.ok) throw new Error("API error " + res.status);
   return res.json();
 }
