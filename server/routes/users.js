@@ -84,23 +84,34 @@ async function applyTeamLeadFields(pool, userId, body, { canHr }) {
     : (body.team_lead_id !== undefined ? (body.team_lead_id || null) : undefined);
 
   const { rows } = await pool.query(
-    `SELECT is_team_lead, team_lead_id FROM users WHERE id = $1 LIMIT 1`,
+    `SELECT role, is_team_lead, team_lead_id FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
   if (!rows[0]) return;
 
+  const role = String(rows[0].role || "");
+  const canBeTeamLead = role === "Employee" || role === "Executive" || role === "Manager";
+
   const nextIsTl = isTeamLead !== undefined ? isTeamLead : !!rows[0].is_team_lead;
   let nextTlId = teamLeadId !== undefined ? teamLeadId : (rows[0].team_lead_id || null);
+
+  if (nextIsTl && !canBeTeamLead) {
+    throw new Error("Only Employee or Executive can be marked as Team Lead");
+  }
   if (nextIsTl) nextTlId = null; // Team Leads are not assigned under another TL
   if (nextTlId && String(nextTlId) === String(userId)) nextTlId = null;
 
   if (nextTlId) {
     const { rows: tlRows } = await pool.query(
-      `SELECT id FROM users WHERE id = $1 AND COALESCE(is_team_lead, false) = true LIMIT 1`,
+      `SELECT id, role FROM users
+       WHERE id = $1
+         AND COALESCE(is_team_lead, false) = true
+         AND role IN ('Employee', 'Executive', 'Manager')
+       LIMIT 1`,
       [nextTlId]
     );
     if (!tlRows[0]) {
-      throw new Error("Assigned Team Lead must be a user marked as Team Lead");
+      throw new Error("Assigned Team Lead must be an Employee or Executive marked as Team Lead");
     }
   }
 

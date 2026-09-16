@@ -192,13 +192,19 @@ export function registerTeamMembersRoutes(app, pool, requireAuth) {
       let rows;
 
       if (actor.role === "Executive" || actor.role === "HR Employee") {
+        // All team leads (Employee + Executive) and their assigned members.
         const { rows: all } = await pool.query(
           `SELECT m.id, m.name, m.email, m.role, m.designation, m.dept, m.team, m.status,
                   m.is_team_lead, m.team_lead_id, tl.name AS team_lead_name
            FROM users m
            LEFT JOIN users tl ON tl.id = m.team_lead_id
            WHERE m.status = 'active'
-             AND m.role NOT IN ('Admin', 'HR Admin', 'Executive')
+             AND m.role NOT IN ('Admin', 'HR Admin')
+             AND (
+               COALESCE(m.is_team_lead, false) = true
+               OR m.team_lead_id IS NOT NULL
+               OR m.role IN ('Employee', 'Manager', 'HR Employee')
+             )
            ORDER BY tl.name NULLS LAST, m.name`
         );
         rows = all;

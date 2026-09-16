@@ -58,7 +58,12 @@ export function PeoplePage({
   const [form, setForm] = useState(blank);
 
   const roster = peopleRoster(users, currentUser.role);
-  const teamLeadOptions = roster.filter(u => u.isTeamLead && u.status === "active");
+  // Include Employee and Executive Team Leads (Executives are outside peopleRoster).
+  const teamLeadOptions = (users || []).filter(u =>
+    u.isTeamLead
+    && u.status === "active"
+    && (u.role === "Employee" || u.role === "Executive" || u.role === "Manager")
+  );
   const list = sortHrAdminFirst(roster.filter(u =>
     (u.name + u.email + u.dept + u.role).toLowerCase().includes(q.toLowerCase())
   ));
@@ -66,14 +71,20 @@ export function PeoplePage({
   function teamLeadNameFor(u) {
     if (u.isTeamLead) return "— (Team Lead)";
     if (!u.teamLeadId) return "—";
-    return users.find(x => x.id === u.teamLeadId)?.name || "—";
+    const tl = users.find(x => x.id === u.teamLeadId);
+    if (!tl) return "—";
+    return tl.role === "Executive" ? `${tl.name} (Executive)` : tl.name;
   }
 
   const teamOverview = (() => {
-    const leads = roster.filter(u => u.isTeamLead && u.status === "active");
+    const leads = (users || []).filter(u =>
+      u.isTeamLead
+      && u.status === "active"
+      && (u.role === "Employee" || u.role === "Executive" || u.role === "Manager")
+    );
     return leads.map(tl => ({
       lead: tl,
-      members: roster.filter(m => m.teamLeadId === tl.id && m.status === "active"),
+      members: (users || []).filter(m => m.teamLeadId === tl.id && m.status === "active"),
     }));
   })();
 
@@ -402,6 +413,7 @@ export function PeoplePage({
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm font-medium text-slate-800">{lead.name}</span>
                   <Pill tone="blue">Team Lead</Pill>
+                  {lead.role === "Executive" && <Pill tone="dark">Executive</Pill>}
                   <span className="text-xs text-slate-400">{members.length} member{members.length !== 1 ? "s" : ""}</span>
                 </div>
                 {members.length === 0 ? (

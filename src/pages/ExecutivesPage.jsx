@@ -35,7 +35,7 @@ export function ExecutivesPage({
   const [pageOk, setPageOk] = useState("");
   const [pageErr, setPageErr] = useState("");
   const [delBusy, setDelBusy] = useState(false);
-  const blank = { name: "", email: "", phone: "", title: "CEO", password: "", status: "active" };
+  const blank = { name: "", email: "", phone: "", title: "CEO", password: "", status: "active", isTeamLead: false };
   const [form, setForm] = useState(blank);
 
   const executives = users.filter(u => u.role === "Executive");
@@ -44,7 +44,20 @@ export function ExecutivesPage({
   );
 
   function openAdd() { setForm(blank); setFerr(""); setAddOpen(true); }
-  function openEdit(u) { setEditTgt(u); setForm({ name: u.name, email: u.email, phone: u.phone || "", title: u.title || "CEO", password: "", status: u.status || "active" }); setFerr(""); setEditOpen(true); }
+  function openEdit(u) {
+    setEditTgt(u);
+    setForm({
+      name: u.name,
+      email: u.email,
+      phone: u.phone || "",
+      title: u.title || "CEO",
+      password: "",
+      status: u.status || "active",
+      isTeamLead: !!u.isTeamLead,
+    });
+    setFerr("");
+    setEditOpen(true);
+  }
   function openDel(u) { setDelTgt(u); setDelOpen(true); }
   function openReset(u) { setResetTgt(u); setResetResult(""); setResetOpen(true); }
 
@@ -70,6 +83,8 @@ export function ExecutivesPage({
       leaveBalance: 0,
       skills: [],
       firstLogin: true,
+      isTeamLead: !!form.isTeamLead,
+      teamLeadId: null,
     };
     setEmailSending(true);
     setFerr("");
@@ -109,6 +124,8 @@ export function ExecutivesPage({
         phone: form.phone.trim(),
         title: form.title,
         status: form.status,
+        isTeamLead: !!form.isTeamLead,
+        teamLeadId: null,
         ...(form.password ? { password: form.password, firstLogin: false } : {}),
       };
       const updated = await apiUpdateUser(editTgt.id, patch);
@@ -219,7 +236,10 @@ export function ExecutivesPage({
                   <div className="flex items-center gap-3">
                     <Avatar name={u.name} />
                     <div>
-                      <div className="font-medium text-slate-800">{u.name}</div>
+                      <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
+                        {u.name}
+                        {u.isTeamLead && <Pill tone="blue">Team Lead</Pill>}
+                      </div>
                       <div className="text-xs text-slate-400">{u.email}</div>
                     </div>
                   </div>
@@ -261,6 +281,15 @@ export function ExecutivesPage({
             <TextInput label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} required Icon={Mail} />
             <SelectInput label="Position / role" value={form.title} onChange={v => setForm({ ...form, title: v })}
               options={EXECUTIVE_POSITIONS.map(p => ({ value: p, label: p }))} required />
+            <SelectInput
+              label="Team Lead"
+              value={form.isTeamLead ? "yes" : "no"}
+              onChange={v => setForm({ ...form, isTeamLead: v === "yes" })}
+              options={[
+                { value: "no", label: "No" },
+                { value: "yes", label: "Yes" },
+              ]}
+            />
             <div className="col-span-2">
               <PwInput label="Login password" value={form.password} onChange={v => setForm({ ...form, password: v })} placeholder="Min. 8 characters" />
             </div>
@@ -286,6 +315,15 @@ export function ExecutivesPage({
               options={EXECUTIVE_POSITIONS.map(p => ({ value: p, label: p }))} required />
             <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
               options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
+            <SelectInput
+              label="Team Lead"
+              value={form.isTeamLead ? "yes" : "no"}
+              onChange={v => setForm({ ...form, isTeamLead: v === "yes" })}
+              options={[
+                { value: "no", label: "No" },
+                { value: "yes", label: "Yes" },
+              ]}
+            />
             <div className="col-span-2">
               <PwInput label="New password (optional)" value={form.password} onChange={v => setForm({ ...form, password: v })} placeholder="Leave blank to keep current" />
             </div>

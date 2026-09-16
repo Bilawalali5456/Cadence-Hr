@@ -7,7 +7,7 @@ import { B } from "../brand.jsx";
 import {
   DEFAULT_ANNUAL_LEAVE, employeeRoster, isLateCheckIn, isNonWorkingDay,
   enumerateWorkingDays, todayKey, monthKey, monthLabel, leavePaidDays, leaveUnpaidDays,
-  isExecutiveRole,
+  isExecutiveRole, isTeamLeadUser,
 } from "../utils.js";
 import { Card, STitle, Pill, Avatar, SelectInput } from "../components/ui.jsx";
 import { apiFetchWeeklyReports, apiFetchTeamMembers } from "../api.js";
@@ -106,7 +106,21 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
   const [teamMembers, setTeamMembers] = useState([]);
   const weeks = useMemo(() => weekOptions(16), []);
   const showExecExtras = isExecutiveRole(currentUser?.role);
+  const isExecTl = showExecExtras && isTeamLeadUser(currentUser);
+  const myTeamIds = useMemo(
+    () => new Set((users || []).filter(u => u.teamLeadId === currentUser?.id).map(u => u.id)),
+    [users, currentUser?.id]
+  );
   const tabs = showExecExtras ? TABS : TABS.filter(t => t !== "Weekly Reports" && t !== "Teams");
+
+  const myTeamReports = useMemo(
+    () => (isExecTl ? weeklyReports.filter(r => myTeamIds.has(r.employeeId)) : []),
+    [isExecTl, weeklyReports, myTeamIds]
+  );
+  const otherWeeklyReports = useMemo(
+    () => (isExecTl ? weeklyReports.filter(r => !myTeamIds.has(r.employeeId)) : weeklyReports),
+    [isExecTl, weeklyReports, myTeamIds]
+  );
 
   useEffect(() => {
     if (!showExecExtras) return;
@@ -615,15 +629,51 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
           <Card className="p-4 max-w-sm">
             <SelectInput label="Week (Monday start)" value={week} onChange={setWeek} options={weeks} />
           </Card>
+
+          {isExecTl && (
+            <Card className="overflow-hidden border-sky-200">
+              <div className="px-5 py-3 border-b border-sky-100 bg-sky-50">
+                <STitle>My Team reports</STitle>
+                <p className="text-xs text-slate-500 mt-0.5">Weekly reports from members assigned to you</p>
+              </div>
+              {myTeamReports.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-400">No reports from your team this week.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {myTeamReports.map(r => (
+                    <div key={r.id} className="px-5 py-4 bg-sky-50/40">
+                      <div className="flex items-center gap-3 mb-2">
+                        <Avatar name={r.employeeName || "?"} />
+                        <div>
+                          <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+                            {r.employeeName}
+                            <Pill tone="blue">My Team</Pill>
+                          </div>
+                          <div className="text-xs text-slate-400">
+                            {r.weekStart} → {r.weekEnd}
+                            {r.submittedAt ? ` · ${new Date(r.submittedAt).toLocaleString()}` : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-sm text-slate-700 whitespace-pre-wrap pl-11">{r.reportText}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+
           <Card className="overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-200">
-              <STitle>All weekly reports</STitle>
+              <STitle>{isExecTl ? "All other weekly reports" : "All weekly reports"}</STitle>
             </div>
-            {weeklyReports.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-400">No reports for this week.</div>
+            {otherWeeklyReports.length === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-400">
+                {weeklyReports.length === 0 ? "No reports for this week." : "No other reports this week."}
+              </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {weeklyReports.map(r => (
+                {otherWeeklyReports.map(r => (
                   <div key={r.id} className="px-5 py-4">
                     <div className="flex items-center gap-3 mb-2">
                       <Avatar name={r.employeeName || "?"} />
@@ -658,7 +708,7 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
               } else if (m.teamLeadId) {
                 if (!leads[m.teamLeadId]) {
                   leads[m.teamLeadId] = {
-                    lead: { id: m.teamLeadId, name: m.teamLeadName || "Team Lead" },
+                    lead: { id: m.teamLeadId, name: m.teamLeadName || "Team Lead", role: "" },
                     members: [],
                   };
                 }
@@ -671,21 +721,26 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
             }
             return (
               <div className="divide-y divide-slate-100">
-                {groups.map(({ lead, members }) => (
-                  <div key={lead.id} className="px-5 py-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Avatar name={lead.name} />
-                      <div className="text-sm font-medium text-slate-800">{lead.name}</div>
-                      <Pill tone="blue">Team Lead</Pill>
-                      <span className="text-xs text-slate-400">{members.length} members</span>
+                {groups.map(({ lead, members }) => {
+                  const isMine = isExecTl && lead.id === currentUser?.id;
+                  return (
+                    <div key={lead.id} className={`px-5 py-4 ${isMine ? "bg-sky-50/60" : ""}`}>
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <Avatar name={lead.name} />
+                        <div className="text-sm font-medium text-slate-800">{lead.name}</div>
+                        <Pill tone="blue">Team Lead</Pill>
+                        {lead.role === "Executive" && <Pill tone="dark">Executive</Pill>}
+                        {isMine && <Pill tone="green">My Team</Pill>}
+                        <span className="text-xs text-slate-400">{members.length} members</span>
+                      </div>
+                      {members.length === 0 ? (
+                        <div className="text-xs text-slate-400 pl-11">No members</div>
+                      ) : (
+                        <div className="pl-11 text-sm text-slate-600">{members.map(x => x.name).join(", ")}</div>
+                      )}
                     </div>
-                    {members.length === 0 ? (
-                      <div className="text-xs text-slate-400 pl-11">No members</div>
-                    ) : (
-                      <div className="pl-11 text-sm text-slate-600">{members.map(x => x.name).join(", ")}</div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })()}

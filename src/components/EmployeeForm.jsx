@@ -105,7 +105,14 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700">{form.role || "Admin"}</div>
           </div>
         ) : (
-          <SelectInput label="Role" value={form.role} onChange={v => setForm({ ...form, role: v, designation: v === "Employee" ? (form.designation || "") : "" })}
+          <SelectInput label="Role" value={form.role} onChange={v => setForm({
+            ...form,
+            role: v,
+            designation: v === "Employee" ? (form.designation || "") : "",
+            // Admin / HR Employee cannot be Team Lead
+            isTeamLead: (v === "Employee" || v === "Executive") ? !!form.isTeamLead : false,
+            teamLeadId: (v === "Employee" || v === "Executive") && !form.isTeamLead ? (form.teamLeadId || null) : null,
+          })}
             options={roleOptions || [
               { value: "Employee", label: "Employee" },
               { value: "HR Employee", label: "HR Employee" },
@@ -124,20 +131,22 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
         <TextInput label="Salary"    value={form.salary}  onChange={v => setForm({ ...form, salary: v })}  placeholder="e.g. 80,000 PKR" />
         <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
           options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
-        <SelectInput
-          label="Team Lead"
-          value={form.isTeamLead ? "yes" : "no"}
-          onChange={v => setForm({
-            ...form,
-            isTeamLead: v === "yes",
-            teamLeadId: v === "yes" ? null : (form.teamLeadId || null),
-          })}
-          options={[
-            { value: "no", label: "No" },
-            { value: "yes", label: "Yes" },
-          ]}
-        />
-        {!form.isTeamLead && (
+        {(form.role === "Employee" || form.role === "Executive") && (
+          <SelectInput
+            label="Team Lead"
+            value={form.isTeamLead ? "yes" : "no"}
+            onChange={v => setForm({
+              ...form,
+              isTeamLead: v === "yes",
+              teamLeadId: v === "yes" ? null : (form.teamLeadId || null),
+            })}
+            options={[
+              { value: "no", label: "No" },
+              { value: "yes", label: "Yes" },
+            ]}
+          />
+        )}
+        {(form.role === "Employee" || form.role === "Executive") && !form.isTeamLead && (
           <SelectInput
             label="Assigned Team Lead"
             value={form.teamLeadId || ""}
@@ -146,7 +155,10 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
               { value: "", label: "— None —" },
               ...(teamLeadOptions || [])
                 .filter(u => u.id !== form.id)
-                .map(u => ({ value: u.id, label: u.name })),
+                .map(u => ({
+                  value: u.id,
+                  label: u.role === "Executive" ? `${u.name} (Executive)` : u.name,
+                })),
             ]}
           />
         )}
