@@ -9,7 +9,6 @@ import {
   computeBiometricDayStatus,
 } from "../lib/attendanceSync.js";
 import { reconcileLatePenaltiesForEmployeeMonth, reconcileLatePenaltiesForRange } from "../lib/latePenalties.js";
-import { syncOvertimeForAttendance, syncOvertimeForRange } from "../lib/overtime.js";
 
 /**
  * Short-leave ms overlapping [checkIn, checkOut] only.
@@ -437,21 +436,6 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
     }
 
     await reconcileLatePenaltiesForEmployeeMonth(c, userId, dateKey.slice(0, 7));
-
-    const checkOutFinal = checkOut || null;
-    if (checkOutFinal) {
-      const { rows: userRows } = await c.query(
-        `SELECT id, name, role, shift, status FROM users WHERE id = $1 LIMIT 1`,
-        [userId]
-      );
-      if (userRows[0]) {
-        await syncOvertimeForAttendance(c, {
-          user_id: userId,
-          date: dateKey,
-          check_out: checkOutFinal,
-        }, userRows[0]);
-      }
-    }
   }
 
   app.post("/api/attendance", requireHrAdmin, async (req, res) => {
@@ -562,11 +546,6 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
           await reconcileLatePenaltiesForRange(pool, dateFrom, dateTo, userIds);
         } catch (penErr) {
           console.error("GET /api/attendance late-penalty reconcile warning:", penErr.message);
-        }
-        try {
-          await syncOvertimeForRange(pool, dateFrom, dateTo, userIds);
-        } catch (otErr) {
-          console.error("GET /api/attendance overtime sync warning:", otErr.message);
         }
       }
 
@@ -841,7 +820,6 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
 
       const monthKey = attendanceDate.slice(0, 7);
       await reconcileLatePenaltiesForEmployeeMonth(pool, actor.id, monthKey);
-      await syncOvertimeForAttendance(pool, updated[0], dbUser);
 
       res.json(attToJs(updated[0]));
     } catch (e) {
