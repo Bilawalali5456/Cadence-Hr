@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Search, X, AlertTriangle, UserPlus, Trash2, Edit2, Eye, Save, Phone, Mail, RefreshCw, Check } from "lucide-react";
 import { B } from "../brand.jsx";
 import { apiSendCredentials, apiSendWarningEmail, apiDeleteEmployee, purgeEmployeeClientState, apiCreateUser, apiUpdateUser, apiDeleteLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning } from "../api.js";
-import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule, shiftConfigEqual } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, DEFAULT_WEEKLY_SCHEDULE, SHIFT_WEEKDAYS, SHIFT_DAY_LABELS, can, isStaffRole, isHrAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, canManageHrAdmin, canEditPerson, canDeletePerson, canResetPersonCredentials, sortHrAdminFirst, peopleRoster, getUserShift, formatShiftRange, formatDayScheduleLine, buildShiftFromForm, formatDurationMs, calcTotalBreakMs, isLateCheckIn, resolveDayStatus, dayStatusPill, removeShortLeaveFromAttendance, displayWorkingHours, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, genId, genTempPw, normalizeCnic, isValidCnic, encryptSensitive, getUserCnic, cnicDigitsForUser, monthLabel, normalizeWeeklySchedule, shiftConfigEqual, isManagerDesignation } from "../utils.js";
 import { Pill, Avatar, Card, Modal, TextInput, Btn, OkBox, ErrBox, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge } from "../components/ApprovalControls.jsx";
 import { buildWarningNotification } from "../notifications.js";
@@ -53,13 +53,29 @@ export function PeoplePage({
     guardianName: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 20,
     weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
+    isTeamLead: false, teamLeadId: null,
   };
   const [form, setForm] = useState(blank);
 
   const roster = peopleRoster(users, currentUser.role);
+  const teamLeadOptions = roster.filter(u => u.isTeamLead && u.status === "active");
   const list = sortHrAdminFirst(roster.filter(u =>
     (u.name + u.email + u.dept + u.role).toLowerCase().includes(q.toLowerCase())
   ));
+
+  function teamLeadNameFor(u) {
+    if (u.isTeamLead) return "— (Team Lead)";
+    if (!u.teamLeadId) return "—";
+    return users.find(x => x.id === u.teamLeadId)?.name || "—";
+  }
+
+  const teamOverview = (() => {
+    const leads = roster.filter(u => u.isTeamLead && u.status === "active");
+    return leads.map(tl => ({
+      lead: tl,
+      members: roster.filter(m => m.teamLeadId === tl.id && m.status === "active"),
+    }));
+  })();
 
   function openAdd()    { setForm(structuredClone(blank)); setFerr(""); setPageErr(""); setAddOpen(true); }
   function openEdit(u) {
@@ -74,6 +90,8 @@ export function PeoplePage({
       breakMinutes: s.breakMinutes,
       checkoutGraceMinutes: s.checkoutGraceMinutes,
       weeklySchedule: normalizeWeeklySchedule(u.shift || {}),
+      isTeamLead: !!u.isTeamLead,
+      teamLeadId: u.teamLeadId || null,
     });
     setFerr("");
     setEditOpen(true);
@@ -102,6 +120,8 @@ export function PeoplePage({
     const { cnic, graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule, shiftId, maritalStatus, designation: _d, ...rest } = form;
     const newUser = {
       ...rest, name: form.name.trim(), email, role, designation,
+      isTeamLead: !!form.isTeamLead,
+      teamLeadId: form.isTeamLead ? null : (form.teamLeadId || null),
       cnicEnc: encryptSensitive(cnicDigits),
       shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
       shiftId: null,
@@ -156,6 +176,8 @@ export function PeoplePage({
       ...rest,
       role: isHrAdminRole(editTgt.role) ? "Admin" : rest.role,
       designation: rest.role === "Employee" ? String(designation || "").trim() : "",
+      isTeamLead: !!form.isTeamLead,
+      teamLeadId: form.isTeamLead ? null : (form.teamLeadId || null),
       cnicEnc: encryptSensitive(cnicDigits),
       shift: newShift,
       shiftId: null,
@@ -368,6 +390,31 @@ export function PeoplePage({
       {pageOk && <div className="mb-4"><OkBox msg={pageOk} /></div>}
       {pageErr && <div className="mb-4"><ErrBox msg={pageErr} /></div>}
 
+      {canManage && teamOverview.length > 0 && (
+        <Card className="mb-4 overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200">
+            <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Team overview</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Team Leads and their assigned members</p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {teamOverview.map(({ lead, members }) => (
+              <div key={lead.id} className="px-5 py-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-medium text-slate-800">{lead.name}</span>
+                  <Pill tone="blue">Team Lead</Pill>
+                  <span className="text-xs text-slate-400">{members.length} member{members.length !== 1 ? "s" : ""}</span>
+                </div>
+                {members.length === 0 ? (
+                  <div className="text-xs text-slate-400 pl-1">No members assigned yet.</div>
+                ) : (
+                  <div className="text-xs text-slate-600 pl-1">{members.map(m => m.name).join(", ")}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {readOnly && (
         <div className="mb-4 p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
           <Eye size={16} className="mt-0.5 shrink-0" />
@@ -390,7 +437,8 @@ export function PeoplePage({
             <tr className="text-left text-xs text-slate-400 border-b border-slate-200 bg-slate-50">
               <th className="px-4 py-2.5 font-medium">Employee</th>
               <th className="px-4 py-2.5 font-medium hidden md:table-cell">Role</th>
-              <th className="px-4 py-2.5 font-medium hidden lg:table-cell">Shift</th>
+              <th className="px-4 py-2.5 font-medium hidden lg:table-cell">Team Lead</th>
+              <th className="px-4 py-2.5 font-medium hidden xl:table-cell">Shift</th>
               <th className="px-4 py-2.5 font-medium hidden sm:table-cell">Today</th>
               <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr>
@@ -408,9 +456,16 @@ export function PeoplePage({
                   </button>
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  <Pill tone={u.role === "Admin" ? "dark" : "slate"}>{u.role}</Pill>
+                  <div className="flex flex-wrap gap-1">
+                    <Pill tone={u.role === "Admin" ? "dark" : "slate"}>{u.role}</Pill>
+                    {u.isTeamLead && <Pill tone="blue">Team Lead</Pill>}
+                    {isManagerDesignation(u) && <Pill tone="purple">Manager</Pill>}
+                  </div>
                 </td>
-                <td className="px-4 py-3 hidden lg:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
+                <td className="px-4 py-3 hidden lg:table-cell text-slate-600 text-xs">
+                  {u.isTeamLead ? <span className="text-slate-400">—</span> : teamLeadNameFor(u)}
+                </td>
+                <td className="px-4 py-3 hidden xl:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {(() => {
                     if (!hasOwnAttendance(u.role)) return <span className="text-slate-400">—</span>;
@@ -449,7 +504,7 @@ export function PeoplePage({
               </tr>
             ))}
             {list.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">No employees found.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">No employees found.</td></tr>
             )}
           </tbody>
         </table>
@@ -457,7 +512,7 @@ export function PeoplePage({
 
       {/* Add */}
       <Modal open={addOpen} onClose={() => !emailSending && setAddOpen(false)} title="Add new employee" wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} roleOptions={formRoleOptions} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} roleOptions={formRoleOptions} teamLeadOptions={teamLeadOptions} />
         <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: B.darkLight, color: B.dark }}>
           A temporary password will be generated and emailed to the work address above (login URL: https://hrms.adforcesolutions.com). They must change it on first login.
         </div>
@@ -470,7 +525,7 @@ export function PeoplePage({
 
       {/* Edit */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={isHrAdminRole(editTgt?.role) ? "Edit Admin" : "Edit employee"} wide>
-        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} roleOptions={formRoleOptions} />
+        <EmployeeForm form={form} setForm={setForm} ferr={ferr} lockRole={isHrAdminRole(editTgt?.role)} roleOptions={formRoleOptions} teamLeadOptions={teamLeadOptions} />
         <div className="flex gap-2 mt-4">
           <Btn onClick={saveEdit}><Save size={14} />Save changes</Btn>
           <Btn variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Btn>
@@ -570,7 +625,7 @@ export function PeoplePage({
             <div className="flex-1 overflow-y-auto p-5 text-sm">
               {selTab === "Overview" && (
                 <div className="space-y-3">
-                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Role", sel.role], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
+                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Role", sel.role], ["Team Lead", sel.isTeamLead ? "Yes" : "No"], ["Assigned Team Lead", sel.isTeamLead ? "—" : teamLeadNameFor(sel)], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-slate-50 pb-2">
                       <span className="text-slate-400">{k}</span>
                       <span className="font-medium text-slate-800">{v}</span>

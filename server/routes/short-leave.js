@@ -1,4 +1,9 @@
 import { HR_OPS_ROLES } from "../lib/rbac.js";
+import {
+  notifyShortLeaveSubmitted,
+  notifyShortLeaveDecision,
+  fetchUserName,
+} from "../lib/notify.js";
 
 function isHr(role) {
   return HR_OPS_ROLES.includes(role);
@@ -122,7 +127,14 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
         await c.query("ROLLBACK").catch(() => {});
         return res.status(403).json({ error: "Forbidden — cannot submit for other user" });
       }
+      if (!r.empName && r.userId) {
+        r.empName = await fetchUserName(c, r.userId);
+      }
       await upsertShortLeave(c, r);
+      const status = String(r.status || "pending").toLowerCase();
+      if (status === "pending") {
+        await notifyShortLeaveSubmitted(c, r);
+      }
       await c.query("COMMIT");
       res.json({ ok: true });
     } catch (e) {
@@ -186,6 +198,16 @@ export function registerShortLeaveRoutes(app, pool, requireAuth, requireHrAdmin)
           userId: r.userId || prev?.user_id,
           date: r.date || prev?.date,
         });
+      }
+
+      if (
+        (newStatus === "approved" || newStatus === "rejected")
+        && newStatus !== prevStatus
+      ) {
+        if (!r.empName) {
+          r.empName = await fetchUserName(c, r.userId || prev?.user_id);
+        }
+        await notifyShortLeaveDecision(c, r, newStatus);
       }
 
       await c.query("COMMIT");

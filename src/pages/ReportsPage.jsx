@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend,
@@ -7,16 +7,44 @@ import { B } from "../brand.jsx";
 import {
   DEFAULT_ANNUAL_LEAVE, employeeRoster, isLateCheckIn, isNonWorkingDay,
   enumerateWorkingDays, todayKey, monthKey, monthLabel, leavePaidDays, leaveUnpaidDays,
+  isExecutiveRole,
 } from "../utils.js";
-import { Card, STitle, Pill } from "../components/ui.jsx";
+import { Card, STitle, Pill, Avatar, SelectInput } from "../components/ui.jsx";
+import { apiFetchWeeklyReports, apiFetchTeamMembers } from "../api.js";
 
 const PIE_COLORS = ["#001520", "#c70b07", "#0f4c75", "#16a34a", "#eab308", "#8b5cf6", "#ec4899"];
-const TABS = ["Attendance", "Leave", "Headcount", "Payroll"];
+const TABS = ["Attendance", "Leave", "Headcount", "Payroll", "Weekly Reports", "Teams"];
 const RANGE_OPTS = [
   { id: "this", label: "This Month" },
   { id: "last", label: "Last Month" },
   { id: "last3", label: "Last 3 Months" },
 ];
+
+function mondayOfWeek(d = new Date()) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  return x.toISOString().slice(0, 10);
+}
+
+function fridayOfWeek(mondayKey) {
+  const x = new Date(`${mondayKey}T12:00:00`);
+  x.setDate(x.getDate() + 4);
+  return x.toISOString().slice(0, 10);
+}
+
+function weekOptions(count = 12) {
+  const opts = [];
+  let cur = mondayOfWeek();
+  for (let i = 0; i < count; i++) {
+    opts.push({ value: cur, label: `${cur} → ${fridayOfWeek(cur)}` });
+    const d = new Date(`${cur}T12:00:00`);
+    d.setDate(d.getDate() - 7);
+    cur = d.toISOString().slice(0, 10);
+  }
+  return opts;
+}
 
 function EmptyState({ msg = "No data available for this period" }) {
   return (
@@ -70,9 +98,38 @@ function ChartTooltip({ active, payload, label, suffix = "" }) {
   );
 }
 
-export function ReportsPage({ users = [], attendance = [], leaveRequests = [], payroll = [], holidays = [] }) {
+export function ReportsPage({ users = [], attendance = [], leaveRequests = [], payroll = [], holidays = [], currentUser = null }) {
   const [tab, setTab] = useState("Attendance");
   const [range, setRange] = useState("this");
+  const [week, setWeek] = useState(mondayOfWeek());
+  const [weeklyReports, setWeeklyReports] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const weeks = useMemo(() => weekOptions(16), []);
+  const showExecExtras = isExecutiveRole(currentUser?.role);
+  const tabs = showExecExtras ? TABS : TABS.filter(t => t !== "Weekly Reports" && t !== "Teams");
+
+  useEffect(() => {
+    if (!showExecExtras) return;
+    if (tab !== "Weekly Reports" && tab !== "Teams") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (tab === "Weekly Reports") {
+          const rows = await apiFetchWeeklyReports(week);
+          if (!cancelled) setWeeklyReports(rows || []);
+        } else {
+          const rows = await apiFetchTeamMembers();
+          if (!cancelled) setTeamMembers(rows || []);
+        }
+      } catch {
+        if (!cancelled) {
+          if (tab === "Weekly Reports") setWeeklyReports([]);
+          else setTeamMembers([]);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, week, showExecExtras]);
 
   const staff = useMemo(
     () => (employeeRoster(users) || []).filter(u => u && u.id),
@@ -245,7 +302,7 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
   return (
     <div className="space-y-5">
       <div className="flex gap-1 border-b border-slate-200 flex-wrap">
-        {TABS.map(t => (
+        {tabs.map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -551,6 +608,88 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
             )}
           </Card>
         </div>
+      )}
+
+      {tab === "Weekly Reports" && showExecExtras && (
+        <div className="space-y-4">
+          <Card className="p-4 max-w-sm">
+            <SelectInput label="Week (Monday start)" value={week} onChange={setWeek} options={weeks} />
+          </Card>
+          <Card className="overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-200">
+              <STitle>All weekly reports</STitle>
+            </div>
+            {weeklyReports.length === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-400">No reports for this week.</div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {weeklyReports.map(r => (
+                  <div key={r.id} className="px-5 py-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Avatar name={r.employeeName || "?"} />
+                      <div>
+                        <div className="text-sm font-medium text-slate-800">{r.employeeName}</div>
+                        <div className="text-xs text-slate-400">
+                          {r.weekStart} → {r.weekEnd}
+                          {r.submittedAt ? ` · ${new Date(r.submittedAt).toLocaleString()}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-sm text-slate-700 whitespace-pre-wrap pl-11">{r.reportText}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {tab === "Teams" && showExecExtras && (
+        <Card className="overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200">
+            <STitle>Team structure</STitle>
+          </div>
+          {(() => {
+            const leads = {};
+            for (const m of teamMembers) {
+              if (m.isTeamLead) {
+                if (!leads[m.id]) leads[m.id] = { lead: m, members: [] };
+                else leads[m.id].lead = m;
+              } else if (m.teamLeadId) {
+                if (!leads[m.teamLeadId]) {
+                  leads[m.teamLeadId] = {
+                    lead: { id: m.teamLeadId, name: m.teamLeadName || "Team Lead" },
+                    members: [],
+                  };
+                }
+                leads[m.teamLeadId].members.push(m);
+              }
+            }
+            const groups = Object.values(leads);
+            if (groups.length === 0) {
+              return <div className="p-8 text-center text-sm text-slate-400">No Team Leads assigned yet.</div>;
+            }
+            return (
+              <div className="divide-y divide-slate-100">
+                {groups.map(({ lead, members }) => (
+                  <div key={lead.id} className="px-5 py-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Avatar name={lead.name} />
+                      <div className="text-sm font-medium text-slate-800">{lead.name}</div>
+                      <Pill tone="blue">Team Lead</Pill>
+                      <span className="text-xs text-slate-400">{members.length} members</span>
+                    </div>
+                    {members.length === 0 ? (
+                      <div className="text-xs text-slate-400 pl-11">No members</div>
+                    ) : (
+                      <div className="pl-11 text-sm text-slate-600">{members.map(x => x.name).join(", ")}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </Card>
       )}
     </div>
   );

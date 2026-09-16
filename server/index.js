@@ -16,6 +16,7 @@ import { registerBadgesRoutes } from "./routes/badges.js";
 import { registerLatePenaltiesRoutes } from "./routes/late-penalties.js";
 import { registerOvertimeRoutes } from "./routes/overtime.js";
 import { registerShortLeaveRoutes } from "./routes/short-leave.js";
+import { registerWeeklyReportsRoutes, registerTeamMembersRoutes } from "./routes/weekly-reports.js";
 import { registerAnnouncementsRoutes } from "./routes/announcements.js";
 import { registerPayrollRoutes } from "./routes/payroll.js";
 import { registerHolidaysRoutes } from "./routes/holidays.js";
@@ -148,6 +149,8 @@ const userToJs = (r) => ({
   shift: r.shift || undefined,
   shiftId: r.shift_id || undefined,
   shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
+  isTeamLead: !!r.is_team_lead,
+  teamLeadId: r.team_lead_id || null,
 });
 
 /** Public user payload — never include password or tempPassword. */
@@ -380,9 +383,29 @@ app.get("/api/bootstrap", async (req, res) => {
 app.get("/api/leave", requireAuth, async (req, res) => {
   try {
     const actor = req.authUser;
-    const { rows } = canViewAllAttendance(actor.role)
-      ? await pool.query(`${LEAVE_SELECT_SQL} ORDER BY lr.id DESC`)
-      : await pool.query(`${LEAVE_SELECT_SQL} WHERE lr.user_id = $1 ORDER BY lr.id DESC`, [actor.id]);
+    let rows;
+    if (canViewAllAttendance(actor.role)) {
+      ({ rows } = await pool.query(`${LEAVE_SELECT_SQL} ORDER BY lr.id DESC`));
+    } else {
+      const { rows: me } = await pool.query(
+        `SELECT COALESCE(is_team_lead, false) AS is_team_lead FROM users WHERE id = $1 LIMIT 1`,
+        [actor.id]
+      );
+      if (me[0]?.is_team_lead) {
+        ({ rows } = await pool.query(
+          `${LEAVE_SELECT_SQL}
+           WHERE lr.user_id = $1
+              OR lr.user_id IN (SELECT id FROM users WHERE team_lead_id = $1)
+           ORDER BY lr.id DESC`,
+          [actor.id]
+        ));
+      } else {
+        ({ rows } = await pool.query(
+          `${LEAVE_SELECT_SQL} WHERE lr.user_id = $1 ORDER BY lr.id DESC`,
+          [actor.id]
+        ));
+      }
+    }
 
     const usageCache = new Map();
     const list = [];
@@ -411,9 +434,29 @@ app.get("/api/leave", requireAuth, async (req, res) => {
 app.get("/api/short-leave", requireAuth, async (req, res) => {
   try {
     const actor = req.authUser;
-    const { rows } = canViewAllAttendance(actor.role)
-      ? await pool.query(`${SHORT_LEAVE_SELECT_SQL} ORDER BY sl.id DESC`)
-      : await pool.query(`${SHORT_LEAVE_SELECT_SQL} WHERE sl.user_id = $1 ORDER BY sl.id DESC`, [actor.id]);
+    let rows;
+    if (canViewAllAttendance(actor.role)) {
+      ({ rows } = await pool.query(`${SHORT_LEAVE_SELECT_SQL} ORDER BY sl.id DESC`));
+    } else {
+      const { rows: me } = await pool.query(
+        `SELECT COALESCE(is_team_lead, false) AS is_team_lead FROM users WHERE id = $1 LIMIT 1`,
+        [actor.id]
+      );
+      if (me[0]?.is_team_lead) {
+        ({ rows } = await pool.query(
+          `${SHORT_LEAVE_SELECT_SQL}
+           WHERE sl.user_id = $1
+              OR sl.user_id IN (SELECT id FROM users WHERE team_lead_id = $1)
+           ORDER BY sl.id DESC`,
+          [actor.id]
+        ));
+      } else {
+        ({ rows } = await pool.query(
+          `${SHORT_LEAVE_SELECT_SQL} WHERE sl.user_id = $1 ORDER BY sl.id DESC`,
+          [actor.id]
+        ));
+      }
+    }
     res.json(rows.map(shortLeaveToJs));
   } catch (e) {
     console.error("GET /api/short-leave error:", e.message);
@@ -1025,6 +1068,8 @@ registerAttendanceApi(app, pool);
 registerAttendanceRestRoutes(app, pool, requireAuth, requireHrOps);
 registerLeaveRoutes(app, pool, requireAuth, requireHrOps);
 registerShortLeaveRoutes(app, pool, requireAuth, requireHrOps);
+registerWeeklyReportsRoutes(app, pool, requireAuth);
+registerTeamMembersRoutes(app, pool, requireAuth);
 registerBadgesRoutes(app, pool, requireAuth);
 registerLatePenaltiesRoutes(app, pool, requireAuth);
 registerOvertimeRoutes(app, pool, requireAuth);

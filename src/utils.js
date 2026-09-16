@@ -17,6 +17,11 @@ export function isStaffRole(role) {
   return role === "Employee" || role === "Manager";
 }
 
+/** True when user is flagged as Team Lead. */
+export function isTeamLeadUser(user) {
+  return !!(user && user.isTeamLead);
+}
+
 /** True when user is a manager by designation (role merged into Employee). */
 export function isManagerDesignation(user) {
   if (!user) return false;

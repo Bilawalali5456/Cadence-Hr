@@ -182,6 +182,44 @@ export async function apiFetchShortLeave() {
   return sanitizeShortLeaveRequests(await apiGetJson("/short-leave"));
 }
 
+export async function apiFetchWeeklyReports(week) {
+  const q = week ? `?week=${encodeURIComponent(week)}` : "";
+  const data = await apiGetJson(`/weekly-reports${q}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiFetchMyWeeklyReports() {
+  const data = await apiGetJson("/weekly-reports/me");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiSubmitWeeklyReport({ weekStart, reportText }) {
+  const res = await apiFetch(`${API_URL}/weekly-reports`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ weekStart, reportText }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiUpdateWeeklyReport(id, { reportText }) {
+  const res = await apiFetch(`${API_URL}/weekly-reports/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ reportText }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiFetchTeamMembers() {
+  const data = await apiGetJson("/team-members");
+  return Array.isArray(data) ? data : [];
+}
+
 export async function apiFetchPayroll() {
   const data = await apiGetJson("/payroll");
   return Array.isArray(data) ? data : [];

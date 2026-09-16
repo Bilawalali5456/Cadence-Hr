@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint } from "lucide-react";
+import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint, ClipboardList } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, SESSION_EXPIRED_EVENT, apiBootstrap, apiHealthCheck, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
-import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, applyAutoCheckouts, monthKey } from "./utils.js";
+import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, isTeamLeadUser, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
 import { LoginPage } from "./pages/LoginPage.jsx";
@@ -22,6 +22,8 @@ import { AssetsPage } from "./pages/AssetsPage.jsx";
 import { HolidaysPage } from "./pages/HolidaysPage.jsx";
 import { ReportsPage } from "./pages/ReportsPage.jsx";
 import { BiometricPage } from "./pages/BiometricPage.jsx";
+import { WeeklyReportPage } from "./pages/WeeklyReportPage.jsx";
+import { TeamReportsPage } from "./pages/TeamReportsPage.jsx";
 
 const ADMIN_SIDEBAR_IDS = new Set(["assets"]);
 const HOME_NAV = { id: "home", label: "Home", icon: LayoutDashboard };
@@ -44,6 +46,8 @@ const NAV = [
   { id: "shortleave",    label: "Short Leave",    icon: Timer,           permission: "view_leave" },
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
+  { id: "weeklyreport",  label: "Weekly Report",  icon: ClipboardList,   staffExtra: "weeklyreport" },
+  { id: "teamreports",   label: "Team Reports",   icon: FileText,        staffExtra: "teamreports" },
   { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Employee", "Executive"] },
   { id: "biometric",     label: "Biometric",      icon: Fingerprint,     roles: ["HR Employee", "Executive"] },
   { id: "holidays",      label: "Holidays",       icon: Calendar,        permission: null },
@@ -62,6 +66,8 @@ const TITLES = {
   attendance:    ["Attendance",      "Shift check-in, breaks & reports"],
   shortleave:    ["Short Leave",     "Partial-day leave requests"],
   leave:         ["Leave",           "Requests and approvals"],
+  weeklyreport:  ["Weekly Report",   "Submit your weekly work summary"],
+  teamreports:   ["Team Reports",    "Weekly reports from your team"],
   reports:       ["Reports",         "Analytics and workforce insights"],
   biometric:     ["Biometric",       "ZKTeco device sync and PIN mapping"],
   holidays:      ["Holidays",        "Company holidays calendar"],
@@ -283,6 +289,19 @@ export default function App() {
         const leave = await apiFetchLeave();
         markRemoteApply();
         setLeaveRequests(leave);
+      }
+      if (key === "weeklyreport" || key === "teamreports") {
+        const us = await apiFetchUsers({ selfOnly: !rosterOk });
+        markRemoteApply();
+        if (rosterOk) setUsers(us);
+        else {
+          setUsers(prev => {
+            const self = (us || [])[0];
+            if (!self?.id) return prev;
+            const others = (prev || []).filter(u => u.id !== self.id);
+            return [self, ...others];
+          });
+        }
       }
       if (key === "payroll") {
         const [pay, companyData, att] = await Promise.all([
@@ -558,7 +577,15 @@ export default function App() {
   const role = currentUser.role;
   const rosterUsers = canFetchUserRoster(role) ? users : [];
   const isManagerPortal = isManagerDesignation(currentUser);
+  const isTl = isTeamLeadUser(currentUser);
+  const hasAssignedTeamLead = !!(currentUser.teamLeadId);
   const navItems = NAV.filter(n => {
+    if (n.staffExtra === "weeklyreport") {
+      return hasStaffPortalRole(role) && hasAssignedTeamLead && !isTl;
+    }
+    if (n.staffExtra === "teamreports") {
+      return hasStaffPortalRole(role) && isTl;
+    }
     if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
     if (hasStaffPortalRole(role)) {
       const allowed = isManagerPortal ? MANAGER_PORTAL_IDS : STAFF_PORTAL_IDS;
@@ -662,8 +689,10 @@ export default function App() {
           {route === "attendance"    && <AttendancePage currentUser={currentUser} users={users} attendance={attendance} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} setShortLeaveRequests={setShortLeaveRequests} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} setUsers={setUsers} roles={roles} holidays={holidays} notifications={notifications} setNotifications={setNotifications} />}
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
-          {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} setAttendance={setAttendance} />}
-          {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} />}
+          {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} />}
+          {route === "weeklyreport"  && hasAssignedTeamLead && !isTl && <WeeklyReportPage currentUser={currentUser} />}
+          {route === "teamreports"   && isTl && <TeamReportsPage currentUser={currentUser} />}
+          {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} currentUser={currentUser} />}
           {route === "biometric"     && <BiometricPage  currentUser={currentUser} users={users} setAttendance={(next) => { markRemoteApply(); setAttendance(next); }} />}
           {route === "holidays"      && <HolidaysPage   currentUser={currentUser} holidays={holidays} setHolidays={setHolidays} />}
           {route === "policies"      && <PoliciesPage   currentUser={currentUser} policies={policies} setPolicies={setPolicies} roles={roles} users={rosterUsers} notifications={notifications} setNotifications={setNotifications} />}

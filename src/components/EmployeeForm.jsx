@@ -17,7 +17,7 @@ export function validateShiftDayTimes(weeklySchedule) {
   return null;
 }
 
-export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOptions = null }) {
+export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOptions = null, teamLeadOptions = [] }) {
   const monThuSame = useMemo(() => {
     const days = ["monday", "tuesday", "wednesday", "thursday"];
     const first = form.weeklySchedule?.monday || DEFAULT_WEEKLY_SCHEDULE.monday;
@@ -124,6 +124,32 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
         <TextInput label="Salary"    value={form.salary}  onChange={v => setForm({ ...form, salary: v })}  placeholder="e.g. 80,000 PKR" />
         <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
           options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
+        <SelectInput
+          label="Team Lead"
+          value={form.isTeamLead ? "yes" : "no"}
+          onChange={v => setForm({
+            ...form,
+            isTeamLead: v === "yes",
+            teamLeadId: v === "yes" ? null : (form.teamLeadId || null),
+          })}
+          options={[
+            { value: "no", label: "No" },
+            { value: "yes", label: "Yes" },
+          ]}
+        />
+        {!form.isTeamLead && (
+          <SelectInput
+            label="Assigned Team Lead"
+            value={form.teamLeadId || ""}
+            onChange={v => setForm({ ...form, teamLeadId: v || null })}
+            options={[
+              { value: "", label: "— None —" },
+              ...(teamLeadOptions || [])
+                .filter(u => u.id !== form.id)
+                .map(u => ({ value: u.id, label: u.name })),
+            ]}
+          />
+        )}
       </div>
 
       <div className="pt-2 border-t border-slate-100">

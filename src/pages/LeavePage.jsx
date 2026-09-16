@@ -6,18 +6,23 @@ import {
   canChangeLeaveRequestStatus, canDeleteLeaveRecord, countWorkingDaysInclusive, leavePaidDays,
   leaveUnpaidDays, computeLeavePaySplit, leaveTypeLabel, buildApprovalDecision, monthKey,
   monthLabel, countMonthlyAnnualLeaveUsed, monthlyAnnualLeaveLabel, isMonthlyAnnualLeaveMonth,
-  MONTHLY_ANNUAL_LEAVE_LIMIT,
+  MONTHLY_ANNUAL_LEAVE_LIMIT, isTeamLeadUser,
 } from "../utils.js";
 import { Pill, Avatar, Card, STitle, TextInput, SelectInput, Btn, ErrBox, OkBox } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { buildLeaveStatusNotification } from "../notifications.js";
 import { apiCreateLeaveRequest, apiUpdateLeaveRequest, apiDeleteLeaveRequest, apiUpdateUser, apiFetchLeave, apiFetchAttendance } from "../api.js";
 
-export function LeavePage({ currentUser, requests = [], setRequests, users, setUsers, roles, notifications, setNotifications, setAttendance }) {
+export function LeavePage({
+  currentUser, requests = [], setRequests, users, setUsers, roles,
+  notifications, setNotifications, setAttendance,
+  shortLeaveRequests = [],
+}) {
   const [form, setForm] = useState({ type: "Annual", from: "", to: "", note: "" });
   const [msg,  setMsg]  = useState("");
   const canSubmit = canSelfSubmitLeave(currentUser.role);
   const me      = users.find(u => u.id === currentUser.id) || currentUser;
+  const isTl = isTeamLeadUser(me);
   const available = me.leaveBalance ?? DEFAULT_ANNUAL_LEAVE;
   const previewDays = (form.from && form.to)
     ? countWorkingDaysInclusive(form.from, form.to)
@@ -25,7 +30,18 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
   const previewSplit = previewDays > 0
     ? computeLeavePaySplit(form.type, previewDays, available)
     : null;
-  const visibleReqs = visibleLeaveRequests(requests, currentUser, users, roles);
+  const allVisible = visibleLeaveRequests(requests, currentUser, users, roles);
+  // Team Lead main list = own requests only; team shown in "Team Leaves" (read-only).
+  const visibleReqs = isTl && !isExecutiveRole(currentUser.role)
+    ? allVisible.filter(r => r.userId === currentUser.id)
+    : allVisible;
+  // Leave/short-leave GET already scopes team data for Team Leads.
+  const teamLeaveReqs = isTl
+    ? (requests || []).filter(r => r && r.userId && r.userId !== currentUser.id)
+    : [];
+  const teamShortReqs = isTl
+    ? (shortLeaveRequests || []).filter(r => r && r.userId && r.userId !== currentUser.id)
+    : [];
   const listHasApprovals = visibleReqs.some(r => canChangeLeaveRequestStatus(currentUser, r, users, roles));
   const formMonth = form.from ? String(form.from).slice(0, 7) : monthKey();
   const myMonthlyUsed = countMonthlyAnnualLeaveUsed(requests, currentUser.id, formMonth);
@@ -283,6 +299,45 @@ export function LeavePage({ currentUser, requests = [], setRequests, users, setU
           )
         }
       </Card>
+
+      {isTl && (
+        <Card className="overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200">
+            <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Team Leaves</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Read-only — only Executives approve leave requests.</p>
+          </div>
+          {teamLeaveReqs.length === 0 && teamShortReqs.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 text-sm">No team leave requests yet.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {teamLeaveReqs.map(r => (
+                <div key={r.id} className="px-5 py-3 flex items-center gap-3 flex-wrap">
+                  <Avatar name={r.empName} />
+                  <div className="flex-1 min-w-40">
+                    <div className="text-sm font-medium text-slate-800">{r.empName}</div>
+                    <div className="text-xs text-slate-500">{leaveTypeLabel(r.type)} · {r.from} → {r.to} · {r.days} day{r.days !== 1 ? "s" : ""}</div>
+                    {r.note && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.note}"</div>}
+                  </div>
+                  <Pill tone="slate">Leave</Pill>
+                  <ApprovalStatusBadge req={r} />
+                </div>
+              ))}
+              {teamShortReqs.map(r => (
+                <div key={r.id} className="px-5 py-3 flex items-center gap-3 flex-wrap">
+                  <Avatar name={r.empName || users.find(u => u.id === r.userId)?.name || "?"} />
+                  <div className="flex-1 min-w-40">
+                    <div className="text-sm font-medium text-slate-800">{r.empName || users.find(u => u.id === r.userId)?.name || "Employee"}</div>
+                    <div className="text-xs text-slate-500">Short leave · {r.date} · {r.fromTime || r.from}–{r.toTime || r.to}</div>
+                    {r.reason && <div className="text-xs text-slate-400 mt-0.5 italic">"{r.reason}"</div>}
+                  </div>
+                  <Pill tone="blue">Short</Pill>
+                  <ApprovalStatusBadge req={r} />
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

@@ -260,6 +260,8 @@ ALTER TABLE attendance ADD COLUMN IF NOT EXISTS last_corrected_on TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_history JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_team_lead BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_lead_id TEXT DEFAULT NULL;
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS
@@ -557,6 +559,42 @@ CREATE INDEX IF NOT EXISTS idx_overtime_requests_employee ON overtime_requests (
 DROP TRIGGER IF EXISTS trg_overtime_requests_updated_at ON overtime_requests;
 CREATE TRIGGER trg_overtime_requests_updated_at
   BEFORE UPDATE ON overtime_requests
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+-- Team Lead self-FK (added after users exists; safe on re-run)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'users_team_lead_id_fkey'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_team_lead_id_fkey
+      FOREIGN KEY (team_lead_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_users_team_lead_id ON users (team_lead_id);
+CREATE INDEX IF NOT EXISTS idx_users_is_team_lead ON users (is_team_lead) WHERE is_team_lead = true;
+
+-- Weekly reports (one per employee per Monday week_start)
+CREATE TABLE IF NOT EXISTS weekly_reports (
+  id            TEXT PRIMARY KEY,
+  employee_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  week_start    DATE NOT NULL,
+  week_end      DATE NOT NULL,
+  report_text   TEXT NOT NULL DEFAULT '',
+  submitted_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (employee_id, week_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_reports_week ON weekly_reports (week_start);
+CREATE INDEX IF NOT EXISTS idx_weekly_reports_employee ON weekly_reports (employee_id);
+
+DROP TRIGGER IF EXISTS trg_weekly_reports_updated_at ON weekly_reports;
+CREATE TRIGGER trg_weekly_reports_updated_at
+  BEFORE UPDATE ON weekly_reports
   FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
 
 DROP TRIGGER IF EXISTS trg_policies_ts_updated ON policies;

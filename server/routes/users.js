@@ -18,7 +18,8 @@ export const USER_SELECT_SQL = `
   SELECT id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
     leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
     guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-    bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history
+    bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history,
+    COALESCE(is_team_lead, false) AS is_team_lead, team_lead_id
   FROM users`;
 
 export function logShiftHistoryRaw(row, label) {
@@ -63,7 +64,50 @@ function userRowToJs(r) {
     shift: r.shift || undefined,
     shiftId: r.shift_id || undefined,
     shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
+    isTeamLead: !!r.is_team_lead,
+    teamLeadId: r.team_lead_id || null,
   };
+}
+
+/** Persist Team Lead flags after main user upsert (forward-only columns). */
+async function applyTeamLeadFields(pool, userId, body, { canHr }) {
+  if (!canHr) return;
+  if (body.isTeamLead === undefined && body.teamLeadId === undefined
+    && body.is_team_lead === undefined && body.team_lead_id === undefined) {
+    return;
+  }
+  const isTeamLead = body.isTeamLead !== undefined
+    ? !!body.isTeamLead
+    : (body.is_team_lead !== undefined ? !!body.is_team_lead : undefined);
+  let teamLeadId = body.teamLeadId !== undefined
+    ? (body.teamLeadId || null)
+    : (body.team_lead_id !== undefined ? (body.team_lead_id || null) : undefined);
+
+  const { rows } = await pool.query(
+    `SELECT is_team_lead, team_lead_id FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  if (!rows[0]) return;
+
+  const nextIsTl = isTeamLead !== undefined ? isTeamLead : !!rows[0].is_team_lead;
+  let nextTlId = teamLeadId !== undefined ? teamLeadId : (rows[0].team_lead_id || null);
+  if (nextIsTl) nextTlId = null; // Team Leads are not assigned under another TL
+  if (nextTlId && String(nextTlId) === String(userId)) nextTlId = null;
+
+  if (nextTlId) {
+    const { rows: tlRows } = await pool.query(
+      `SELECT id FROM users WHERE id = $1 AND COALESCE(is_team_lead, false) = true LIMIT 1`,
+      [nextTlId]
+    );
+    if (!tlRows[0]) {
+      throw new Error("Assigned Team Lead must be a user marked as Team Lead");
+    }
+  }
+
+  await pool.query(
+    `UPDATE users SET is_team_lead = $1, team_lead_id = $2 WHERE id = $3`,
+    [nextIsTl, nextTlId, userId]
+  );
 }
 
 function userRowToSafe(r) {
@@ -272,6 +316,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         values
       );
 
+      await applyTeamLeadFields(pool, u.id, u, { canHr: true });
+
       const { rows: created } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [u.id]);
       logShiftHistoryRaw(created[0], "POST /api/users");
       res.json({ ok: true, user: userRowToSafe(created[0]) });
@@ -393,6 +439,8 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         `,
         values
       );
+
+      await applyTeamLeadFields(pool, targetId, body, { canHr });
 
       const { rows: updated } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [targetId]);
       logShiftHistoryRaw(updated[0], "PUT /api/users/:id");

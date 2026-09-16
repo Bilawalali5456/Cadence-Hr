@@ -6,6 +6,11 @@ import {
   isMonthlyAnnualLeaveMonth,
   MONTHLY_ANNUAL_LEAVE_LIMIT,
 } from "../lib/monthlyAnnualLeave.js";
+import {
+  notifyLeaveSubmitted,
+  notifyLeaveDecision,
+  fetchUserName,
+} from "../lib/notify.js";
 
 function isHr(role) {
   return HR_OPS_ROLES.includes(role);
@@ -139,9 +144,17 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
       await c.query("BEGIN");
       const l = req.body || {};
       if (!isHr(req.authUser.role) && String(l.userId) !== String(req.authUser.id)) {
+        await c.query("ROLLBACK").catch(() => {});
         return res.status(403).json({ error: "Forbidden — cannot submit for other user" });
       }
+      if (!l.empName && l.userId) {
+        l.empName = await fetchUserName(c, l.userId);
+      }
       await upsertLeaveRecord(c, l);
+      const status = String(l.status || "pending").toLowerCase();
+      if (status === "pending") {
+        await notifyLeaveSubmitted(c, l);
+      }
       await c.query("COMMIT");
       res.json({ ok: true });
     } catch (e) {
@@ -235,6 +248,16 @@ export function registerLeaveRoutes(app, pool, requireAuth, requireHrAdmin) {
       if (isMonthlyAnnualLeaveMonth(monthKey)) {
         const usage = await getMonthlyAnnualUsage(c, l.userId, monthKey);
         monthlyAnnualUsed = usage.used;
+      }
+
+      if (
+        (newStatus === "approved" || newStatus === "rejected")
+        && newStatus !== prevStatus
+      ) {
+        if (!l.empName) {
+          l.empName = await fetchUserName(c, l.userId || prev?.user_id);
+        }
+        await notifyLeaveDecision(c, l, newStatus);
       }
 
       await c.query("COMMIT");
