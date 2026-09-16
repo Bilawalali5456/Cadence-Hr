@@ -7,24 +7,36 @@ import { apiCreateHoliday, apiUpdateHoliday, apiDeleteHoliday } from "../api.js"
 
 const TYPE_OPTIONS = [
   { value: "public", label: "Public Holiday" },
+  { value: "wfh_day", label: "WFH Day" },
   { value: "optional", label: "Optional Holiday" },
 ];
 
 function typeLabel(type) {
-  return normalizeHolidayType(type) === "optional" ? "Optional Holiday" : "Public Holiday";
+  const t = normalizeHolidayType(type);
+  if (t === "wfh_day") return "WFH Day";
+  if (t === "optional") return "Optional Holiday";
+  return "Public Holiday";
 }
 
 function typeTone(type) {
-  return normalizeHolidayType(type) === "optional" ? "amber" : "blue";
+  const t = normalizeHolidayType(type);
+  if (t === "wfh_day") return "blue";
+  if (t === "optional") return "amber";
+  return "green";
 }
 
 function isPublicType(type) {
   return normalizeHolidayType(type) === "public";
 }
 
+function isWfhDayType(type) {
+  return normalizeHolidayType(type) === "wfh_day";
+}
+
 const TYPE_FILTERS = [
   { id: "all", label: "All" },
   { id: "public", label: "Public" },
+  { id: "wfh_day", label: "WFH Day" },
   { id: "optional", label: "Optional" },
 ];
 
@@ -52,13 +64,13 @@ function TypeFilterTabs({ value, onChange }) {
 
 function filterHolidaysByType(list, typeFilter) {
   const safe = filterValidHolidays(list);
-  if (typeFilter === "public") return safe.filter(h => isPublicType(h.type));
-  if (typeFilter === "optional") return safe.filter(h => !isPublicType(h.type));
-  return safe;
+  if (typeFilter === "all") return safe;
+  return safe.filter(h => normalizeHolidayType(h.type) === typeFilter);
 }
 
 function emptyMessageForFilter(typeFilter) {
   if (typeFilter === "public") return "No public holidays scheduled.";
+  if (typeFilter === "wfh_day") return "No WFH Days scheduled.";
   if (typeFilter === "optional") return "No optional holidays scheduled.";
   return "No holidays scheduled.";
 }
@@ -106,9 +118,11 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
               key={dateKey}
               className={`aspect-square rounded-lg flex flex-col items-center justify-center text-sm border relative ${
                 hol
-                  ? isPublicType(hol.type)
-                    ? "bg-blue-50 border-blue-200 text-blue-900"
-                    : "bg-amber-50 border-amber-200 text-amber-900"
+                  ? isWfhDayType(hol.type)
+                    ? "bg-sky-50 border-sky-200 text-sky-900"
+                    : isPublicType(hol.type)
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                      : "bg-amber-50 border-amber-200 text-amber-900"
                   : isPast
                     ? "bg-slate-50 border-slate-100 text-slate-400"
                     : "bg-white border-slate-100 text-slate-700"
@@ -116,13 +130,25 @@ function MonthCalendar({ holidays, monthDate, onPrev, onNext }) {
               title={hol ? `${hol.title} (${typeLabel(hol.type)})` : undefined}
             >
               <span className={`font-semibold tabular-nums ${isToday ? "underline" : ""}`}>{day}</span>
-              {hol && <span className="w-1.5 h-1.5 rounded-full mt-0.5" style={{ background: isPublicType(hol.type) ? B.dark : "#d97706" }} />}
+              {hol && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full mt-0.5"
+                  style={{
+                    background: isWfhDayType(hol.type)
+                      ? "#0284c7"
+                      : isPublicType(hol.type)
+                        ? "#059669"
+                        : "#d97706",
+                  }}
+                />
+              )}
             </div>
           );
         })}
       </div>
       <div className="flex flex-wrap gap-4 mt-4 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-100 border border-blue-200" /> Public holiday</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-100 border border-emerald-200" /> Public holiday</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-sky-100 border border-sky-200" /> WFH Day</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-200" /> Optional holiday</span>
       </div>
     </Card>
@@ -231,7 +257,7 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
     return (
       <div className="space-y-5">
         <div className="flex flex-wrap items-center gap-3">
-          <Btn onClick={openAdd}><Plus size={14} />Add Holiday</Btn>
+          <Btn onClick={openAdd}><Plus size={14} />Add Holiday / WFH Day</Btn>
           <span className="text-sm text-slate-500">{sorted.length} holiday{sorted.length !== 1 ? "s" : ""} on file</span>
         </div>
 
@@ -280,15 +306,25 @@ export function HolidaysPage({ currentUser, holidays = [], setHolidays }) {
           </div>
         </Card>
 
-        <Modal open={open} onClose={closeModal} title={editingId ? "Edit Holiday" : "Add Holiday"}>
+        <Modal open={open} onClose={closeModal} title={editingId ? "Edit day" : "Add Holiday / WFH Day"}>
           <div className="space-y-4">
-            <TextInput label="Title" value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g. Independence Day" />
+            <TextInput
+              label="Title / Reason"
+              value={form.title}
+              onChange={v => setForm(f => ({ ...f, title: v }))}
+              placeholder={form.type === "wfh_day" ? "e.g. Office power outage" : "e.g. Independence Day"}
+            />
             <TextInput label="Date" type="date" value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} />
             <SelectInput label="Type" value={form.type} onChange={v => setForm(f => ({ ...f, type: normalizeHolidayType(v) }))} options={TYPE_OPTIONS} />
+            {form.type === "wfh_day" && (
+              <p className="text-xs text-slate-500">
+                WFH Day is a working day. All employees can check in/out from the portal — no leave application needed.
+              </p>
+            )}
             <ErrBox msg={ferr} />
             <div className="flex gap-2 justify-end pt-2">
               <Btn variant="ghost" onClick={closeModal}>Cancel</Btn>
-              <Btn onClick={saveHoliday}>{editingId ? "Save changes" : "Save holiday"}</Btn>
+              <Btn onClick={saveHoliday}>{editingId ? "Save changes" : "Save"}</Btn>
             </div>
           </div>
         </Modal>

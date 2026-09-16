@@ -1,9 +1,19 @@
+function normalizeHolidayType(type) {
+  const t = String(type ?? "public").trim().toLowerCase().replace(/-/g, "_");
+  if (t === "optional") return "optional";
+  if (t === "wfh_day" || t === "wfh" || t === "wfhday") return "wfh_day";
+  if (t === "public" || t === "public_holiday") return "public";
+  return "public";
+}
+
 function holidayToJs(r) {
   return {
     id: r.id,
     title: r.title,
     date: r.date,
-    type: r.type || "public",
+    type: normalizeHolidayType(r.type),
+    createdBy: r.created_by || null,
+    createdAt: r.created_at || null,
   };
 }
 
@@ -19,27 +29,28 @@ export function registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin) {
     }
   });
 
-  // Add holiday (HR Admin only)
+  // Add holiday / WFH Day (HR Employee + Executive via requireHrOps)
   app.post("/api/holidays", requireHrAdmin, async (req, res) => {
     const r = req.body || {};
     const id = r.id || `hol-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const title = (r.title || "").trim();
     const date = (r.date || "").slice(0, 10);
-    const type = r.type || "public";
+    const type = normalizeHolidayType(r.type);
+    const createdBy = req.authUser?.id || null;
 
     if (!title) return res.status(400).json({ error: "title is required" });
     if (!date) return res.status(400).json({ error: "date is required" });
 
     try {
       const { rows } = await pool.query(
-        `INSERT INTO holidays (id, title, date, type)
-         VALUES ($1,$2,$3,$4)
+        `INSERT INTO holidays (id, title, date, type, created_by)
+         VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (id) DO UPDATE SET
            title = EXCLUDED.title,
            date = EXCLUDED.date,
            type = EXCLUDED.type
          RETURNING *`,
-        [id, title, date, type],
+        [id, title, date, type, createdBy],
       );
       res.json({ holiday: holidayToJs(rows[0]) });
     } catch (e) {
@@ -56,7 +67,7 @@ export function registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin) {
     const r = req.body || {};
     const title = (r.title || "").trim();
     const date = (r.date || "").slice(0, 10);
-    const type = r.type || "public";
+    const type = normalizeHolidayType(r.type);
 
     if (!title) return res.status(400).json({ error: "title is required" });
     if (!date) return res.status(400).json({ error: "date is required" });
@@ -91,4 +102,3 @@ export function registerHolidaysRoutes(app, pool, requireAuth, requireHrAdmin) {
     }
   });
 }
-

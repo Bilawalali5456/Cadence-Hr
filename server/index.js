@@ -286,7 +286,13 @@ const holidayToJs = (r) => ({
   id: r.id,
   title: r.title,
   date: r.date,
-  type: r.type || "public",
+  type: (() => {
+    const t = String(r.type || "public").trim().toLowerCase().replace(/-/g, "_");
+    if (t === "optional") return "optional";
+    if (t === "wfh_day" || t === "wfh" || t === "wfhday") return "wfh_day";
+    return "public";
+  })(),
+  createdBy: r.created_by || null,
 });
 
 const shiftToJs = (r) => ({

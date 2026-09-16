@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X, Download } from "lucide-react";
+import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
 import { B } from "../brand.jsx";
-import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold } from "../utils.js";
-import { downloadMonthlyAttendanceSheet } from "../lib/downloadAttendanceSheet.js";
+import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold, getWfhDay } from "../utils.js";
 import { Pill, Avatar, Card, STitle, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
@@ -796,31 +795,13 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle>Monthly attendance summary</STitle>
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={month}
-              onChange={e => setMonth(e.target.value)}
-              className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-            >
-              {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-            </select>
-            <button
-              type="button"
-              onClick={() => downloadMonthlyAttendanceSheet({
-                month,
-                users: liveRoster,
-                attendance,
-                leaveRequests,
-                shortLeaveRequests,
-                holidays,
-                latePenalties,
-              })}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
-            >
-              <Download size={14} />
-              Download Sheet
-            </button>
-          </div>
+          <select
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
         </div>
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50/40">
           <div className="relative">
@@ -909,6 +890,9 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
               onChange={e => setSelectedDate(e.target.value || todayKey())}
               className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
             />
+            {getWfhDay(selectedDate, holidays) && (
+              <Pill tone="blue">WFH Day — {getWfhDay(selectedDate, holidays).title}</Pill>
+            )}
             <span className="text-xs text-slate-400">
               First scan = Check-in · Last scan = Check-out after shift end
             </span>

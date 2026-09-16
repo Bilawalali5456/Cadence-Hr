@@ -668,15 +668,22 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         return res.status(400).json({ error: "Check-in not allowed before 11:00 AM" });
       }
 
-      const { rows: wfhRows } = await pool.query(
+      const { rows: wfhLeave } = await pool.query(
         `SELECT id FROM leave_requests
          WHERE user_id = $1 AND type = 'WFH' AND status = 'approved'
            AND from_date <= $2 AND to_date >= $2
          LIMIT 1`,
         [actor.id, today]
       );
-      if (!wfhRows[0]) {
-        return res.status(403).json({ error: "No approved WFH leave for today" });
+      const { rows: wfhDayRows } = await pool.query(
+        `SELECT id FROM holidays
+         WHERE date = $1
+           AND LOWER(REPLACE(COALESCE(type, 'public'), '-', '_')) IN ('wfh_day', 'wfh', 'wfhday')
+         LIMIT 1`,
+        [today]
+      );
+      if (!wfhLeave[0] && !wfhDayRows[0]) {
+        return res.status(403).json({ error: "No approved WFH leave or company WFH Day for today" });
       }
 
       const { rows: existing } = await pool.query(

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Users, ChevronRight, AlertTriangle, UserPlus, Timer, Trash2, Clock, LogIn, LogOut } from "lucide-react";
 import { B } from "../brand.jsx";
-import { DEFAULT_ANNUAL_LEAVE, can, isAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, hasOwnAttendance, isManagerDesignation, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs } from "../utils.js";
+import { DEFAULT_ANNUAL_LEAVE, can, isAdminRole, isHrEmployeeRole, isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canChangeLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, formatShiftRange, resolveDayStatus, dayStatusPill, leavePaidDays, leaveUnpaidDays, leaveTypeLabel, formatTime, formatDate, getUserTodayRecord, todayKey, monthKey, lateDaysInMonth, genId, isStaffRole, hasOwnAttendance, isManagerDesignation, buildApprovalDecision, effectiveCheckOut, formatDurationMs, calcNetWorkingMs, calcLiveWorkingMs, getWfhDay } from "../utils.js";
 import { buildLeaveStatusNotification, buildWarningNotification } from "../notifications.js";
 import { apiSendWarningEmail, apiUpdateLeaveRequest, apiUpdateUser, apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiCreateWarning, apiWfhCheckin, apiWfhCheckout, apiFetchShortLeave, apiFetchLeave, apiFetchAttendance } from "../api.js";
 import { Pill, Avatar, Card, STitle, Btn, ErrBox, OkBox, UserDisplayName } from "../components/ui.jsx";
@@ -21,27 +21,29 @@ function upsertAtt(list, record) {
   return [...arr, record];
 }
 
-/** WFH portal check-in / check-out for attendance-tracked roles on approved WFH days. */
-function WfhPortalActions({ user, attendance, setAttendance, leaveRequests }) {
+/** WFH portal check-in / check-out for approved WFH leave or company WFH Day. */
+function WfhPortalActions({ user, attendance, setAttendance, leaveRequests, holidays = [] }) {
   const [wfhLoading, setWfhLoading] = useState(false);
   const [wfhMsg, setWfhMsg] = useState("");
   const role = user?.role;
   const canWfhRole = hasOwnAttendance(role);
   const today = todayKey();
+  const companyWfh = getWfhDay(today, holidays);
   const myToday = getUserTodayRecord(attendance, user.id, user);
-  const hasWfhToday = (leaveRequests || []).some(r =>
+  const hasWfhLeaveToday = (leaveRequests || []).some(r =>
     r && r.userId === user.id && r.type === "WFH" && r.status === "approved"
     && r.from && r.to && r.from <= today && r.to >= today
   );
+  const hasWfhToday = !!companyWfh || hasWfhLeaveToday;
   const showWfhCheckin = canWfhRole && hasWfhToday
     && myToday?.source !== "biometric"
-    && (!myToday || (myToday.source === "wfh" && !myToday.checkIn && !myToday.checkOut));
+    && !myToday?.checkIn;
   const showWfhCheckout = canWfhRole
     && myToday?.source === "wfh"
     && !!myToday.checkIn
     && !myToday.checkOut;
 
-  if (!showWfhCheckin && !showWfhCheckout) return null;
+  if (!companyWfh && !showWfhCheckin && !showWfhCheckout) return null;
 
   async function handleWfhCheckin() {
     setWfhMsg("");
@@ -74,29 +76,42 @@ function WfhPortalActions({ user, attendance, setAttendance, leaveRequests }) {
   }
 
   return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-        <div>
-          <div className="text-sm font-semibold" style={{ color: B.dark }}>Work from Home</div>
-          <div className="text-xs text-slate-500">Approved WFH day — check in/out from the portal</div>
+    <div className="space-y-3">
+      {companyWfh && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <span className="font-semibold">Today is a WFH Day</span>
+          {companyWfh.title ? ` — ${companyWfh.title}` : ""}
+          <div className="text-xs text-sky-700 mt-0.5">Check in and out from the portal. No leave application needed.</div>
         </div>
-        <Pill tone="blue">WFH</Pill>
-      </div>
-      {wfhMsg.startsWith("ok:") && <OkBox msg={wfhMsg.slice(3)} />}
-      {wfhMsg.startsWith("error:") && <ErrBox msg={wfhMsg.slice(6)} />}
-      <div className="flex flex-wrap gap-2 mt-2">
-        {showWfhCheckin && (
-          <Btn disabled={wfhLoading} onClick={handleWfhCheckin}>
-            <LogIn size={14} />{wfhLoading ? "Checking in…" : "Check-in (WFH)"}
-          </Btn>
-        )}
-        {showWfhCheckout && (
-          <Btn variant="danger" disabled={wfhLoading} onClick={handleWfhCheckout}>
-            <LogOut size={14} />{wfhLoading ? "Checking out…" : "Check-out (WFH)"}
-          </Btn>
-        )}
-      </div>
-    </Card>
+      )}
+      {(showWfhCheckin || showWfhCheckout) && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: B.dark }}>Work from Home</div>
+              <div className="text-xs text-slate-500">
+                {companyWfh ? "Company WFH Day — check in/out from the portal" : "Approved WFH day — check in/out from the portal"}
+              </div>
+            </div>
+            <Pill tone="blue">{companyWfh ? "WFH Day" : "WFH"}</Pill>
+          </div>
+          {wfhMsg.startsWith("ok:") && <OkBox msg={wfhMsg.slice(3)} />}
+          {wfhMsg.startsWith("error:") && <ErrBox msg={wfhMsg.slice(6)} />}
+          <div className="flex flex-wrap gap-2 mt-2">
+            {showWfhCheckin && (
+              <Btn disabled={wfhLoading} onClick={handleWfhCheckin}>
+                <LogIn size={14} />{wfhLoading ? "Checking in…" : "Check-in (WFH)"}
+              </Btn>
+            )}
+            {showWfhCheckout && (
+              <Btn variant="danger" disabled={wfhLoading} onClick={handleWfhCheckout}>
+                <LogOut size={14} />{wfhLoading ? "Checking out…" : "Check-out (WFH)"}
+              </Btn>
+            )}
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -303,7 +318,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
           </div>
         </div>
         <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
-        <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
+        <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} holidays={holidays} />
         <div className="grid grid-cols-1 gap-4 max-w-xs">
           <Card className="p-4">
             <div className="text-xs text-slate-400">Annual leave</div>
@@ -440,7 +455,7 @@ export function Dashboard({ currentUser, users, setRoute, attendance, setAttenda
       {hasOwnAttendance(role) && (
         <>
           <EmployeeShiftPanel user={me} attendance={attendance} setAttendance={setAttendance} holidays={holidays} leaveRequests={leaveRequests} compact />
-          <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} />
+          <WfhPortalActions user={me} attendance={attendance} setAttendance={setAttendance} leaveRequests={leaveRequests} holidays={holidays} />
         </>
       )}
       <div className="p-6 rounded-2xl text-white" style={{ background: B.dark }}>

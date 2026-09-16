@@ -16,6 +16,8 @@ import {
   displayWorkingHours,
   todayKey,
   getPublicHoliday,
+  getWfhDay,
+  isCompanyWfhDay,
   formatTime,
   getUserTodayRecord,
   canManualCheckIn,
@@ -47,6 +49,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
   const shift = getUserShift(user, key);
   const bounds = getShiftBounds(user, key);
   const publicHoliday = getPublicHoliday(key, holidays);
+  const companyWfh = getWfhDay(key, holidays);
   const dayOff = bounds.off || publicHoliday;
   const showManualCheckIn = canManualCheckIn(user, key, leaveRequests, holidays);
   const role = user?.role;
@@ -124,7 +127,7 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
       <Card className={compact ? "p-4" : "p-6"}>
         <STitle right={
           <span className="inline-flex items-center gap-1">
-            {(today?.source !== "leave" && daySt.label !== "On Leave" && (isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user))) && <Pill tone="blue">WFH</Pill>}
+            {(today?.source !== "leave" && daySt.label !== "On Leave" && (isCompanyWfhDay(key, holidays) || isApprovedWfhDay(user.id, key, leaveRequests, holidays, user) || isWfhAttendance(today, user.id, key, leaveRequests, holidays, user))) && <Pill tone="blue">{companyWfh ? "WFH Day" : "WFH"}</Pill>}
             {onBreak && <Pill tone="amber">On Break</Pill>}
             <Pill tone={daySt.tone}>{daySt.label}</Pill>
           </span>
@@ -138,6 +141,10 @@ export function EmployeeShiftPanel({ user, attendance, setAttendance, holidays =
         ) : publicHoliday ? (
           <div className="mb-4 p-3 rounded-lg text-sm bg-blue-50 border border-blue-100 text-blue-800">
             Public Holiday — {publicHoliday.title}. Check-in is not available today.
+          </div>
+        ) : companyWfh ? (
+          <div className="mb-4 p-3 rounded-lg text-sm bg-sky-50 border border-sky-100 text-sky-900">
+            Today is a WFH Day — {companyWfh.title}. Check in/out from the portal.
           </div>
         ) : (
           <div className="text-xs text-slate-500 mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-100">

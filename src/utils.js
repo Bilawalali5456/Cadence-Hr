@@ -1171,6 +1171,7 @@ export function flattenCorrectionAuditLog(attendance, users = []) {
 
 export function canManualCheckIn(user, dateKey, leaveRequests = [], holidays = []) {
   if (!user?.id || !dateKey) return false;
+  if (isCompanyWfhDay(dateKey, holidays)) return true;
   return isApprovedWfhDay(user.id, dateKey, leaveRequests, holidays, user);
 }
 
@@ -1189,13 +1190,15 @@ export function isApprovedWfhDay(userId, dateKey, leaveRequests = [], holidays =
 
 export function isWfhAttendance(record, userId, dateKey, leaveRequests = [], holidays = [], user = null) {
   if (!record?.checkIn) return false;
-  return record.source === "wfh" || isApprovedWfhDay(userId, dateKey, leaveRequests, holidays, user);
+  if (record.source === "wfh") return true;
+  if (isCompanyWfhDay(dateKey, holidays)) return true;
+  return isApprovedWfhDay(userId, dateKey, leaveRequests, holidays, user);
 }
 
 export function canCheckIn(now, user, record, holidays = [], leaveRequests = []) {
   const key = todayKey(now);
   if (!canManualCheckIn(user, key, leaveRequests, holidays)) {
-    return { ok: false, msg: "Manual check-in is only available on approved Work from Home days." };
+    return { ok: false, msg: "Manual check-in is only available on approved Work from Home days or company WFH Days." };
   }
   const bounds = getShiftBounds(user, key);
   if (bounds.off) return { ok: false, msg: "Today is off in your assigned shift." };
@@ -1489,8 +1492,11 @@ export function isWeekendDate(dateOrKey) {
 }
 
 export function normalizeHolidayType(type) {
-  const t = String(type ?? "public").trim().toLowerCase();
-  return t === "optional" ? "optional" : "public";
+  const t = String(type ?? "public").trim().toLowerCase().replace(/-/g, "_");
+  if (t === "optional") return "optional";
+  if (t === "wfh_day" || t === "wfh" || t === "wfhday") return "wfh_day";
+  if (t === "public" || t === "public_holiday") return "public";
+  return "public";
 }
 
 export function filterValidHolidays(holidays) {
@@ -1507,11 +1513,22 @@ export function getPublicHoliday(dateKey, holidays = []) {
   return h && normalizeHolidayType(h.type) === "public" ? h : null;
 }
 
+/** Company-wide WFH Day (working day — not a public holiday). */
+export function getWfhDay(dateKey, holidays = []) {
+  const h = getHolidayOnDate(dateKey, holidays);
+  return h && normalizeHolidayType(h.type) === "wfh_day" ? h : null;
+}
+
+export function isCompanyWfhDay(dateKey, holidays = []) {
+  return !!getWfhDay(dateKey, holidays);
+}
+
 export function isPublicHolidayDate(dateKey, holidays = []) {
   return !!getPublicHoliday(dateKey, holidays);
 }
 
 export function isNonWorkingDay(dateKey, holidays = []) {
+  // WFH Day is a working day — only public holidays (and weekends) are non-working here.
   return isWeekendDate(dateKey) || isPublicHolidayDate(dateKey, holidays);
 }
 
