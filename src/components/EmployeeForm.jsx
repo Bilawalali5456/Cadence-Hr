@@ -105,14 +105,19 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700">{form.role || "Admin"}</div>
           </div>
         ) : (
-          <SelectInput label="Role" value={form.role} onChange={v => setForm({
-            ...form,
-            role: v,
-            designation: v === "Employee" ? (form.designation || "") : "",
-            // Admin / HR Employee cannot be Team Lead
-            isTeamLead: (v === "Employee" || v === "Executive") ? !!form.isTeamLead : false,
-            teamLeadId: (v === "Employee" || v === "Executive") && !form.isTeamLead ? (form.teamLeadId || null) : null,
-          })}
+          <SelectInput label="Role" value={form.role} onChange={v => {
+            const canBeTl = v === "Employee" || v === "Executive";
+            const canHaveTl = v === "Employee" || v === "Executive" || v === "HR Employee";
+            setForm({
+              ...form,
+              role: v,
+              designation: v === "Employee" ? (form.designation || "") : "",
+              // HR Employee / Admin cannot be Team Lead; Employee & Executive can.
+              isTeamLead: canBeTl ? !!form.isTeamLead : false,
+              // Employee, Executive, and HR Employee may be assigned under a Team Lead.
+              teamLeadId: canHaveTl && !(canBeTl && form.isTeamLead) ? (form.teamLeadId || null) : null,
+            });
+          }}
             options={roleOptions || [
               { value: "Employee", label: "Employee" },
               { value: "HR Employee", label: "HR Employee" },
@@ -146,7 +151,7 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             ]}
           />
         )}
-        {(form.role === "Employee" || form.role === "Executive") && !form.isTeamLead && (
+        {(form.role === "Employee" || form.role === "Executive" || form.role === "HR Employee") && !form.isTeamLead && (
           <SelectInput
             label="Assigned Team Lead"
             value={form.teamLeadId || ""}

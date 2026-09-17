@@ -95,9 +95,8 @@ async function applyTeamLeadFields(pool, userId, body, { canHr }) {
   const nextIsTl = isTeamLead !== undefined ? isTeamLead : !!rows[0].is_team_lead;
   let nextTlId = teamLeadId !== undefined ? teamLeadId : (rows[0].team_lead_id || null);
 
-  if (nextIsTl && !canBeTeamLead) {
-    throw new Error("Only Employee or Executive can be marked as Team Lead");
-  }
+  // HR Employee / Admin cannot be Team Lead, but may be assigned under one.
+  if (!canBeTeamLead) nextIsTl = false;
   if (nextIsTl) nextTlId = null; // Team Leads are not assigned under another TL
   if (nextTlId && String(nextTlId) === String(userId)) nextTlId = null;
 

@@ -581,7 +581,8 @@ export default function App() {
   const hasAssignedTeamLead = !!(currentUser.teamLeadId);
   const navItems = NAV.filter(n => {
     if (n.staffExtra === "weeklyreport") {
-      return hasStaffPortalRole(role) && hasAssignedTeamLead && !isTl;
+      // Employees/Managers and HR Employees with an assigned Team Lead.
+      return hasAssignedTeamLead && !isTl && (hasStaffPortalRole(role) || isHrEmployeeRole(role));
     }
     if (n.staffExtra === "teamreports") {
       return hasStaffPortalRole(role) && isTl;
