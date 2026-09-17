@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X } from "lucide-react";
+import { Users, AlertTriangle, BadgeCheck, Trash2, LogIn, Pencil, X, Download, Loader2 } from "lucide-react";
 import { B } from "../brand.jsx";
 import { isHrOpsRole, isExecutiveRole, employeeRoster, isHrAdminRequest, canChangeShortLeaveRequestStatus, canDeleteShortLeaveRecord, activeAttendanceRoster, getUserShift, formatShiftRange, formatDurationMs, breakSessionCount, isOnBreak, isBreakExceeded, calcNetWorkingMs, calcLiveWorkingMs, isLateCheckIn, resolveDayStatus, dayStatusPill, displayWorkingHours, displayBreakTime, todayKey, formatTime, formatDate, getUserTodayRecord, formatCheckOutDisplay, computeMonthlyAttendanceSummary, monthKey, monthLabel, attendanceMonthOptions, employeeAttendanceMonthOptions, clampMonthKey, isWfhAttendance, buildApprovalDecision, flattenCorrectionAuditLog, formatCorrectionChangeSummary, effectiveCheckOut, monthDateRange, eachDateInRange, scheduledWorkDatesForUser, isLatePenaltyMonth, formatLatePenaltyBadge, formatLatePenaltyDeductions, latePenaltiesByEmployee, nextLatePenaltyThreshold, getWfhDay } from "../utils.js";
 import { Pill, Avatar, Card, STitle, UserDisplayName } from "../components/ui.jsx";
 import { ApprovalReviewMeta, ApprovalStatusBadge, ApprovalActionButtons } from "../components/ApprovalControls.jsx";
 import { AttendanceCorrectionModal } from "../components/AttendanceCorrectionModal.jsx";
 import { HrAdminOversightPanel } from "./Dashboard.jsx";
-import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave, apiFetchLatePenalties, apiFetchMyLatePenalty } from "../api.js";
+import { apiUpdateShortLeaveRequest, apiDeleteShortLeaveRequest, apiFetchAttendance, apiUpdateAttendance, apiFetchShortLeave, apiFetchLatePenalties, apiFetchMyLatePenalty, apiDownloadAttendanceExport } from "../api.js";
 
 function LatePenaltyBadge({ penalty }) {
   const label = formatLatePenaltyBadge(penalty);
@@ -516,6 +516,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const [statusFilter, setStatusFilter] = useState("All");
   const [monthlySearch, setMonthlySearch] = useState("");
   const [latePenalties, setLatePenalties] = useState([]);
+  const [exporting, setExporting] = useState(false);
   useScopedAttendanceFetch(viewMode, month, selectedDate, setAttendance);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
@@ -540,6 +541,21 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
   const penaltyMap = latePenaltiesByEmployee(latePenalties);
 
   const canManageCorrections = isHrOpsRole(currentUser.role) || isExecutiveRole(currentUser.role);
+  const canDownloadRegister = canManageCorrections;
+
+  async function handleDownloadRegister() {
+    if (!canDownloadRegister || exporting) return;
+    setExporting(true);
+    try {
+      await apiDownloadAttendanceExport(month);
+    } catch (e) {
+      console.error("Attendance export failed:", e?.message || e);
+      window.alert(e?.message || "Failed to download attendance register.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const correctionAudit = isExecutiveRole(currentUser.role)
     ? flattenCorrectionAuditLog(attendance, users)
     : [];
@@ -795,13 +811,27 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <STitle>Monthly attendance summary</STitle>
-          <select
-            value={month}
-            onChange={e => setMonth(e.target.value)}
-            className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
-          >
-            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={month}
+              onChange={e => setMonth(e.target.value)}
+              className="text-sm border border-slate-300 rounded-lg px-2 py-1.5"
+            >
+              {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+            </select>
+            {canDownloadRegister && (
+              <button
+                type="button"
+                onClick={handleDownloadRegister}
+                disabled={exporting}
+                className="inline-flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Download attendance register"
+              >
+                {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {exporting ? "Downloading…" : "Download"}
+              </button>
+            )}
+          </div>
         </div>
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50/40">
           <div className="relative">

@@ -10,6 +10,7 @@ import { sendCredentialsEmail, sendNotificationEmail, sendWarningEmail } from ".
 import { registerAdmsRoutes } from "./routes/adms.js";
 import { registerAttendanceApi } from "./routes/attendance.js";
 import { registerAttendanceRestRoutes } from "./routes/attendance-api.js";
+import { registerAttendanceExportRoutes } from "./routes/attendance-export.js";
 import { registerLeaveRoutes } from "./routes/leave.js";
 import { registerUsersRoutes, USER_SELECT_SQL, logShiftHistoryRaw } from "./routes/users.js";
 import { registerBadgesRoutes } from "./routes/badges.js";
@@ -1071,6 +1072,7 @@ app.post("/api/send-warning-email", async (req, res) => {
 
 registerAttendanceApi(app, pool);
 registerAttendanceRestRoutes(app, pool, requireAuth, requireHrOps);
+registerAttendanceExportRoutes(app, pool, requireAuth, requireHrOps);
 registerLeaveRoutes(app, pool, requireAuth, requireHrOps);
 registerShortLeaveRoutes(app, pool, requireAuth, requireHrOps);
 registerWeeklyReportsRoutes(app, pool, requireAuth);

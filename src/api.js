@@ -112,6 +112,37 @@ export async function apiFetchUsers({ selfOnly = false } = {}) {
   return Array.isArray(self) ? self : [self];
 }
 
+/** Download monthly attendance register Excel (HR Employee + Executive). */
+export async function apiDownloadAttendanceExport(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  const res = await apiFetch(`${API_URL}/attendance/export${q}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let msg = `Export failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const fileName = match?.[1] || `Attendance_${month || "export"}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return fileName;
+}
+
 export async function apiFetchAttendance(params = {}) {
   const q = new URLSearchParams();
   if (params.month) q.set("month", params.month);
