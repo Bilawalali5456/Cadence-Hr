@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint, ClipboardList } from "lucide-react";
+import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint, ClipboardList, Target } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
-import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, SESSION_EXPIRED_EVENT, apiBootstrap, apiHealthCheck, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
+import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, SESSION_EXPIRED_EVENT, apiBootstrap, apiHealthCheck, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, apiFetchLeads, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, isTeamLeadUser, applyAutoCheckouts, monthKey } from "./utils.js";
 import { Avatar, UserDisplayName } from "./components/ui.jsx";
 import { NotificationBell } from "./components/NotificationBell.jsx";
@@ -24,6 +24,7 @@ import { ReportsPage } from "./pages/ReportsPage.jsx";
 import { BiometricPage } from "./pages/BiometricPage.jsx";
 import { WeeklyReportPage } from "./pages/WeeklyReportPage.jsx";
 import { TeamReportsPage } from "./pages/TeamReportsPage.jsx";
+import { LeadsPage } from "./pages/LeadsPage.jsx";
 
 const ADMIN_SIDEBAR_IDS = new Set(["assets"]);
 const HOME_NAV = { id: "home", label: "Home", icon: LayoutDashboard };
@@ -46,6 +47,8 @@ const NAV = [
   { id: "shortleave",    label: "Short Leave",    icon: Timer,           permission: "view_leave" },
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
+  { id: "leads",         label: "Leads",          icon: Target,          roles: ["Executive"] },
+  { id: "myleads",       label: "My Leads",       icon: Target,          staffExtra: "myleads" },
   { id: "weeklyreport",  label: "Weekly Report",  icon: ClipboardList,   staffExtra: "weeklyreport" },
   { id: "teamreports",   label: "Team Reports",   icon: FileText,        staffExtra: "teamreports" },
   { id: "reports",       label: "Reports",        icon: BarChart3,       roles: ["HR Employee", "Executive"] },
@@ -66,6 +69,8 @@ const TITLES = {
   attendance:    ["Attendance",      "Shift check-in, breaks & reports"],
   shortleave:    ["Short Leave",     "Partial-day leave requests"],
   leave:         ["Leave",           "Requests and approvals"],
+  leads:         ["Leads",           "Sales pipeline and deal tracking"],
+  myleads:       ["My Leads",        "Leads assigned to you"],
   weeklyreport:  ["Weekly Report",   "Submit your weekly work summary"],
   teamreports:   ["Team Reports",    "Weekly reports from your team"],
   reports:       ["Reports",         "Analytics and workforce insights"],
@@ -127,6 +132,7 @@ export default function App() {
   const [dbStatus,      setDbStatus]      = useState("loading"); // loading | ready | unavailable
   const [syncBanner,    setSyncBanner]    = useState(null);
   const [badges,        setBadges]        = useState({});
+  const [hasMyLeads,    setHasMyLeads]    = useState(false);
   const loadedRef = useRef(false);
   const ignoreSyncUntilRef = useRef(0);
   const refreshInFlightRef = useRef(null);
@@ -407,7 +413,35 @@ export default function App() {
     if (route === "assets" && !canAccessAssetsModule(user, roles)) {
       setRoute("home");
     }
-  }, [route, session?.userId, users, roles]);
+    if (route === "myleads" && (!hasStaffPortalRole(user.role) || !hasMyLeads)) {
+      setRoute("home");
+    }
+    if (route === "leads" && !isExecutiveRole(user.role)) {
+      setRoute("home");
+    }
+  }, [route, session?.userId, users, roles, hasMyLeads]);
+
+  /* ── Staff: detect assigned leads for "My Leads" sidebar tab ── */
+  useEffect(() => {
+    if (dbStatus !== "ready" || !session?.token || !session?.userId) {
+      setHasMyLeads(false);
+      return;
+    }
+    const user = users.find(u => u.id === session.userId);
+    if (!user || !hasStaffPortalRole(user.role)) {
+      setHasMyLeads(false);
+      return;
+    }
+    let cancelled = false;
+    apiFetchLeads()
+      .then(list => {
+        if (!cancelled) setHasMyLeads(Array.isArray(list) && list.length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setHasMyLeads(false);
+      });
+    return () => { cancelled = true; };
+  }, [dbStatus, session?.token, session?.userId, users, notifications]);
 
   /* ── Live poll while Attendance / Biometric / Home tab is open ── */
   useEffect(() => {
@@ -587,6 +621,9 @@ export default function App() {
     if (n.staffExtra === "teamreports") {
       return hasStaffPortalRole(role) && isTl;
     }
+    if (n.staffExtra === "myleads") {
+      return hasStaffPortalRole(role) && hasMyLeads;
+    }
     if (isAdminRole(role)) return ADMIN_SIDEBAR_IDS.has(n.id);
     if (hasStaffPortalRole(role)) {
       const allowed = isManagerPortal ? MANAGER_PORTAL_IDS : STAFF_PORTAL_IDS;
@@ -691,6 +728,8 @@ export default function App() {
           {route === "shortleave"    && <ShortLeavePage currentUser={currentUser} requests={shortLeaveRequests} setRequests={setShortLeaveRequests} users={users} attendance={attendance} setAttendance={setAttendance} roles={roles} />}
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
           {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} />}
+          {route === "leads"         && isExecutiveRole(role) && <LeadsPage currentUser={currentUser} users={rosterUsers} mode="executive" />}
+          {route === "myleads"       && hasStaffPortalRole(role) && hasMyLeads && <LeadsPage currentUser={currentUser} users={users} mode="employee" />}
           {route === "weeklyreport"  && hasAssignedTeamLead && !isTl && <WeeklyReportPage currentUser={currentUser} />}
           {route === "teamreports"   && isTl && <TeamReportsPage currentUser={currentUser} />}
           {route === "reports"       && <ReportsPage    users={users} attendance={attendance} leaveRequests={leaveRequests} payroll={payroll} holidays={holidays} currentUser={currentUser} />}

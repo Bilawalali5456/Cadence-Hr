@@ -164,3 +164,73 @@ export async function notifyWeeklyReportSubmitted(client, { employeeId, employee
     link: "teamreports",
   });
 }
+
+/** Active Executive user ids. */
+export async function fetchExecutiveIds(client) {
+  const { rows } = await client.query(
+    `SELECT id FROM users WHERE role = 'Executive' AND status = 'active'`
+  );
+  return rows.map(r => r.id);
+}
+
+export async function notifyLeadAssigned(client, { assigneeId, clientName }) {
+  if (!assigneeId || !clientName) return;
+  await insertNotification(client, {
+    userId: assigneeId,
+    title: "New lead assigned",
+    body: `New lead assigned: ${clientName}`,
+    type: "lead",
+    link: "myleads",
+  });
+}
+
+export async function notifyLeadReassigned(client, { oldAssigneeId, newAssigneeId, clientName }) {
+  const name = clientName || "a lead";
+  if (oldAssigneeId && oldAssigneeId !== newAssigneeId) {
+    await insertNotification(client, {
+      userId: oldAssigneeId,
+      title: "Lead reassigned",
+      body: `Lead ${name} removed from you`,
+      type: "lead",
+      link: "myleads",
+    });
+  }
+  if (newAssigneeId && newAssigneeId !== oldAssigneeId) {
+    await insertNotification(client, {
+      userId: newAssigneeId,
+      title: "Lead assigned",
+      body: `Lead ${name} assigned to you`,
+      type: "lead",
+      link: "myleads",
+    });
+  }
+}
+
+export async function notifyLeadStageChanged(client, { employeeName, clientName, stage, excludeUserId }) {
+  const title = "Lead stage updated";
+  const body = `${employeeName || "An employee"} moved ${clientName || "a lead"} to ${stage}`;
+  const executives = await fetchExecutiveIds(client);
+  await insertNotifications(
+    client,
+    executives
+      .filter(id => id !== excludeUserId)
+      .map(userId => ({ userId, title, body, type: "lead", link: "leads" }))
+  );
+}
+
+export async function notifyLeadWon(client, { clientName, amount, currency, excludeUserId }) {
+  const amt = Number(amount) || 0;
+  const cur = currency || "PKR";
+  const formatted = amt
+    ? `${cur} ${amt.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+    : cur;
+  const title = "Deal Won";
+  const body = `Deal Won: ${clientName || "Lead"} — ${formatted}`;
+  const executives = await fetchExecutiveIds(client);
+  await insertNotifications(
+    client,
+    executives
+      .filter(id => id !== excludeUserId)
+      .map(userId => ({ userId, title, body, type: "lead", link: "leads" }))
+  );
+}

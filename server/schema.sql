@@ -607,3 +607,71 @@ DROP TRIGGER IF EXISTS trg_assets_ts_updated ON assets;
 CREATE TRIGGER trg_assets_ts_updated
   BEFORE INSERT OR UPDATE ON assets
   FOR EACH ROW EXECUTE PROCEDURE touch_ts_updated_column();
+
+-- ─── Leads / CRM pipeline ───
+CREATE TABLE IF NOT EXISTS lead_channels (
+  id          TEXT PRIMARY KEY,
+  name        TEXT UNIQUE NOT NULL,
+  created_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_departments (
+  id          TEXT PRIMARY KEY,
+  name        TEXT UNIQUE NOT NULL,
+  created_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS leads (
+  id            TEXT PRIMARY KEY,
+  client_name   TEXT NOT NULL,
+  channel       TEXT NOT NULL,
+  department    TEXT NOT NULL,
+  assigned_to   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  stage         TEXT NOT NULL DEFAULT 'New',
+  description   TEXT DEFAULT '',
+  amount        NUMERIC DEFAULT 0,
+  currency      TEXT NOT NULL DEFAULT 'PKR',
+  contact_info  TEXT DEFAULT '',
+  notes         TEXT DEFAULT '',
+  added_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_notes (
+  id          TEXT PRIMARY KEY,
+  lead_id     TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  user_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+  note        TEXT NOT NULL,
+  stage_from  TEXT,
+  stage_to    TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_assigned_to ON leads (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads (stage);
+CREATE INDEX IF NOT EXISTS idx_leads_channel ON leads (channel);
+CREATE INDEX IF NOT EXISTS idx_leads_department ON leads (department);
+CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads (created_at);
+CREATE INDEX IF NOT EXISTS idx_lead_notes_lead_id ON lead_notes (lead_id);
+
+DROP TRIGGER IF EXISTS trg_leads_updated_at ON leads;
+CREATE TRIGGER trg_leads_updated_at
+  BEFORE UPDATE ON leads
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+INSERT INTO lead_channels (id, name) VALUES
+  ('lead-ch-upwork', 'Upwork'),
+  ('lead-ch-linkedin', 'LinkedIn'),
+  ('lead-ch-jobspk', 'Jobs.pk'),
+  ('lead-ch-csr', 'CSR')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO lead_departments (id, name) VALUES
+  ('lead-dept-development', 'Development'),
+  ('lead-dept-graphics', 'Graphics'),
+  ('lead-dept-salesforce', 'Salesforce'),
+  ('lead-dept-smm', 'Social Media Marketing')
+ON CONFLICT (id) DO NOTHING;

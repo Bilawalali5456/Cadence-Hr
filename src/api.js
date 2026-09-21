@@ -212,6 +212,112 @@ export async function apiFetchTeamMembers() {
   return Array.isArray(data) ? data : [];
 }
 
+/* ─── Leads / CRM ─── */
+export async function apiFetchLeads() {
+  const data = await apiGetJson("/leads");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateLead(payload) {
+  const res = await apiFetch(`${API_URL}/leads`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiUpdateLead(id, payload) {
+  const res = await apiFetch(`${API_URL}/leads/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiDeleteLead(id) {
+  const res = await apiFetch(`${API_URL}/leads/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiFetchLeadNotes(leadId) {
+  const data = await apiGetJson(`/leads/${encodeURIComponent(leadId)}/notes`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiAddLeadNote(leadId, note) {
+  const res = await apiFetch(`${API_URL}/leads/${encodeURIComponent(leadId)}/notes`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiFetchLeadChannels() {
+  const data = await apiGetJson("/lead-channels");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateLeadChannel(name) {
+  const res = await apiFetch(`${API_URL}/lead-channels`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiDeleteLeadChannel(id) {
+  const res = await apiFetch(`${API_URL}/lead-channels/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiFetchLeadDepartments() {
+  const data = await apiGetJson("/lead-departments");
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateLeadDepartment(name) {
+  const res = await apiFetch(`${API_URL}/lead-departments`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiDeleteLeadDepartment(id) {
+  const res = await apiFetch(`${API_URL}/lead-departments/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
 export async function apiFetchPayroll() {
   const data = await apiGetJson("/payroll");
   return Array.isArray(data) ? data : [];

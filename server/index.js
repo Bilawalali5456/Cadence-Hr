@@ -41,11 +41,8 @@ import {
   createRequireAuth,
   canManageTargetRole, setSessionCookie, clearSessionCookie,
 } from "./lib/auth.js";
-import {
-  createRequireHrOps,
-  createRequireAssetManager,
-  canViewAllAttendance,
-} from "./lib/rbac.js";
+import { createRequireHrOps, createRequireAssetManager, createRequireExecutive, canViewAllAttendance } from "./lib/rbac.js";
+import { registerLeadsRoutes } from "./routes/leads.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
 dotenv.config();
@@ -55,6 +52,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const requireAuth = createRequireAuth(pool);
 const requireHrOps = createRequireHrOps(pool);
 const requireAssetManager = createRequireAssetManager(pool);
+const requireExecutive = createRequireExecutive(pool);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, "..", "dist");
@@ -1089,6 +1087,7 @@ registerShiftsRoutes(app, pool, requireAuth, requireHrOps);
 registerCompanyRoutes(app, pool, requireAuth, requireHrOps);
 registerRolesRoutes(app, pool, requireAuth, requireHrOps);
 registerUsersRoutes(app, pool, requireAuth, requireHrOps);
+registerLeadsRoutes(app, pool, requireAuth, requireExecutive);
 
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));
