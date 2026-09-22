@@ -178,7 +178,7 @@ export function ReportsPage({ users = [], attendance = [], leaveRequests = [], p
 
       let late = 0;
       for (const r of (attendance || []).filter(x => x && x.userId === u.id && x.checkIn && inRange(x.date, start, end))) {
-        if (isLateCheckIn(r.checkIn, u, holidays)) late += 1;
+        if (isLateCheckIn(r.checkIn, u, holidays, r?.shortLeaves)) late += 1;
       }
       if (late > 0) lateByUser[u.id] = { user: u, late };
 

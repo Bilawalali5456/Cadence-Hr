@@ -485,6 +485,10 @@ export function formatDayScheduleLine(daySchedule) {
 export function requiredMsForShiftDay(user, dateKey) {
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off || !bounds.start || !bounds.end) return 0;
+  // Forward-only: from today, global 8h 30m minimum (break no longer part of required duty).
+  if (usesNewAttendanceHoursPolicy(dateKey)) {
+    return REQUIRED_WORKING_MS;
+  }
   const s = getUserShift(user, dateKey);
   return Math.max(0, bounds.end - bounds.start - (s.breakMinutes || 0) * 60000);
 }
@@ -751,7 +755,11 @@ export function calcLiveWorkingMs(record, now = new Date()) {
     : (now instanceof Date && Number.isFinite(now.getTime()) ? now.getTime() : Date.now());
   if (!Number.isFinite(endMs)) return 0;
   let ms = endMs - startMs;
-  ms -= calcTotalBreakMs(record, now);
+  const dateKey = String(record.date || "").slice(0, 10);
+  // New policy: break is display-only — do not deduct from working hours.
+  if (!usesNewAttendanceHoursPolicy(dateKey || todayKey(now))) {
+    ms -= calcTotalBreakMs(record, now);
+  }
   // In-progress (no checkout): do not subtract short leave — future/partial
   // entries were zeroing live hours to "—". Completed days still deduct below.
   if (record.checkOut) ms -= calcShortLeaveMs(record);
@@ -788,22 +796,68 @@ export function calcShortLeaveMs(record, workEndOverride = null) {
     }, 0);
 }
 
+/** Global minimum duty: 8 hours 30 minutes (510 minutes). Forward-only from today. */
+export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
+
+/** New working-hours / status policy applies from today (PKT) forward only. */
+export function usesNewAttendanceHoursPolicy(dateKey, now = new Date()) {
+  const key = String(dateKey || "").slice(0, 10);
+  if (!key) return true;
+  return key >= todayKey(now);
+}
+
+/**
+ * If an approved short leave covers shift start (slStart <= shiftStart < slEnd),
+ * return the short-leave end instant — used as effective start for late calc.
+ */
+export function coveringShortLeaveEnd(shortLeaves, shiftStartDate) {
+  if (!shiftStartDate || Number.isNaN(new Date(shiftStartDate).getTime())) return null;
+  const startMs = new Date(shiftStartDate).getTime();
+  let bestEnd = null;
+  for (const sl of shortLeaves || []) {
+    if (sl?.status && sl.status !== "approved") continue;
+    const startRaw = sl?.start || sl?.startIso;
+    const endRaw = sl?.end || sl?.endIso;
+    if (!startRaw || !endRaw) continue;
+    const slStart = new Date(startRaw).getTime();
+    const slEnd = new Date(endRaw).getTime();
+    if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) continue;
+    if (slStart <= startMs && slEnd > startMs) {
+      if (bestEnd == null || slEnd > bestEnd) bestEnd = slEnd;
+    }
+  }
+  return bestEnd != null ? new Date(bestEnd) : null;
+}
+
 export function calcNetWorkingMs(record) {
   if (!record?.checkIn || !record?.checkOut) return 0;
+  const dateKey = String(record.date || "").slice(0, 10);
+  // Past days: prefer stored working_ms so forward-only policy does not rewrite history.
+  if (dateKey && !usesNewAttendanceHoursPolicy(dateKey) && record.workingMs != null) {
+    return Math.max(0, Number(record.workingMs) || 0);
+  }
   let ms = new Date(record.checkOut) - new Date(record.checkIn);
   if (!Number.isFinite(ms)) return 0;
-  ms -= calcTotalBreakMs(record);
+  if (!usesNewAttendanceHoursPolicy(dateKey || todayKey())) {
+    ms -= calcTotalBreakMs(record);
+  }
   ms -= calcShortLeaveMs(record);
   return Math.max(0, Number.isFinite(ms) ? ms : 0);
 }
 
-export function isLateCheckIn(checkInIso, user, holidays = []) {
+export function isLateCheckIn(checkInIso, user, holidays = [], shortLeaves = []) {
   if (!checkInIso || !user) return false;
   if (isPublicHolidayDate(checkInIso, holidays)) return false;
   const dateKey = todayKey(new Date(checkInIso));
   const bounds = getShiftBounds(user, dateKey);
-  if (bounds.off || !bounds.lateCutoff) return false;
-  return new Date(checkInIso) > bounds.lateCutoff;
+  if (bounds.off || !bounds.start) return false;
+  let effectiveStart = bounds.start;
+  if (usesNewAttendanceHoursPolicy(dateKey)) {
+    const coveringEnd = coveringShortLeaveEnd(shortLeaves, bounds.start);
+    if (coveringEnd) effectiveStart = coveringEnd;
+  }
+  const lateCutoff = new Date(effectiveStart.getTime() + (bounds.graceMinutes || 0) * 60000);
+  return new Date(checkInIso) > lateCutoff;
 }
 
 export function computeDayStatus(user, record, holidays = [], now = new Date()) {
@@ -820,10 +874,13 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
 
   if (!record.checkOut) return "Missing Checkout";
 
-  // Early Leave: before (shift end − checkoutGraceMinutes). Within grace = Present.
-  const earlyLeaveCutoff = bounds.earlyLeaveCutoff || bounds.end;
-  if (earlyLeaveCutoff && new Date(record.checkOut) < earlyLeaveCutoff) return "Early Leave";
-  // Late check-in + completed shift → Present (or Short Hours). Late badge is on check-in only.
+  const newPolicy = usesNewAttendanceHoursPolicy(dateKey, currentTime);
+  if (!newPolicy) {
+    // Legacy: Early Leave if checkout before (shift end − grace).
+    const earlyLeaveCutoff = bounds.earlyLeaveCutoff || bounds.end;
+    if (earlyLeaveCutoff && new Date(record.checkOut) < earlyLeaveCutoff) return "Early Leave";
+  }
+
   const net = calcNetWorkingMs(record);
   const expectedNet = requiredMsForShiftDay(user, dateKey);
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
@@ -842,8 +899,10 @@ function recordServerDayStatus(record) {
 export function resolveDayStatus(user, record, dateKey = record?.date || todayKey(), holidays = [], now = new Date()) {
   // Date-specific shift from shift_history (via getShiftBounds → getUserShift / getShiftForDate).
   const serverStatus = recordServerDayStatus(record);
+  const newPolicy = usesNewAttendanceHoursPolicy(dateKey, now);
 
   if (serverStatus === "On Leave") return "On Leave";
+  if (serverStatus === "WFH") return "WFH";
 
   // Short Hours: trust server only when checkout exists (finalized day).
   if (recordServerDayStatus(record) === "Short Hours" && record?.checkOut) return "Short Hours";
@@ -855,13 +914,16 @@ export function resolveDayStatus(user, record, dateKey = record?.date || todayKe
     shift && !shift.off && isPostMidnightShiftEnd(shift.shiftStart, shift.shiftEnd)
   );
 
-  // Early Leave: trust server for normal day shifts with checkout (e.g. 15:00–22:00).
-  const serverEarlyLeave = recordServerDayStatus(record) === "Early Leave" || record?.status === "Early Leave";
-  if (serverEarlyLeave && record?.checkOut && !isOvernightShiftEnd) {
-    return "Early Leave";
+  // Legacy only: trust server Early Leave for normal day shifts with checkout.
+  // New policy: Early Leave removed — hours decide Present vs Short Hours.
+  if (!newPolicy) {
+    const serverEarlyLeave = recordServerDayStatus(record) === "Early Leave" || record?.status === "Early Leave";
+    if (serverEarlyLeave && record?.checkOut && !isOvernightShiftEnd) {
+      return "Early Leave";
+    }
   }
 
-  // Checkout complete — derive Present / Early Leave (overnight) / etc. client-side.
+  // Checkout complete — derive Present / Short Hours (or legacy Early Leave) client-side.
   // late=true / legacy status "Late" never overrides a completed-shift Present.
   if (record?.checkOut) {
     const status = computeDayStatus(user, record, holidays, now);
@@ -929,7 +991,7 @@ export function finalizeRecord(record, user, holidays = []) {
     ...record,
     dayStatus,
     status: dayStatus,
-    late: !!(record?.checkIn && isLateCheckIn(record.checkIn, user, holidays)),
+    late: !!(record?.checkIn && isLateCheckIn(record.checkIn, user, holidays, record?.shortLeaves)),
     totalBreakMs: calcTotalBreakMs(record),
     workingMs: calcNetWorkingMs(record),
   };
@@ -1402,7 +1464,11 @@ export function applyAutoCheckouts(attendance, users, holidays = []) {
       let workingMs = finalized.workingMs;
       if (!r.checkOut && bounds.end) {
         const gross = Math.max(0, bounds.end - new Date(r.checkIn));
-        workingMs = Math.max(0, gross - calcTotalBreakMs(updated) - calcShortLeaveMs(updated, bounds.end));
+        let ms = gross;
+        if (!usesNewAttendanceHoursPolicy(dateKey, now)) {
+          ms -= calcTotalBreakMs(updated);
+        }
+        workingMs = Math.max(0, ms - calcShortLeaveMs(updated, bounds.end));
       }
       return { ...finalized, status: "Missing Checkout", dayStatus: "Missing Checkout", workingMs, autoCheckout: false };
     }
@@ -1427,17 +1493,21 @@ export function displayWorkingHours(record, user, now = new Date()) {
     !record?.checkOut &&
     (record?.status === "Working" || computed === "Working")
   );
-  // Live hours for open shifts: now − check-in − breaks (Xh Ym), independent of short_leaves.
+  // Live hours for open shifts: presence (new) or presence − breaks (legacy).
   if (isWorking) {
     return formatHoursMinutes(calcLiveWorkingMs(record, now));
   }
   const bounds = user ? getShiftBounds(user, dateKey) : {};
-  // Missing Checkout: use stored workingMs (shift end − check-in − breaks) or estimate
+  // Missing Checkout: use stored workingMs or estimate until shift end
   if (record?.checkIn && !record?.checkOut && computed === "Missing Checkout") {
     if (record.workingMs != null) return formatDurationMs(record.workingMs);
     if (bounds.end) {
       const gross = Math.max(0, bounds.end - new Date(record.checkIn));
-      return formatDurationMs(Math.max(0, gross - calcTotalBreakMs(record) - calcShortLeaveMs(record, bounds.end)));
+      let ms = gross;
+      if (!usesNewAttendanceHoursPolicy(dateKey, now)) {
+        ms -= calcTotalBreakMs(record);
+      }
+      return formatDurationMs(Math.max(0, ms - calcShortLeaveMs(record, bounds.end)));
     }
   }
   if (record?.checkOut) {
@@ -2023,7 +2093,7 @@ export function computeMonthlyAttendanceSummary(user, attendance, leaveRequests,
 
   const presentRows = rows.filter(r => r.checkIn && scheduledSet.has(r.date));
   const presentDates = new Set(presentRows.map(r => r.date));
-  const lateDays = presentRows.filter(r => isLateCheckIn(r.checkIn, user, holidays)).length;
+  const lateDays = presentRows.filter(r => isLateCheckIn(r.checkIn, user, holidays, r?.shortLeaves)).length;
   const totalWorkingMs = presentRows.reduce((sum, r) => sum + (r.workingMs || calcNetWorkingMs(r) || 0), 0);
   const totalBreakMs = presentRows.reduce((sum, r) => sum + (r.totalBreakMs ?? calcTotalBreakMs(r) ?? 0), 0);
   const totalRequiredMs = scheduledDates
@@ -2074,7 +2144,7 @@ export function lateDaysInMonth(attendance, userId, key, users, holidays = []) {
     r.date.startsWith(key) &&
     r.checkIn &&
     !isNonWorkingDay(r.date, holidays) &&
-    isLateCheckIn(r.checkIn, user, holidays)
+    isLateCheckIn(r.checkIn, user, holidays, r?.shortLeaves)
   ).length;
 }
 

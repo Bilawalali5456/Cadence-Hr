@@ -7,6 +7,7 @@ import {
   getCheckInEarliest,
   isLateCheckIn,
   computeBiometricDayStatus,
+  usesNewAttendanceHoursPolicy,
 } from "../lib/attendanceSync.js";
 import { reconcileLatePenaltiesForEmployeeMonth, reconcileLatePenaltiesForRange } from "../lib/latePenalties.js";
 
@@ -34,17 +35,18 @@ function computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut) {
     }, 0);
 }
 
-/** Net working ms = gross − breaks − overlapping short leave only. */
-function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null) {
+/** Net working ms = gross − overlapping short leave. Break deducted only for past (legacy) days. */
+function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null, dateKey = null) {
   if (!checkIn || !checkOut) return null;
   const gross = new Date(checkOut) - new Date(checkIn);
   if (!(gross > 0)) return null;
-  return Math.max(
-    0,
-    gross
-      - computeBreakMs(breaks, breakStart, breakEnd)
-      - computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut)
-  );
+  const key = dateKey || karachiDateKey(new Date(checkIn));
+  let ms = gross;
+  if (!usesNewAttendanceHoursPolicy(key)) {
+    ms -= computeBreakMs(breaks, breakStart, breakEnd);
+  }
+  ms -= computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut);
+  return Math.max(0, ms);
 }
 
 function genAttId() {
@@ -180,13 +182,15 @@ async function finalizeOpenBreak(pool, row, actorId, breakEndIso) {
   const shortLeaves = parseJsonArray(row.short_leaves);
   const totalBreakMs = computeBreakMs(breaks);
   const endForWorking = row.check_out || breakEndIso;
+  const dateKey = String(row.date || "").slice(0, 10);
   const workingMs = computeNetWorkingMs(
     row.check_in,
     endForWorking,
     breaks,
     shortLeaves,
     null,
-    null
+    null,
+    dateKey
   );
   const { rows: updated } = await pool.query(
     `UPDATE attendance SET
@@ -298,9 +302,9 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       const user = userRows[0] || null;
       totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
       if (checkIn && checkOut) {
-        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else if (checkIn && user) {
-        workingMs = computeNetWorkingMs(checkIn, new Date().toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+        workingMs = computeNetWorkingMs(checkIn, new Date().toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else {
         workingMs = null;
       }
@@ -316,7 +320,7 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
             source: r.source || "manual",
           })
         : (checkOut ? "Present" : (checkIn ? "Missing Checkout" : "Absent"));
-      late = user ? isLateCheckIn(checkIn, user, dateKey) : false;
+      late = user ? isLateCheckIn(checkIn, user, dateKey, shortLeaves) : false;
     }
 
     // Prefer the existing (user_id, date) row so corrections never land on a
@@ -704,7 +708,8 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
       }
       const user = { id: dbUser.id, name: dbUser.name, role: dbUser.role, shift: dbUser.shift };
       const checkInIso = now.toISOString();
-      const late = isLateCheckIn(checkInIso, user, today);
+      const existingShortLeaves = parseJsonArray(existing[0]?.short_leaves);
+      const late = isLateCheckIn(checkInIso, user, today, existingShortLeaves);
 
       let inserted;
       if (existing[0] && !existing[0].check_in) {
@@ -792,7 +797,8 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
         breaks,
         shortLeaves,
         null,
-        null
+        null,
+        attendanceDate
       );
       const status = computeBiometricDayStatus(user, row.check_in, checkOutIso, {
         dateKey: attendanceDate,

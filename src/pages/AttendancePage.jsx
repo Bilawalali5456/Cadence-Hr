@@ -239,7 +239,7 @@ function AdminEmployeeAttendanceDetail({
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No days in this period.</td></tr>
               ) : dailyRows.map(({ dateKey, record, status, rowNow }) => {
                 const ds = drillDownStatusPill(status, record);
-                const showLate = record?.checkIn && (record.late || isLateCheckIn(record.checkIn, user, holidays));
+                const showLate = record?.checkIn && (record.late || isLateCheckIn(record.checkIn, user, holidays, record?.shortLeaves));
                 return (
                   <tr key={dateKey} className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-3 text-slate-700">{formatDate(dateKey)}</td>
@@ -623,7 +623,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
     ? monthlyRows.filter(({ user }) => String(user?.name || "").toLowerCase().includes(normalizedMonthlySearch))
     : monthlyRows;
 
-  const dailyStatusOrder = ["All", "Working", "Present", "WFH", "Late", "Absent", "Early Leave", "Missing Checkout", "On Leave"];
+  const dailyStatusOrder = ["All", "Working", "Present", "WFH", "Late", "Absent", "Short Hours", "Early Leave", "Missing Checkout", "On Leave"];
   const dailyRows = liveRoster
     .map(u => {
       const rowDate = selectedDate;
@@ -1004,7 +1004,7 @@ export function AdminAttendanceView({ users, attendance, setAttendance, shortLea
                       {r?.checkInMethod && r?.source !== "leave" ? (
                         <span className="text-[10px] text-slate-400 ml-1">{r.checkInMethod}</span>
                       ) : null}
-                      {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays) && <Pill tone="orange">Late</Pill>}
+                      {r?.checkIn && isLateCheckIn(r.checkIn, u, holidays, r?.shortLeaves) && <Pill tone="orange">Late</Pill>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {!r?.checkIn ? "—" : (

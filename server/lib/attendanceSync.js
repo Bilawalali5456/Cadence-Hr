@@ -347,13 +347,20 @@ export function computeShortLeaveMs(shortLeaves) {
 }
 
 /**
- * Net working ms = (check-out − check-in) − breaks − approved short leaves.
- * Used so periodic sync does not wipe portal break adjustments from status.
+ * Net working ms = (check-out − check-in) − approved short leaves.
+ * Break is NOT deducted under the new policy (from today forward).
+ * Past dates keep legacy formula: gross − breaks − short leaves.
  */
-export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null) {
+export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null, dateKey = null) {
   const gross = computeWorkingMs(checkIn, checkOut);
   if (gross == null) return null;
-  return Math.max(0, gross - computeBreakMs(breaks, breakStart, breakEnd) - computeShortLeaveMs(shortLeaves));
+  const key = dateKey || (checkIn ? dateKeyFromDate(new Date(checkIn)) : null);
+  let ms = gross;
+  if (!usesNewAttendanceHoursPolicy(key)) {
+    ms -= computeBreakMs(breaks, breakStart, breakEnd);
+  }
+  ms -= computeShortLeaveMs(shortLeaves);
+  return Math.max(0, ms);
 }
 
 /**
@@ -364,27 +371,66 @@ export function computeMissingCheckoutWorkingMs(checkIn, user, dateKey, breaks =
   if (!checkIn || !user) return null;
   const shiftEnd = getShiftEndDate(user, dateKey);
   if (!shiftEnd) return null;
-  return computeNetWorkingMs(checkIn, shiftEnd.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+  return computeNetWorkingMs(checkIn, shiftEnd.toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
 }
 
-/** Required duty ms = shift window minus unpaid break. */
+/** Required duty ms. New policy: global 8h 30m. Legacy: shift window minus unpaid break. */
 export function requiredDutyMs(user, dateKey) {
   const shift = getUserShift(user, dateKey);
   if (shift.off) return 0;
+  if (usesNewAttendanceHoursPolicy(dateKey)) {
+    return REQUIRED_WORKING_MS;
+  }
   const start = shiftDateTime(dateKey, shift.shiftStart);
   let end = shiftDateTime(dateKey, shift.shiftEnd);
   if (end <= start) end = new Date(end.getTime() + 86400000);
   return Math.max(0, end - start - shift.breakMinutes * 60000);
 }
 
-export function isLateCheckIn(checkInIso, user, dateKeyOverride = null) {
+/** Global minimum duty: 8 hours 30 minutes (510 minutes). */
+export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
+
+/** New working-hours / status policy applies from today (PKT) forward only. */
+export function usesNewAttendanceHoursPolicy(dateKey, now = new Date()) {
+  const key = String(dateKey || "").slice(0, 10);
+  if (!key) return true;
+  return key >= dateKeyFromDate(now);
+}
+
+/**
+ * If an approved short leave covers shift start, return SL end as effective start for late calc.
+ */
+export function coveringShortLeaveEnd(shortLeaves, shiftStartDate) {
+  if (!shiftStartDate || Number.isNaN(new Date(shiftStartDate).getTime())) return null;
+  const startMs = new Date(shiftStartDate).getTime();
+  let bestEnd = null;
+  for (const sl of parseJsonArray(shortLeaves)) {
+    if (sl?.status && sl.status !== "approved") continue;
+    const startRaw = sl?.start || sl?.startIso;
+    const endRaw = sl?.end || sl?.endIso;
+    if (!startRaw || !endRaw) continue;
+    const slStart = new Date(startRaw).getTime();
+    const slEnd = new Date(endRaw).getTime();
+    if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) continue;
+    if (slStart <= startMs && slEnd > startMs) {
+      if (bestEnd == null || slEnd > bestEnd) bestEnd = slEnd;
+    }
+  }
+  return bestEnd != null ? new Date(bestEnd) : null;
+}
+
+export function isLateCheckIn(checkInIso, user, dateKeyOverride = null, shortLeaves = []) {
   if (!checkInIso || !user) return false;
   const d = new Date(checkInIso);
   const dateKey = dateKeyOverride || dateKeyFromDate(d);
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
-  const start = shiftDateTime(dateKey, shift.shiftStart);
-  // Late after shift start + grace (grace is part of assigned duty schedule)
+  let start = shiftDateTime(dateKey, shift.shiftStart);
+  if (usesNewAttendanceHoursPolicy(dateKey)) {
+    const coveringEnd = coveringShortLeaveEnd(shortLeaves, start);
+    if (coveringEnd) start = coveringEnd;
+  }
+  // Late after effective start + grace (grace is part of assigned duty schedule)
   const lateCutoff = new Date(start.getTime() + shift.graceMinutes * 60000);
   return d > lateCutoff;
 }
@@ -394,6 +440,8 @@ export function isEarlyLeave(checkOutIso, user, dateKeyOverride = null) {
   const d = new Date(checkOutIso);
   // Prefer attendance dateKey (critical for overnight checkouts after midnight).
   const dateKey = dateKeyOverride || dateKeyFromDate(d);
+  // New policy: Early Leave removed — hours decide Present vs Short Hours.
+  if (usesNewAttendanceHoursPolicy(dateKey)) return false;
   const shift = getUserShift(user, dateKey);
   if (shift.off) return false;
   const checkoutGraceMinutes = shift.checkoutGraceMinutes ?? 20;
@@ -416,7 +464,8 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
       options.breaks,
       options.shortLeaves,
       options.breakStart,
-      options.breakEnd
+      options.breakEnd,
+      dateKey
     );
   if (worked == null || Number.isNaN(worked)) return false;
   const required = requiredDutyMs(user, dateKey);
@@ -425,9 +474,9 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
 
 /**
  * Status priority after finalization:
- * Absent → Missing Checkout → Early Leave → Short Hours → Present
- * Late check-in alone does NOT set day status to Late when duty is completed
- * (checkout at/after shift end − grace). The Late badge on check-in covers that.
+ * Absent → Missing Checkout → (legacy Early Leave) → Short Hours → Present
+ * New policy (from today): no Early Leave — status is Present or Short Hours by 8h30m.
+ * Late check-in alone does NOT set day status to Late when duty is completed.
  * Until shift end + 30 min with check-in: Working
  * Auto Checkout is removed — never returned.
  */
@@ -442,9 +491,9 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
   if (!shouldFinalizeAttendance(user, dateKey, now)) return "Working";
 
   if (!checkOut) return "Missing Checkout";
-  // Early Leave beats Late when both apply.
-  if (isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
-  // Late check-in + completed shift → Present (or Short Hours). Not "Late".
+  // Legacy only: Early Leave beats Short Hours when both apply.
+  if (!usesNewAttendanceHoursPolicy(dateKey) && isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
+  // Late check-in + completed hours → Present (or Short Hours). Not "Late".
   if (isShortHours(checkIn, checkOut, user, { ...options, dateKey })) return "Short Hours";
   return "Present";
 }
@@ -644,9 +693,9 @@ export async function syncAttendanceFromLogs(pool) {
       const finalized = shouldFinalizeAttendance(user, dateKey, now);
       let workingMs = null;
       if (inProgress && checkIn) {
-        workingMs = computeNetWorkingMs(checkIn, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+        workingMs = computeNetWorkingMs(checkIn, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else if (checkIn && checkOut) {
-        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+        workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else if (checkIn && !checkOut && finalized) {
         // Missing Checkout — assume worked until shift end
         workingMs = computeMissingCheckoutWorkingMs(checkIn, user, dateKey, breaks, shortLeaves, breakStart, breakEnd);
@@ -655,7 +704,7 @@ export async function syncAttendanceFromLogs(pool) {
         ...timeOpts,
         netWorkingMs: workingMs,
       });
-      const late = isLateCheckIn(checkIn, user, dateKey);
+      const late = isLateCheckIn(checkIn, user, dateKey, shortLeaves);
       const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
       return { workingMs, status, late, totalBreakMs };
     }
@@ -830,7 +879,7 @@ export async function finalizeOpenAttendance(pool) {
         || (prev.check_out && prev.check_out !== prev.check_in ? prev.check_out : null);
       const lastScanMethod = prev.last_scan_method
         || (prev.check_out && prev.check_out !== prev.check_in ? prev.check_out_method : null);
-      const workingMs = computeNetWorkingMs(prev.check_in, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd);
+      const workingMs = computeNetWorkingMs(prev.check_in, now.toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
       await pool.query(
         `UPDATE attendance SET
            check_out = NULL,
@@ -844,7 +893,7 @@ export async function finalizeOpenAttendance(pool) {
          WHERE id = $5`,
         [
           lastScan, lastScanMethod, workingMs,
-          isLateCheckIn(prev.check_in, user, dateKey), prev.id,
+          isLateCheckIn(prev.check_in, user, dateKey, shortLeaves), prev.id,
         ]
       );
       rowsUpdated += 1;
@@ -871,7 +920,7 @@ export async function finalizeOpenAttendance(pool) {
       const checkOut = agg.checkOut || resolved.checkOut;
       let workingMs = null;
       if (checkOut) {
-        workingMs = computeNetWorkingMs(agg.checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd);
+        workingMs = computeNetWorkingMs(agg.checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else {
         workingMs = computeMissingCheckoutWorkingMs(agg.checkIn, user, dateKey, breaks, shortLeaves, breakStart, breakEnd);
       }
@@ -887,7 +936,7 @@ export async function finalizeOpenAttendance(pool) {
          WHERE id = $10`,
         [
           agg.checkIn, checkOut, resolved.lastScan ?? agg.lastScan, workingMs, status,
-          isLateCheckIn(agg.checkIn, user, dateKey),
+          isLateCheckIn(agg.checkIn, user, dateKey, shortLeaves),
           agg.checkInMethod, checkOut ? (agg.checkOutMethod || resolved.checkOutMethod) : null,
           agg.lastScanMethod, prev.id,
         ]
@@ -905,7 +954,7 @@ export async function finalizeOpenAttendance(pool) {
       await pool.query(
         `UPDATE attendance SET check_out = NULL, auto_checkout = false, working_ms = $1, status = $2, late = $3
          WHERE id = $4`,
-        [workingMs, status, isLateCheckIn(prev.check_in, user, dateKey), prev.id]
+        [workingMs, status, isLateCheckIn(prev.check_in, user, dateKey, shortLeaves), prev.id]
       );
       rowsUpdated += 1;
     }

@@ -233,7 +233,30 @@ function karachiDateToIso(dateKey, hhmm) {
   return new Date(Date.UTC(year, month - 1, day, hour - 5, minute, 0, 0)).toISOString();
 }
 
-function isLateCheckIn(checkIn, user, dateKey, holidays, today) {
+function coveringShortLeaveEnd(shortLeaves, shiftStartMs) {
+  if (!Number.isFinite(shiftStartMs)) return null;
+  const list = Array.isArray(shortLeaves)
+    ? shortLeaves
+    : (typeof shortLeaves === "string"
+      ? (() => { try { return JSON.parse(shortLeaves); } catch { return []; } })()
+      : []);
+  let bestEnd = null;
+  for (const sl of list || []) {
+    if (sl?.status && sl.status !== "approved") continue;
+    const startRaw = sl?.start || sl?.startIso;
+    const endRaw = sl?.end || sl?.endIso;
+    if (!startRaw || !endRaw) continue;
+    const slStart = new Date(startRaw).getTime();
+    const slEnd = new Date(endRaw).getTime();
+    if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) continue;
+    if (slStart <= shiftStartMs && slEnd > shiftStartMs) {
+      if (bestEnd == null || slEnd > bestEnd) bestEnd = slEnd;
+    }
+  }
+  return bestEnd;
+}
+
+function isLateCheckIn(checkIn, user, dateKey, holidays, today, shortLeaves = []) {
   if (!checkIn || !user) return false;
   if (isPublicHoliday(dateKey, holidays)) return false;
   if (isShiftOffDay(user, dateKey, today)) return false;
@@ -244,7 +267,13 @@ function isLateCheckIn(checkIn, user, dateKey, holidays, today) {
   const grace = Number(shift.graceMinutes ?? DEFAULT_SHIFT.graceMinutes) || 0;
   const startIso = karachiDateToIso(dateKey, start);
   if (!startIso) return false;
-  const lateCutoff = new Date(new Date(startIso).getTime() + grace * 60000);
+  let effectiveStartMs = new Date(startIso).getTime();
+  // Forward-only: covering short leave moves late cutoff (from today).
+  if (String(dateKey).slice(0, 10) >= String(today).slice(0, 10)) {
+    const coveringEnd = coveringShortLeaveEnd(shortLeaves, effectiveStartMs);
+    if (coveringEnd != null) effectiveStartMs = coveringEnd;
+  }
+  const lateCutoff = new Date(effectiveStartMs + grace * 60000);
   return new Date(checkIn) > lateCutoff;
 }
 
@@ -334,7 +363,7 @@ function buildDayCell({
   const checkOut = record?.check_out || record?.checkOut || null;
   const status = record?.status != null ? String(record.status).trim() : "";
   const source = record?.source || "";
-  const lateFlag = !!(record?.late) || (checkIn && isLateCheckIn(checkIn, user, dateKey, holidays, today));
+  const lateFlag = !!(record?.late) || (checkIn && isLateCheckIn(checkIn, user, dateKey, holidays, today, record?.short_leaves || record?.shortLeaves));
   const att = checkIn ? { checkIn, checkOut, status, source, late: lateFlag } : null;
   const isWfhAtt = !!(att && (source === "wfh" || companyWfh || wfhLeave));
   const hasSL = hasApprovedShortLeave(shortLeaveApproved, record?.short_leaves);
@@ -408,7 +437,7 @@ function summarizeEmployee({
     if (!checkIn) continue;
     presentDates.add(d);
     present += 1;
-    if (rec.late || isLateCheckIn(checkIn, user, d, holidays, today)) late += 1;
+    if (rec.late || isLateCheckIn(checkIn, user, d, holidays, today, rec.short_leaves || rec.shortLeaves)) late += 1;
     const companyWfh = isCompanyWfhDay(d, holidays);
     const wfhLeave = isApprovedWfhLeaveDay(leaveRows, user.id, d);
     if (rec.source === "wfh" || companyWfh || wfhLeave) wfh += 1;
