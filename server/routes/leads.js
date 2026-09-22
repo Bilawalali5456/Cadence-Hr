@@ -2,25 +2,24 @@ import {
   notifyLeadAssigned,
   notifyLeadReassigned,
   notifyLeadStageChanged,
-  notifyLeadWon,
+  notifyLeadOnBoarded,
   fetchUserName,
 } from "../lib/notify.js";
 
-export const LEAD_STAGES = [
-  "New",
-  "Contacted",
-  "Proposal Sent",
-  "Negotiation",
-  "Won",
-  "Lost",
-];
+export const LEAD_STAGES = ["First Call", "In Consideration", "On Boarded"];
+export const LEAD_STATUSES = ["Completed", "Off Boarded", "On Hold"];
+export const PAYMENT_METHODS = ["Bank Transfer", "PayPal", "Wise", "Cash", "Upwork", "Other"];
+export const PAYMENT_STATUSES = ["Received", "Pending", "Partial", "Overdue"];
+export const PAYMENT_CURRENCIES = ["USD", "PKR", "GBP"];
 
-const DEFAULT_CHANNEL_NAMES = new Set(["Upwork", "LinkedIn", "Jobs.pk", "CSR"]);
-const DEFAULT_DEPARTMENT_NAMES = new Set([
-  "Development",
-  "Graphics",
-  "Salesforce",
-  "Social Media Marketing",
+const DEFAULT_CHANNEL_NAMES = new Set([
+  "Upwork",
+  "LinkedIn",
+  "Ads",
+  "Direct",
+  "Referral",
+  "Cold Calling",
+  "Email Marketing",
 ]);
 
 function genId(prefix) {
@@ -31,7 +30,6 @@ function isExecutive(user) {
   return user?.role === "Executive";
 }
 
-/** Employee / Manager — may work assigned leads only. */
 function isLeadWorker(user) {
   return user?.role === "Employee" || user?.role === "Manager";
 }
@@ -45,25 +43,71 @@ function normalizeStage(stage) {
   return LEAD_STAGES.includes(s) ? s : null;
 }
 
-function normalizeCurrency(currency) {
-  const c = String(currency || "PKR").trim().toUpperCase();
-  return c === "USD" ? "USD" : "PKR";
+function normalizeLeadStatus(status, stage) {
+  if (stage !== "On Boarded") return null;
+  if (status == null || status === "") return null;
+  const s = String(status).trim();
+  return LEAD_STATUSES.includes(s) ? s : null;
+}
+
+function normalizePaymentCurrency(currency) {
+  const c = String(currency || "USD").trim().toUpperCase();
+  return PAYMENT_CURRENCIES.includes(c) ? c : "USD";
+}
+
+function normalizePaymentStatus(status) {
+  const s = String(status || "Pending").trim();
+  return PAYMENT_STATUSES.includes(s) ? s : "Pending";
+}
+
+function normalizePaymentMethod(method) {
+  const m = String(method || "").trim();
+  if (!m) return "";
+  return PAYMENT_METHODS.includes(m) ? m : m;
+}
+
+function toDateOnly(value, fallback = null) {
+  if (!value) return fallback;
+  const s = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallback;
+}
+
+function todayPktDate() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
+}
+
+function monthRange(month) {
+  const m = String(month || "").trim();
+  const mm = /^(\d{4})-(\d{2})$/.exec(m);
+  if (!mm) return null;
+  const year = Number(mm[1]);
+  const monthIndex = Number(mm[2]) - 1;
+  const start = `${mm[1]}-${mm[2]}-01`;
+  const endDate = new Date(Date.UTC(year, monthIndex + 1, 0));
+  const end = `${endDate.getUTCFullYear()}-${String(endDate.getUTCMonth() + 1).padStart(2, "0")}-${String(endDate.getUTCDate()).padStart(2, "0")}`;
+  return { start, end };
 }
 
 function leadToJs(r) {
   return {
     id: r.id,
     clientName: r.client_name,
+    businessName: r.business_name || "",
     channel: r.channel,
-    department: r.department,
+    source: r.channel,
     assignedTo: r.assigned_to || null,
     assignedToName: r.assigned_to_name || undefined,
-    stage: r.stage || "New",
+    stage: r.stage || "First Call",
+    opportunity: r.stage || "First Call",
+    status: r.status || null,
+    workSummary: r.description || "",
     description: r.description || "",
-    amount: r.amount != null ? Number(r.amount) : 0,
-    currency: r.currency || "PKR",
-    contactInfo: r.contact_info || "",
+    rate: r.rate || "",
+    monthlyRevenue: r.monthly_revenue || "",
+    businessWebsite: r.business_website || "",
+    socialHandleUrl: r.social_handle_url || "",
     notes: r.notes || "",
+    leadDate: r.lead_date || null,
     addedBy: r.added_by || null,
     addedByName: r.added_by_name || undefined,
     createdAt: r.created_at || null,
@@ -94,13 +138,22 @@ function channelToJs(r) {
   };
 }
 
-function departmentToJs(r) {
+function paymentToJs(r) {
   return {
     id: r.id,
-    name: r.name,
+    leadId: r.lead_id,
+    clientName: r.client_name || undefined,
+    assignedTo: r.assigned_to || null,
+    assignedToName: r.assigned_to_name || undefined,
+    amount: r.amount != null ? Number(r.amount) : 0,
+    currency: r.currency || "USD",
+    paymentDate: r.payment_date || null,
+    paymentMethod: r.payment_method || "",
+    paymentStatus: r.payment_status || "Pending",
+    notes: r.notes || "",
     createdBy: r.created_by || null,
     createdAt: r.created_at || null,
-    isDefault: DEFAULT_DEPARTMENT_NAMES.has(r.name),
+    updatedAt: r.updated_at || null,
   };
 }
 
@@ -143,16 +196,20 @@ async function assertAssigneeValid(client, assigneeId) {
   return u;
 }
 
+async function assertCanViewLead(actor, lead) {
+  if (isExecutive(actor)) return true;
+  if (isLeadWorker(actor) && lead.assigned_to === actor.id) return true;
+  return false;
+}
+
 export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
-  // ─── Channels ───
+  // ─── Sources (channels) ───
   app.get("/api/lead-channels", requireAuth, async (req, res) => {
     try {
       if (!canAccessLeads(req.authUser)) {
         return res.status(403).json({ error: "Forbidden" });
       }
-      const { rows } = await pool.query(
-        `SELECT * FROM lead_channels ORDER BY LOWER(name)`
-      );
+      const { rows } = await pool.query(`SELECT * FROM lead_channels ORDER BY LOWER(name)`);
       res.json(rows.map(channelToJs));
     } catch (e) {
       console.error("GET /api/lead-channels error:", e.message);
@@ -173,7 +230,7 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
       );
       res.status(201).json(channelToJs(rows[0]));
     } catch (e) {
-      if (e.code === "23505") return res.status(409).json({ error: "Channel already exists" });
+      if (e.code === "23505") return res.status(409).json({ error: "Source already exists" });
       console.error("POST /api/lead-channels error:", e.message);
       res.status(500).json({ error: e.message });
     }
@@ -184,9 +241,9 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
       const id = String(req.params.id || "");
       const { rows } = await pool.query(`SELECT * FROM lead_channels WHERE id = $1 LIMIT 1`, [id]);
       const row = rows[0];
-      if (!row) return res.status(404).json({ error: "Channel not found" });
+      if (!row) return res.status(404).json({ error: "Source not found" });
       if (DEFAULT_CHANNEL_NAMES.has(row.name)) {
-        return res.status(403).json({ error: "Cannot delete default channels" });
+        return res.status(403).json({ error: "Cannot delete default sources" });
       }
       await pool.query(`DELETE FROM lead_channels WHERE id = $1`, [id]);
       res.json({ ok: true });
@@ -196,59 +253,102 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
     }
   });
 
-  // ─── Departments ───
-  app.get("/api/lead-departments", requireAuth, async (req, res) => {
+  // ─── Payment summary (before :id routes) ───
+  app.get("/api/lead-payments/summary", requireAuth, requireExecutive, async (req, res) => {
     try {
-      if (!canAccessLeads(req.authUser)) {
-        return res.status(403).json({ error: "Forbidden" });
+      const range = monthRange(req.query.month);
+      const params = [];
+      let filter = "";
+      if (range) {
+        params.push(range.start, range.end);
+        filter = `WHERE p.payment_date >= $1 AND p.payment_date <= $2`;
       }
       const { rows } = await pool.query(
-        `SELECT * FROM lead_departments ORDER BY LOWER(name)`
+        `SELECT
+           p.currency,
+           p.payment_status,
+           COALESCE(SUM(p.amount), 0)::float AS total
+         FROM lead_payments p
+         ${filter}
+         GROUP BY p.currency, p.payment_status`,
+        params
       );
-      res.json(rows.map(departmentToJs));
-    } catch (e) {
-      console.error("GET /api/lead-departments error:", e.message);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.post("/api/lead-departments", requireAuth, requireExecutive, async (req, res) => {
-    try {
-      const name = String(req.body?.name || "").trim();
-      if (!name) return res.status(400).json({ error: "name is required" });
-      const id = genId("lead-dept");
-      const { rows } = await pool.query(
-        `INSERT INTO lead_departments (id, name, created_by)
-         VALUES ($1, $2, $3)
-         RETURNING *`,
-        [id, name, req.authUser.id]
-      );
-      res.status(201).json(departmentToJs(rows[0]));
-    } catch (e) {
-      if (e.code === "23505") return res.status(409).json({ error: "Department already exists" });
-      console.error("POST /api/lead-departments error:", e.message);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.delete("/api/lead-departments/:id", requireAuth, requireExecutive, async (req, res) => {
-    try {
-      const id = String(req.params.id || "");
-      const { rows } = await pool.query(`SELECT * FROM lead_departments WHERE id = $1 LIMIT 1`, [id]);
-      const row = rows[0];
-      if (!row) return res.status(404).json({ error: "Department not found" });
-      if (DEFAULT_DEPARTMENT_NAMES.has(row.name)) {
-        return res.status(403).json({ error: "Cannot delete default departments" });
+      const byCurrency = {};
+      let received = 0;
+      let pending = 0;
+      let overdue = 0;
+      let partial = 0;
+      for (const r of rows) {
+        const cur = r.currency || "USD";
+        if (!byCurrency[cur]) byCurrency[cur] = { received: 0, pending: 0, partial: 0, overdue: 0 };
+        const amt = Number(r.total) || 0;
+        const st = r.payment_status;
+        if (st === "Received") {
+          byCurrency[cur].received += amt;
+          received += amt;
+        } else if (st === "Pending") {
+          byCurrency[cur].pending += amt;
+          pending += amt;
+        } else if (st === "Partial") {
+          byCurrency[cur].partial += amt;
+          partial += amt;
+        } else if (st === "Overdue") {
+          byCurrency[cur].overdue += amt;
+          overdue += amt;
+        }
       }
-      await pool.query(`DELETE FROM lead_departments WHERE id = $1`, [id]);
-      res.json({ ok: true });
+      res.json({
+        month: req.query.month || null,
+        received,
+        pending,
+        partial,
+        overdue,
+        pendingOrPartial: pending + partial,
+        byCurrency,
+        rows,
+      });
     } catch (e) {
-      console.error("DELETE /api/lead-departments/:id error:", e.message);
+      console.error("GET /api/lead-payments/summary error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ─── Leads list / create ───
+  app.get("/api/lead-payments", requireAuth, requireExecutive, async (req, res) => {
+    try {
+      const range = monthRange(req.query.month);
+      const status = String(req.query.status || "").trim();
+      const employeeId = String(req.query.employeeId || req.query.assignedTo || "").trim();
+      const params = [];
+      const where = [];
+      if (range) {
+        params.push(range.start, range.end);
+        where.push(`p.payment_date >= $${params.length - 1} AND p.payment_date <= $${params.length}`);
+      }
+      if (status && PAYMENT_STATUSES.includes(status)) {
+        params.push(status);
+        where.push(`p.payment_status = $${params.length}`);
+      }
+      if (employeeId) {
+        params.push(employeeId);
+        where.push(`l.assigned_to = $${params.length}`);
+      }
+      const sql = `
+        SELECT p.*, l.client_name, l.assigned_to, u.name AS assigned_to_name
+        FROM lead_payments p
+        JOIN leads l ON l.id = p.lead_id
+        LEFT JOIN users u ON u.id = l.assigned_to
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY p.payment_date DESC, p.created_at DESC
+      `;
+      const { rows } = await pool.query(sql, params);
+      res.json(rows.map(paymentToJs));
+    } catch (e) {
+      console.error("GET /api/lead-payments error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Leads CRUD ───
   app.get("/api/leads", requireAuth, async (req, res) => {
     try {
       const actor = req.authUser;
@@ -261,7 +361,7 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
         params.push(actor.id);
         sql += ` WHERE l.assigned_to = $1`;
       }
-      sql += ` ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC`;
+      sql += ` ORDER BY COALESCE(l.lead_date, l.created_at::date) DESC, l.updated_at DESC`;
       const { rows } = await pool.query(sql, params);
       res.json(rows.map(leadToJs));
     } catch (e) {
@@ -275,31 +375,35 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
     try {
       const body = req.body || {};
       const clientName = String(body.clientName || body.client_name || "").trim();
-      const channel = String(body.channel || "").trim();
-      const department = String(body.department || "").trim();
-      const stage = normalizeStage(body.stage) || "New";
-      const description = String(body.description || "").trim();
-      const contactInfo = String(body.contactInfo || body.contact_info || "").trim();
+      const channel = String(body.channel || body.source || "").trim();
+      const stage = normalizeStage(body.stage || body.opportunity) || "First Call";
+      const status = normalizeLeadStatus(body.status, stage);
+      const workSummary = String(body.workSummary || body.description || "").trim();
+      const rate = String(body.rate || "").trim();
+      const businessName = String(body.businessName || body.business_name || "").trim();
+      const monthlyRevenue = String(body.monthlyRevenue || body.monthly_revenue || "").trim();
+      const businessWebsite = String(body.businessWebsite || body.business_website || "").trim();
+      const socialHandleUrl = String(body.socialHandleUrl || body.social_handle_url || "").trim();
       const notes = String(body.notes || "").trim();
-      const amount = Number(body.amount) || 0;
-      const currency = normalizeCurrency(body.currency);
+      const leadDate = toDateOnly(body.leadDate || body.lead_date || body.date, todayPktDate());
       const assignedTo = body.assignedTo || body.assigned_to || null;
 
       if (!clientName) return res.status(400).json({ error: "clientName is required" });
-      if (!channel) return res.status(400).json({ error: "channel is required" });
-      if (!department) return res.status(400).json({ error: "department is required" });
+      if (!channel) return res.status(400).json({ error: "source is required" });
 
       await client.query("BEGIN");
       const assignee = await assertAssigneeValid(client, assignedTo);
       const id = genId("lead");
       await client.query(
         `INSERT INTO leads (
-           id, client_name, channel, department, assigned_to, stage,
-           description, amount, currency, contact_info, notes, added_by
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+           id, client_name, channel, assigned_to, stage, status,
+           description, rate, business_name, monthly_revenue,
+           business_website, social_handle_url, notes, lead_date, added_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
-          id, clientName, channel, department, assignee?.id || null, stage,
-          description, amount, currency, contactInfo, notes, req.authUser.id,
+          id, clientName, channel, assignee?.id || null, stage, status,
+          workSummary, rate, businessName, monthlyRevenue,
+          businessWebsite, socialHandleUrl, notes, leadDate, req.authUser.id,
         ]
       );
 
@@ -312,10 +416,10 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
       });
 
       if (assignee?.id) {
-        await notifyLeadAssigned(client, {
-          assigneeId: assignee.id,
-          clientName,
-        });
+        await notifyLeadAssigned(client, { assigneeId: assignee.id, clientName });
+      }
+      if (stage === "On Boarded") {
+        await notifyLeadOnBoarded(client, { clientName, excludeUserId: req.authUser.id });
       }
 
       const row = await fetchLeadById(client, id);
@@ -349,29 +453,29 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
       }
 
       const isExec = isExecutive(actor);
-      if (!isExec) {
-        if (existing.assigned_to !== actor.id) {
-          await client.query("ROLLBACK");
-          return res.status(403).json({ error: "Forbidden — not your lead" });
-        }
+      if (!isExec && existing.assigned_to !== actor.id) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Forbidden — not your lead" });
       }
 
       let next = {
         client_name: existing.client_name,
         channel: existing.channel,
-        department: existing.department,
         assigned_to: existing.assigned_to,
         stage: existing.stage,
+        status: existing.status,
         description: existing.description || "",
-        amount: Number(existing.amount) || 0,
-        currency: existing.currency || "PKR",
-        contact_info: existing.contact_info || "",
+        rate: existing.rate || "",
+        business_name: existing.business_name || "",
+        monthly_revenue: existing.monthly_revenue || "",
+        business_website: existing.business_website || "",
+        social_handle_url: existing.social_handle_url || "",
         notes: existing.notes || "",
+        lead_date: existing.lead_date,
       };
 
       const oldAssignee = existing.assigned_to;
       const oldStage = existing.stage;
-      let stageNoteText = null;
       let freeNoteText = null;
 
       if (isExec) {
@@ -382,15 +486,29 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
             return res.status(400).json({ error: "clientName is required" });
           }
         }
-        if (body.channel !== undefined) next.channel = String(body.channel || "").trim();
-        if (body.department !== undefined) next.department = String(body.department || "").trim();
-        if (body.description !== undefined) next.description = String(body.description || "").trim();
-        if (body.contactInfo !== undefined || body.contact_info !== undefined) {
-          next.contact_info = String(body.contactInfo ?? body.contact_info ?? "").trim();
+        if (body.channel !== undefined || body.source !== undefined) {
+          next.channel = String(body.channel ?? body.source ?? "").trim();
+        }
+        if (body.workSummary !== undefined || body.description !== undefined) {
+          next.description = String(body.workSummary ?? body.description ?? "").trim();
+        }
+        if (body.rate !== undefined) next.rate = String(body.rate || "").trim();
+        if (body.businessName !== undefined || body.business_name !== undefined) {
+          next.business_name = String(body.businessName ?? body.business_name ?? "").trim();
+        }
+        if (body.monthlyRevenue !== undefined || body.monthly_revenue !== undefined) {
+          next.monthly_revenue = String(body.monthlyRevenue ?? body.monthly_revenue ?? "").trim();
+        }
+        if (body.businessWebsite !== undefined || body.business_website !== undefined) {
+          next.business_website = String(body.businessWebsite ?? body.business_website ?? "").trim();
+        }
+        if (body.socialHandleUrl !== undefined || body.social_handle_url !== undefined) {
+          next.social_handle_url = String(body.socialHandleUrl ?? body.social_handle_url ?? "").trim();
         }
         if (body.notes !== undefined) next.notes = String(body.notes || "").trim();
-        if (body.amount !== undefined) next.amount = Number(body.amount) || 0;
-        if (body.currency !== undefined) next.currency = normalizeCurrency(body.currency);
+        if (body.leadDate !== undefined || body.lead_date !== undefined || body.date !== undefined) {
+          next.lead_date = toDateOnly(body.leadDate ?? body.lead_date ?? body.date, next.lead_date);
+        }
         if (body.assignedTo !== undefined || body.assigned_to !== undefined) {
           const raw = body.assignedTo ?? body.assigned_to;
           if (raw) {
@@ -400,44 +518,62 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
             next.assigned_to = null;
           }
         }
-        if (!next.channel || !next.department) {
+        if (!next.channel) {
           await client.query("ROLLBACK");
-          return res.status(400).json({ error: "channel and department are required" });
+          return res.status(400).json({ error: "source is required" });
+        }
+
+        // Status — Executive only, and only when On Boarded
+        if (body.status !== undefined) {
+          // will normalize after stage resolved
         }
       }
 
-      if (body.stage !== undefined) {
-        const stage = normalizeStage(body.stage);
+      if (body.stage !== undefined || body.opportunity !== undefined) {
+        const stage = normalizeStage(body.stage ?? body.opportunity);
         if (!stage) {
           await client.query("ROLLBACK");
-          return res.status(400).json({ error: "Invalid stage" });
+          return res.status(400).json({ error: "Invalid opportunity stage" });
         }
         next.stage = stage;
       }
 
-      // Optional activity note from employee/exec on same request
+      if (isExec && body.status !== undefined) {
+        next.status = normalizeLeadStatus(body.status, next.stage);
+      } else if (!isExec) {
+        // Employees cannot change status
+        next.status = next.stage === "On Boarded" ? existing.status : null;
+      }
+
+      if (next.stage !== "On Boarded") {
+        next.status = null;
+      } else if (isExec && body.status !== undefined) {
+        next.status = normalizeLeadStatus(body.status, next.stage);
+      }
+
       if (body.note !== undefined && String(body.note).trim()) {
         freeNoteText = String(body.note).trim();
       }
 
       await client.query(
         `UPDATE leads SET
-           client_name = $1, channel = $2, department = $3, assigned_to = $4, stage = $5,
-           description = $6, amount = $7, currency = $8, contact_info = $9, notes = $10
-         WHERE id = $11`,
+           client_name = $1, channel = $2, assigned_to = $3, stage = $4, status = $5,
+           description = $6, rate = $7, business_name = $8, monthly_revenue = $9,
+           business_website = $10, social_handle_url = $11, notes = $12, lead_date = $13
+         WHERE id = $14`,
         [
-          next.client_name, next.channel, next.department, next.assigned_to, next.stage,
-          next.description, next.amount, next.currency, next.contact_info, next.notes, id,
+          next.client_name, next.channel, next.assigned_to, next.stage, next.status,
+          next.description, next.rate, next.business_name, next.monthly_revenue,
+          next.business_website, next.social_handle_url, next.notes, next.lead_date, id,
         ]
       );
 
       if (next.stage !== oldStage) {
         const actorName = await fetchUserName(client, actor.id) || actor.name || "Someone";
-        stageNoteText = `Stage changed from ${oldStage} to ${next.stage} by ${actorName}`;
         await insertLeadNote(client, {
           leadId: id,
           userId: actor.id,
-          note: stageNoteText,
+          note: `Stage changed from ${oldStage} to ${next.stage} by ${actorName}`,
           stageFrom: oldStage,
           stageTo: next.stage,
         });
@@ -450,11 +586,9 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
             excludeUserId: actor.id,
           });
         }
-        if (next.stage === "Won" && oldStage !== "Won") {
-          await notifyLeadWon(client, {
+        if (next.stage === "On Boarded" && oldStage !== "On Boarded") {
+          await notifyLeadOnBoarded(client, {
             clientName: next.client_name,
-            amount: next.amount,
-            currency: next.currency,
             excludeUserId: isExec ? actor.id : null,
           });
         }
@@ -505,13 +639,11 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
   app.get("/api/leads/:id/notes", requireAuth, async (req, res) => {
     try {
       const actor = req.authUser;
-      if (!canAccessLeads(actor)) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+      if (!canAccessLeads(actor)) return res.status(403).json({ error: "Forbidden" });
       const id = String(req.params.id || "");
       const lead = await fetchLeadById(pool, id);
       if (!lead) return res.status(404).json({ error: "Lead not found" });
-      if (!isExecutive(actor) && lead.assigned_to !== actor.id) {
+      if (!(await assertCanViewLead(actor, lead))) {
         return res.status(403).json({ error: "Forbidden" });
       }
       const { rows } = await pool.query(
@@ -533,9 +665,7 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
     const client = await pool.connect();
     try {
       const actor = req.authUser;
-      if (!canAccessLeads(actor)) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+      if (!canAccessLeads(actor)) return res.status(403).json({ error: "Forbidden" });
       const id = String(req.params.id || "");
       const note = String(req.body?.note || "").trim();
       if (!note) return res.status(400).json({ error: "note is required" });
@@ -546,7 +676,7 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Lead not found" });
       }
-      if (!isExecutive(actor) && lead.assigned_to !== actor.id) {
+      if (!(await assertCanViewLead(actor, lead))) {
         await client.query("ROLLBACK");
         return res.status(403).json({ error: "Forbidden" });
       }
@@ -571,6 +701,147 @@ export function registerLeadsRoutes(app, pool, requireAuth, requireExecutive) {
       res.status(500).json({ error: e.message });
     } finally {
       client.release();
+    }
+  });
+
+  // ─── Payments per lead ───
+  app.get("/api/leads/:id/payments", requireAuth, async (req, res) => {
+    try {
+      const actor = req.authUser;
+      if (!canAccessLeads(actor)) return res.status(403).json({ error: "Forbidden" });
+      const id = String(req.params.id || "");
+      const lead = await fetchLeadById(pool, id);
+      if (!lead) return res.status(404).json({ error: "Lead not found" });
+      if (!(await assertCanViewLead(actor, lead))) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      const { rows } = await pool.query(
+        `SELECT p.*, l.client_name, l.assigned_to, u.name AS assigned_to_name
+         FROM lead_payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN users u ON u.id = l.assigned_to
+         WHERE p.lead_id = $1
+         ORDER BY p.payment_date DESC, p.created_at DESC`,
+        [id]
+      );
+      res.json(rows.map(paymentToJs));
+    } catch (e) {
+      console.error("GET /api/leads/:id/payments error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/leads/:id/payments", requireAuth, requireExecutive, async (req, res) => {
+    try {
+      const id = String(req.params.id || "");
+      const lead = await fetchLeadById(pool, id);
+      if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+      const body = req.body || {};
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount)) {
+        return res.status(400).json({ error: "amount is required" });
+      }
+      const paymentDate = toDateOnly(body.paymentDate || body.payment_date || body.date, todayPktDate());
+      if (!paymentDate) return res.status(400).json({ error: "paymentDate is required" });
+
+      const payId = genId("lpay");
+      const { rows } = await pool.query(
+        `INSERT INTO lead_payments (
+           id, lead_id, amount, currency, payment_date, payment_method, payment_status, notes, created_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING *`,
+        [
+          payId,
+          id,
+          amount,
+          normalizePaymentCurrency(body.currency),
+          paymentDate,
+          normalizePaymentMethod(body.paymentMethod || body.payment_method),
+          normalizePaymentStatus(body.paymentStatus || body.payment_status),
+          String(body.notes || "").trim(),
+          req.authUser.id,
+        ]
+      );
+      res.status(201).json(paymentToJs({
+        ...rows[0],
+        client_name: lead.client_name,
+        assigned_to: lead.assigned_to,
+        assigned_to_name: lead.assigned_to_name,
+      }));
+    } catch (e) {
+      console.error("POST /api/leads/:id/payments error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/lead-payments/:id", requireAuth, requireExecutive, async (req, res) => {
+    try {
+      const id = String(req.params.id || "");
+      const { rows: existingRows } = await pool.query(
+        `SELECT p.*, l.client_name, l.assigned_to, u.name AS assigned_to_name
+         FROM lead_payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN users u ON u.id = l.assigned_to
+         WHERE p.id = $1 LIMIT 1`,
+        [id]
+      );
+      const existing = existingRows[0];
+      if (!existing) return res.status(404).json({ error: "Payment not found" });
+
+      const body = req.body || {};
+      const amount = body.amount !== undefined ? Number(body.amount) : Number(existing.amount);
+      if (!Number.isFinite(amount)) return res.status(400).json({ error: "Invalid amount" });
+
+      const paymentDate = body.paymentDate !== undefined || body.payment_date !== undefined || body.date !== undefined
+        ? toDateOnly(body.paymentDate ?? body.payment_date ?? body.date, existing.payment_date)
+        : existing.payment_date;
+
+      const { rows } = await pool.query(
+        `UPDATE lead_payments SET
+           amount = $1,
+           currency = $2,
+           payment_date = $3,
+           payment_method = $4,
+           payment_status = $5,
+           notes = $6
+         WHERE id = $7
+         RETURNING *`,
+        [
+          amount,
+          body.currency !== undefined ? normalizePaymentCurrency(body.currency) : existing.currency,
+          paymentDate,
+          body.paymentMethod !== undefined || body.payment_method !== undefined
+            ? normalizePaymentMethod(body.paymentMethod ?? body.payment_method)
+            : existing.payment_method,
+          body.paymentStatus !== undefined || body.payment_status !== undefined
+            ? normalizePaymentStatus(body.paymentStatus ?? body.payment_status)
+            : existing.payment_status,
+          body.notes !== undefined ? String(body.notes || "").trim() : existing.notes,
+          id,
+        ]
+      );
+      res.json(paymentToJs({
+        ...rows[0],
+        client_name: existing.client_name,
+        assigned_to: existing.assigned_to,
+        assigned_to_name: existing.assigned_to_name,
+      }));
+    } catch (e) {
+      console.error("PUT /api/lead-payments/:id error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/lead-payments/:id", requireAuth, requireExecutive, async (req, res) => {
+    try {
+      const id = String(req.params.id || "");
+      const { rowCount } = await pool.query(`DELETE FROM lead_payments WHERE id = $1`, [id]);
+      if (!rowCount) return res.status(404).json({ error: "Payment not found" });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("DELETE /api/lead-payments/:id error:", e.message);
+      res.status(500).json({ error: e.message });
     }
   });
 }

@@ -292,30 +292,56 @@ export async function apiDeleteLeadChannel(id) {
   return body;
 }
 
-export async function apiFetchLeadDepartments() {
-  const data = await apiGetJson("/lead-departments");
+export async function apiFetchLeadPayments(leadId) {
+  const data = await apiGetJson(`/leads/${encodeURIComponent(leadId)}/payments`);
   return Array.isArray(data) ? data : [];
 }
 
-export async function apiCreateLeadDepartment(name) {
-  const res = await apiFetch(`${API_URL}/lead-departments`, {
+export async function apiCreateLeadPayment(leadId, payload) {
+  const res = await apiFetch(`${API_URL}/leads/${encodeURIComponent(leadId)}/payments`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
   return body;
 }
 
-export async function apiDeleteLeadDepartment(id) {
-  const res = await apiFetch(`${API_URL}/lead-departments/${encodeURIComponent(id)}`, {
+export async function apiUpdateLeadPayment(id, payload) {
+  const res = await apiFetch(`${API_URL}/lead-payments/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
+  return body;
+}
+
+export async function apiDeleteLeadPayment(id) {
+  const res = await apiFetch(`${API_URL}/lead-payments/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `API error ${res.status}`);
   return body;
+}
+
+export async function apiFetchAllLeadPayments(params = {}) {
+  const q = new URLSearchParams();
+  if (params.month) q.set("month", params.month);
+  if (params.status) q.set("status", params.status);
+  if (params.employeeId) q.set("employeeId", params.employeeId);
+  const qs = q.toString();
+  const data = await apiGetJson(`/lead-payments${qs ? `?${qs}` : ""}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiFetchLeadPaymentsSummary(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiGetJson(`/lead-payments/summary${q}`);
 }
 
 export async function apiFetchPayroll() {

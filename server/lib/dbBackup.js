@@ -60,7 +60,7 @@ const LOGICAL_TABLES = [
   "users", "attendance", "leave_requests", "short_leave_requests", "payroll",
   "notifications", "warnings", "assets", "biometric_user_map", "device_user_mapping", "device_user_mapping_audit", "user_sessions",
   "attendance_logs", "biometric_logs",
-  "leads", "lead_notes", "lead_channels", "lead_departments", "weekly_reports",
+  "leads", "lead_notes", "lead_channels", "lead_payments", "weekly_reports",
 ];
 
 async function logicalJsonBackup(pool, filename) {

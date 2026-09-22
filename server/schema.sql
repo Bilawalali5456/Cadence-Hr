@@ -616,28 +616,24 @@ CREATE TABLE IF NOT EXISTS lead_channels (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS lead_departments (
-  id          TEXT PRIMARY KEY,
-  name        TEXT UNIQUE NOT NULL,
-  created_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS leads (
-  id            TEXT PRIMARY KEY,
-  client_name   TEXT NOT NULL,
-  channel       TEXT NOT NULL,
-  department    TEXT NOT NULL,
-  assigned_to   TEXT REFERENCES users(id) ON DELETE SET NULL,
-  stage         TEXT NOT NULL DEFAULT 'New',
-  description   TEXT DEFAULT '',
-  amount        NUMERIC DEFAULT 0,
-  currency      TEXT NOT NULL DEFAULT 'PKR',
-  contact_info  TEXT DEFAULT '',
-  notes         TEXT DEFAULT '',
-  added_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ DEFAULT NOW()
+  id                 TEXT PRIMARY KEY,
+  client_name        TEXT NOT NULL,
+  channel            TEXT NOT NULL,
+  assigned_to        TEXT REFERENCES users(id) ON DELETE SET NULL,
+  stage              TEXT NOT NULL DEFAULT 'First Call',
+  status             TEXT DEFAULT NULL,
+  description        TEXT DEFAULT '',
+  rate               TEXT DEFAULT '',
+  business_name      TEXT DEFAULT '',
+  monthly_revenue    TEXT DEFAULT '',
+  business_website   TEXT DEFAULT '',
+  social_handle_url  TEXT DEFAULT '',
+  notes              TEXT DEFAULT '',
+  lead_date          DATE,
+  added_by           TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS lead_notes (
@@ -650,28 +646,130 @@ CREATE TABLE IF NOT EXISTS lead_notes (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS lead_payments (
+  id              TEXT PRIMARY KEY,
+  lead_id         TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  amount          NUMERIC NOT NULL,
+  currency        TEXT NOT NULL DEFAULT 'USD',
+  payment_date    DATE NOT NULL,
+  payment_method  TEXT DEFAULT '',
+  payment_status  TEXT NOT NULL DEFAULT 'Pending',
+  notes           TEXT DEFAULT '',
+  created_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_leads_assigned_to ON leads (assigned_to);
 CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads (stage);
+CREATE INDEX IF NOT EXISTS idx_leads_status ON leads (status);
 CREATE INDEX IF NOT EXISTS idx_leads_channel ON leads (channel);
-CREATE INDEX IF NOT EXISTS idx_leads_department ON leads (department);
 CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads (created_at);
+CREATE INDEX IF NOT EXISTS idx_leads_lead_date ON leads (lead_date);
 CREATE INDEX IF NOT EXISTS idx_lead_notes_lead_id ON lead_notes (lead_id);
+CREATE INDEX IF NOT EXISTS idx_lead_payments_lead_id ON lead_payments (lead_id);
+CREATE INDEX IF NOT EXISTS idx_lead_payments_date ON lead_payments (payment_date);
+CREATE INDEX IF NOT EXISTS idx_lead_payments_status ON lead_payments (payment_status);
 
 DROP TRIGGER IF EXISTS trg_leads_updated_at ON leads;
 CREATE TRIGGER trg_leads_updated_at
   BEFORE UPDATE ON leads
   FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_lead_payments_updated_at ON lead_payments;
+CREATE TRIGGER trg_lead_payments_updated_at
+  BEFORE UPDATE ON lead_payments
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+-- Forward-only migrations for existing leads tables
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_name TEXT DEFAULT '';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS monthly_revenue TEXT DEFAULT '';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_website TEXT DEFAULT '';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS social_handle_url TEXT DEFAULT '';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS status TEXT DEFAULT NULL;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS rate TEXT DEFAULT '';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_date DATE;
+
+-- Migrate legacy amount/currency → rate (once)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'leads' AND column_name = 'amount'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE leads
+      SET rate = TRIM(
+        CASE
+          WHEN amount IS NOT NULL AND amount::numeric <> 0
+            THEN amount::text || COALESCE(' ' || NULLIF(currency, ''), '')
+          ELSE COALESCE(rate, '')
+        END
+      )
+      WHERE rate IS NULL OR TRIM(rate) = ''
+    $sql$;
+  END IF;
+END $$;
+
+-- Migrate legacy stages → First Call / In Consideration / On Boarded
+UPDATE leads SET stage = 'First Call'
+  WHERE stage IS NULL OR stage IN ('New', 'First Call');
+UPDATE leads SET stage = 'In Consideration'
+  WHERE stage IN ('Contacted', 'Proposal Sent', 'Negotiation', 'In Consideration');
+UPDATE leads SET stage = 'On Boarded', status = COALESCE(NULLIF(status, ''), 'Completed')
+  WHERE stage IN ('Won');
+UPDATE leads SET stage = 'On Boarded', status = COALESCE(NULLIF(status, ''), 'Off Boarded')
+  WHERE stage IN ('Lost');
+UPDATE leads SET stage = 'On Boarded'
+  WHERE stage = 'On Boarded';
+
+-- Clear status when not On Boarded
+UPDATE leads SET status = NULL
+  WHERE stage IS DISTINCT FROM 'On Boarded';
+
+UPDATE leads
+SET lead_date = COALESCE(lead_date, (created_at AT TIME ZONE 'Asia/Karachi')::date, CURRENT_DATE)
+WHERE lead_date IS NULL;
+
+ALTER TABLE leads ALTER COLUMN stage SET DEFAULT 'First Call';
+
+-- Drop legacy columns / department table (safe if already gone)
+DROP INDEX IF EXISTS idx_leads_department;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'leads' AND column_name = 'department'
+  ) THEN
+    EXECUTE 'ALTER TABLE leads ALTER COLUMN department DROP NOT NULL';
+  END IF;
+END $$;
+ALTER TABLE leads DROP COLUMN IF EXISTS department;
+ALTER TABLE leads DROP COLUMN IF EXISTS amount;
+ALTER TABLE leads DROP COLUMN IF EXISTS currency;
+DROP TABLE IF EXISTS lead_departments;
+
+-- Default sources (cannot delete by name in API)
 INSERT INTO lead_channels (id, name) VALUES
   ('lead-ch-upwork', 'Upwork'),
   ('lead-ch-linkedin', 'LinkedIn'),
-  ('lead-ch-jobspk', 'Jobs.pk'),
-  ('lead-ch-csr', 'CSR')
-ON CONFLICT (id) DO NOTHING;
+  ('lead-ch-ads', 'Ads'),
+  ('lead-ch-direct', 'Direct'),
+  ('lead-ch-referral', 'Referral'),
+  ('lead-ch-coldcalling', 'Cold Calling'),
+  ('lead-ch-emailmarketing', 'Email Marketing')
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
 
-INSERT INTO lead_departments (id, name) VALUES
-  ('lead-dept-development', 'Development'),
-  ('lead-dept-graphics', 'Graphics'),
-  ('lead-dept-salesforce', 'Salesforce'),
-  ('lead-dept-smm', 'Social Media Marketing')
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO lead_channels (id, name)
+SELECT v.id, v.name FROM (VALUES
+  ('lead-ch-ads', 'Ads'),
+  ('lead-ch-direct', 'Direct'),
+  ('lead-ch-referral', 'Referral'),
+  ('lead-ch-coldcalling', 'Cold Calling'),
+  ('lead-ch-emailmarketing', 'Email Marketing')
+) AS v(id, name)
+WHERE NOT EXISTS (SELECT 1 FROM lead_channels c WHERE c.name = v.name);
+
+DELETE FROM lead_channels
+WHERE name IN ('Jobs.pk', 'CSR')
+  AND id IN ('lead-ch-jobspk', 'lead-ch-csr');

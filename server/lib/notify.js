@@ -218,14 +218,9 @@ export async function notifyLeadStageChanged(client, { employeeName, clientName,
   );
 }
 
-export async function notifyLeadWon(client, { clientName, amount, currency, excludeUserId }) {
-  const amt = Number(amount) || 0;
-  const cur = currency || "PKR";
-  const formatted = amt
-    ? `${cur} ${amt.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-    : cur;
-  const title = "Deal Won";
-  const body = `Deal Won: ${clientName || "Lead"} — ${formatted}`;
+export async function notifyLeadOnBoarded(client, { clientName, excludeUserId }) {
+  const title = "Lead On Boarded";
+  const body = `Deal On Boarded: ${clientName || "Lead"}`;
   const executives = await fetchExecutiveIds(client);
   await insertNotifications(
     client,
