@@ -374,20 +374,22 @@ export function computeMissingCheckoutWorkingMs(checkIn, user, dateKey, breaks =
   return computeNetWorkingMs(checkIn, shiftEnd.toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
 }
 
-/** Required duty ms. New policy: global 8h 30m. Legacy: shift window minus unpaid break. */
+/** Required duty ms. New policy: min(shift duration, 8h 30m). Legacy: shift window minus unpaid break. */
 export function requiredDutyMs(user, dateKey) {
   const shift = getUserShift(user, dateKey);
   if (shift.off) return 0;
-  if (usesNewAttendanceHoursPolicy(dateKey)) {
-    return REQUIRED_WORKING_MS;
-  }
   const start = shiftDateTime(dateKey, shift.shiftStart);
   let end = shiftDateTime(dateKey, shift.shiftEnd);
+  if (!start || !end) return 0;
   if (end <= start) end = new Date(end.getTime() + 86400000);
-  return Math.max(0, end - start - shift.breakMinutes * 60000);
+  const shiftDurationMs = Math.max(0, end - start);
+  if (usesNewAttendanceHoursPolicy(dateKey)) {
+    return Math.min(shiftDurationMs, REQUIRED_WORKING_MS);
+  }
+  return Math.max(0, shiftDurationMs - shift.breakMinutes * 60000);
 }
 
-/** Global minimum duty: 8 hours 30 minutes (510 minutes). */
+/** Cap on required duty: 8 hours 30 minutes (510 minutes). */
 export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
 
 /** New working-hours / status policy applies from today (PKT) forward only. */

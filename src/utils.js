@@ -485,9 +485,10 @@ export function formatDayScheduleLine(daySchedule) {
 export function requiredMsForShiftDay(user, dateKey) {
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off || !bounds.start || !bounds.end) return 0;
-  // Forward-only: from today, global 8h 30m minimum (break no longer part of required duty).
+  // Forward-only: required = shift duration, capped at 8h 30m (break not subtracted).
   if (usesNewAttendanceHoursPolicy(dateKey)) {
-    return REQUIRED_WORKING_MS;
+    const shiftDurationMs = Math.max(0, bounds.end - bounds.start);
+    return Math.min(shiftDurationMs, REQUIRED_WORKING_MS);
   }
   const s = getUserShift(user, dateKey);
   return Math.max(0, bounds.end - bounds.start - (s.breakMinutes || 0) * 60000);
@@ -796,7 +797,7 @@ export function calcShortLeaveMs(record, workEndOverride = null) {
     }, 0);
 }
 
-/** Global minimum duty: 8 hours 30 minutes (510 minutes). Forward-only from today. */
+/** Cap on required duty: 8 hours 30 minutes (510 minutes). Forward-only from today. */
 export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
 
 /** New working-hours / status policy applies from today (PKT) forward only. */
