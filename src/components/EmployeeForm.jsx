@@ -133,7 +133,6 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
         <SelectInput label="Employment type" value={form.type} onChange={v => setForm({ ...form, type: v })}
           options={[{ value: "Full-time", label: "Full-time" }, { value: "Part-time", label: "Part-time" }, { value: "Contractor", label: "Contractor" }]} />
         <TextInput label="Hire date" type="date" value={form.hired} onChange={v => setForm({ ...form, hired: v })} />
-        <TextInput label="Salary"    value={form.salary}  onChange={v => setForm({ ...form, salary: v })}  placeholder="e.g. 80,000 PKR" />
         <SelectInput label="Status" value={form.status} onChange={v => setForm({ ...form, status: v })}
           options={[{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive (blocked)" }]} />
         {(form.role === "Employee" || form.role === "Executive") && (
@@ -167,6 +166,43 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             ]}
           />
         )}
+      </div>
+
+      <div className="pt-2 border-t border-slate-100">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <Landmark size={13} />Salary &amp; Bank
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <TextInput label="Total Salary (PKR)" value={form.salary} onChange={v => setForm({ ...form, salary: v })} placeholder="e.g. 50000" />
+          <TextInput
+            label="Fuel Allowance (PKR)"
+            type="number"
+            value={String(form.fuelAllowance ?? 0)}
+            onChange={v => setForm({ ...form, fuelAllowance: v === "" ? "" : Number(v) || 0 })}
+          />
+          <TextInput
+            label="Mobile Package (PKR)"
+            type="number"
+            value={String(form.mobilePackage ?? 0)}
+            onChange={v => setForm({ ...form, mobilePackage: v === "" ? "" : Number(v) || 0 })}
+          />
+          <div className="flex flex-col justify-end">
+            <div className="text-xs text-slate-500 mb-1">Basic Salary (auto)</div>
+            <div className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-700 tabular-nums">
+              {Math.max(
+                0,
+                (parseFloat(String(form.salary || "").replace(/[^0-9.]/g, "")) || 0)
+                  - (Number(form.fuelAllowance) || 0)
+                  - (Number(form.mobilePackage) || 0)
+              ).toLocaleString()} PKR
+            </div>
+          </div>
+          <TextInput label="Bank Name" value={form.bankName || ""} onChange={v => setForm({ ...form, bankName: v })} placeholder="e.g. HBL, Meezan, JazzCash" />
+          <TextInput label="Account Number" value={form.bankAccount || ""} onChange={v => setForm({ ...form, bankAccount: v })} placeholder="e.g. 1234567890" />
+          <TextInput label="Account Title" value={form.accountTitle || ""} onChange={v => setForm({ ...form, accountTitle: v })} placeholder="Account holder name" />
+          <TextInput label="Branch (optional)" value={form.bankBranch || ""} onChange={v => setForm({ ...form, bankBranch: v })} placeholder="e.g. Gulberg" />
+          <TextInput label="IBAN (optional)" value={form.bankIban || ""} onChange={v => setForm({ ...form, bankIban: v })} placeholder="PK00XXXX..." />
+        </div>
       </div>
 
       <div className="pt-2 border-t border-slate-100">
@@ -289,17 +325,6 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
           <TextInput label="Emergency contact name" value={form.emergencyContactName || ""} onChange={v => setForm({ ...form, emergencyContactName: v })} Icon={User} />
           <TextInput label="Emergency contact number" value={form.emergencyContactPhone || ""} onChange={v => setForm({ ...form, emergencyContactPhone: v })} Icon={Phone} placeholder="+92-300-0000000" />
           <TextInput label="Relationship with emergency contact" value={form.emergencyContactRelation || ""} onChange={v => setForm({ ...form, emergencyContactRelation: v })} placeholder="e.g. Spouse, Parent, Sibling" />
-        </div>
-      </div>
-      <div className="pt-2 border-t border-slate-100">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-          <Landmark size={13} />Bank details
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <TextInput label="Bank name"      value={form.bankName    || ""} onChange={v => setForm({ ...form, bankName: v })}     placeholder="e.g. HBL" />
-          <TextInput label="Branch"         value={form.bankBranch  || ""} onChange={v => setForm({ ...form, bankBranch: v })}   placeholder="e.g. Gulberg" />
-          <TextInput label="Account number" value={form.bankAccount || ""} onChange={v => setForm({ ...form, bankAccount: v })}  placeholder="e.g. 1234567890" />
-          <TextInput label="IBAN"           value={form.bankIban    || ""} onChange={v => setForm({ ...form, bankIban: v })}     placeholder="PK00XXXX..." />
         </div>
       </div>
     </div>

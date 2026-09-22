@@ -1,43 +1,175 @@
-import React, { useState, useEffect } from "react";
-import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Save, Landmark } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { Wallet, Receipt, ChevronRight, Check, Timer, Trash2, Eye, Landmark, Download, Loader2 } from "lucide-react";
 import { B, AdforceLogo } from "../brand.jsx";
-import { can, isStaffRole, isHrEmployeeRole, isHrAdminRole, isExecutiveRole, activePayrollRoster, monthKey, monthLabel, workingDaysInMonth, presentDaysInMonth, lateDaysInMonth, leaveDaysInMonth } from "../utils.js";
-import { Pill, Avatar, Card, STitle, Modal, TextInput, Btn, ErrBox, UserDisplayName } from "../components/ui.jsx";
-import { apiGetPayroll, apiCreatePayroll, apiUpdatePayroll, apiDeletePayroll, apiFetchAttendance } from "../api.js";
+import {
+  can, isStaffRole, isHrEmployeeRole, isHrAdminRole, isExecutiveRole,
+  activePayrollRoster, monthKey, monthLabel, workingDaysInMonth,
+  presentDaysInMonth, lateDaysInMonth, parseSalaryAmount,
+} from "../utils.js";
+import { Pill, Avatar, Card, STitle, Modal, Btn, ErrBox, UserDisplayName } from "../components/ui.jsx";
+import {
+  apiGetPayroll, apiGeneratePayrollSlip, apiGenerateAllPayroll,
+  apiDownloadBankSheet, apiUpdatePayroll, apiDeletePayroll, apiFetchAttendance,
+} from "../api.js";
+
+function money(n, cur = "PKR") {
+  const v = Number(n) || 0;
+  return `${cur} ${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+function PayslipCard({ slip, currency = "PKR" }) {
+  if (!slip) return null;
+  const cur = currency;
+  const fuel = Number(slip.fuelAllowance ?? 0);
+  const mobile = Number(slip.mobilePackage ?? 0);
+  const basic = Number(slip.basicSalary ?? slip.basic ?? 0);
+  const gross = Number(slip.grossSalary ?? slip.gross ?? (basic + fuel + mobile));
+  const absentDed = Number(slip.absentDeduction || 0);
+  const lateDed = Number(slip.latePenaltyDeduction || 0);
+  const tax = Number(slip.incomeTax || 0);
+  const totalDed = Number(slip.totalDeductions ?? (absentDed + lateDed + tax));
+  const net = Number(slip.net || 0);
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+      <div className="p-5 flex items-center justify-between" style={{ background: B.dark }}>
+        <AdforceLogo boxWidth={180} boxHeight={40} />
+        <div className="text-right text-white">
+          <div className="text-sm font-bold">Salary Slip</div>
+          <div className="text-xs opacity-70">{slip.monthLabel || monthLabel(slip.month)}</div>
+        </div>
+      </div>
+
+      <div className="p-5 grid grid-cols-2 gap-3 text-sm border-b border-slate-100">
+        <div>
+          <div className="text-xs text-slate-400">Employee</div>
+          <div className="font-medium text-slate-800">{slip.empName}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-400">Designation</div>
+          <div className="font-medium text-slate-800">{slip.empTitle || "—"}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-400">Employee ID</div>
+          <div className="font-medium text-slate-800 text-xs">{slip.empId || slip.userId}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-400">Status</div>
+          {slip.status === "paid"
+            ? <Pill tone="green"><Check size={12} />Paid{slip.paidOn ? ` · ${slip.paidOn}` : ""}</Pill>
+            : <Pill tone="amber"><Timer size={12} />Generated</Pill>}
+        </div>
+      </div>
+
+      <div className="p-5 border-b border-slate-100">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Earnings</div>
+        <div className="space-y-2 text-sm">
+          <Row label="Basic Salary" value={money(basic, cur)} />
+          <Row label="Fuel Allowance" value={money(fuel, cur)} />
+          <Row label="Mobile Package" value={money(mobile, cur)} />
+          <Row label="Gross Salary" value={money(gross, cur)} bold />
+        </div>
+      </div>
+
+      <div className="p-5 border-b border-slate-100">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Deductions</div>
+        <div className="space-y-2 text-sm">
+          <Row label={`Absent Days (${slip.absentDays ?? 0})`} value={`-${money(absentDed, cur)}`} danger />
+          <Row
+            label={`Late Penalty (${slip.latePenaltyDays ?? 0} day${(slip.latePenaltyDays || 0) === 1 ? "" : "s"})`}
+            value={`-${money(lateDed, cur)}`}
+            danger
+          />
+          <Row label="Income Tax" value={money(tax, cur)} danger={tax > 0} />
+          <Row label="Total Deductions" value={`-${money(totalDed, cur)}`} bold danger />
+        </div>
+      </div>
+
+      <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center" style={{ background: B.darkLight }}>
+        <span className="font-bold" style={{ color: B.dark }}>Net Salary</span>
+        <span className="font-bold text-xl tabular-nums" style={{ color: B.dark }}>{money(net, cur)}</span>
+      </div>
+
+      <div className="px-5 py-3 text-xs text-slate-500 grid grid-cols-2 sm:grid-cols-3 gap-2 border-b border-slate-100">
+        <div>Working Days: <b className="text-slate-800">{slip.workDays ?? "—"}</b></div>
+        <div>Present: <b className="text-slate-800">{slip.presentDays ?? "—"}</b></div>
+        <div>Late: <b className="text-slate-800">{slip.lateDays ?? "—"}</b></div>
+        <div>Leaves: <b className="text-slate-800">{slip.leaveDays ?? slip.paidLeaveDays ?? "—"}</b></div>
+        <div>Absent: <b className="text-slate-800">{slip.absentDays ?? "—"}</b></div>
+        <div>Payable Days: <b className="text-slate-800">{slip.payableDays ?? "—"}</b></div>
+      </div>
+
+      {slip.bank && (slip.bank.bankName || slip.bank.accountNo) && (
+        <div className="px-5 py-3 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-100">
+          <Landmark size={13} />
+          {[slip.bank.bankName, slip.bank.accountTitle, slip.bank.accountNo || slip.bank.iban].filter(Boolean).join(" · ")}
+        </div>
+      )}
+
+      <div className="px-5 py-3 text-xs text-slate-400 flex justify-between">
+        <span>Generated by {slip.generatedBy || "HR"} on {slip.generatedOn || "—"}</span>
+        <span>Adforce Solutions</span>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, bold, danger }) {
+  return (
+    <div className={`flex justify-between ${bold ? "pt-1 border-t border-slate-100" : ""}`}>
+      <span className={bold ? "font-semibold text-slate-800" : "text-slate-500"}>{label}</span>
+      <span className={`tabular-nums ${bold ? "font-bold" : "font-medium"} ${danger ? "text-red-600" : "text-slate-800"}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
 
 export function PayrollPage({ currentUser, users, attendance: _attendanceProp, payroll, setPayroll, company, roles, leaveRequests = [], holidays = [] }) {
   const canManage = can(currentUser.role, "manage_payroll", roles);
-  const canViewOrgPayroll = can(currentUser.role, "view_payroll", roles) && isExecutiveRole(currentUser.role);
+  const isExec = isExecutiveRole(currentUser.role);
+  const canViewOrgPayroll = can(currentUser.role, "view_payroll", roles) && isExec;
   const [month, setMonth] = useState(monthKey());
-  const [genFor, setGenFor] = useState(null);   // user being generated
-  const [slipView, setSlipView] = useState(null); // slip being viewed
-  const [genForm, setGenForm] = useState({ basic: "", allowance: "0", bonus: "0", deduction: "0", note: "" });
+  const [slipView, setSlipView] = useState(null);
   const [genErr, setGenErr] = useState("");
   const [monthAttendance, setMonthAttendance] = useState([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [generatingAll, setGeneratingAll] = useState(false);
+  const [generatingId, setGeneratingId] = useState(null);
+  const [downloadingBank, setDownloadingBank] = useState(false);
 
   const staff = canManage
     ? users.filter(u => u.status === "active" && (isStaffRole(u.role) || isHrEmployeeRole(u.role)))
     : activePayrollRoster(users, currentUser.role);
   const monthSlips = payroll.filter(s => s.month === month);
   const mySlips = payroll.filter(s => s.userId === currentUser.id).sort((a, b) => b.month.localeCompare(a.month));
+  const myMonthSlip = mySlips.find(s => s.month === month);
+  const cur = company.currency || "PKR";
+
+  const monthOptions = useMemo(() => {
+    const set = new Set([monthKey()]);
+    for (const s of payroll) {
+      if (s?.month) set.add(s.month);
+    }
+    return [...set].sort().reverse();
+  }, [payroll]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const list = await apiGetPayroll({ month });
+        const list = await apiGetPayroll(canManage || canViewOrgPayroll ? { month } : {});
         if (cancelled) return;
         setPayroll(list);
       } catch (e) {
-        console.error("Failed to fetch payroll month:", e?.message || e);
+        console.error("Failed to fetch payroll:", e?.message || e);
       }
     })();
     return () => { cancelled = true; };
-  }, [month, setPayroll]);
+  }, [month, setPayroll, canManage, canViewOrgPayroll]);
 
-  // Fetch attendance for the selected payroll month (App prop may only hold today/current route data).
   useEffect(() => {
+    if (!canManage && !canViewOrgPayroll) return;
     let cancelled = false;
     setAttendanceLoading(true);
     (async () => {
@@ -46,86 +178,84 @@ export function PayrollPage({ currentUser, users, attendance: _attendanceProp, p
         if (cancelled) return;
         setMonthAttendance(Array.isArray(list) ? list : []);
       } catch (e) {
-        console.error("Failed to fetch payroll attendance:", e?.message || e);
         if (!cancelled) setMonthAttendance([]);
       } finally {
         if (!cancelled) setAttendanceLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [month]);
+  }, [month, canManage, canViewOrgPayroll]);
 
-  function openGenerate(u) {
-    const existing = monthSlips.find(s => s.userId === u.id);
-    if (existing) { setSlipView(existing); return; }
-    const numericSalary = parseFloat(String(u.salary || "").replace(/[^0-9.]/g, "")) || 0;
-    setGenForm({ basic: numericSalary ? String(numericSalary) : "", allowance: "0", bonus: "0", deduction: "0", note: "" });
-    setGenErr("");
-    setGenFor(u);
-  }
-
-  async function generateSlip() {
-    if (attendanceLoading) {
-      setGenErr("Still loading attendance for this month. Please wait.");
+  async function generateOne(u, { regenerate = false } = {}) {
+    if (isHrEmployeeRole(currentUser.role) && u.id === currentUser.id) {
+      setGenErr("You cannot generate your own payslip.");
       return;
     }
-    const basic = parseFloat(genForm.basic) || 0;
-    if (basic <= 0) { setGenErr("Enter a valid basic salary."); return; }
     setGenErr("");
-    const workDays    = workingDaysInMonth(month, holidays);
-    const presentDays = presentDaysInMonth(monthAttendance, genFor.id, month, holidays);
-    const lateDays    = lateDaysInMonth(monthAttendance, genFor.id, month, users, holidays);
-    const paidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "paid", holidays);
-    const unpaidLeaveDays = leaveDaysInMonth(leaveRequests, genFor.id, month, "unpaid", holidays);
-    const absentDays  = Math.max(0, workDays - presentDays - paidLeaveDays);
-    const perDay      = workDays > 0 ? basic / workDays : 0;
-    const absentDeduction = Math.round(perDay * absentDays);
-    const unpaidLeaveDeduction = Math.round(perDay * unpaidLeaveDays);
-    const allowance   = parseFloat(genForm.allowance) || 0;
-    const bonus       = parseFloat(genForm.bonus) || 0;
-    const otherDeduction = parseFloat(genForm.deduction) || 0;
-    const net = Math.round(basic + allowance + bonus - absentDeduction - unpaidLeaveDeduction - otherDeduction);
-
-    const slip = {
-      id: "slip-" + Date.now(),
-      userId: genFor.id,
-      empName: genFor.name,
-      empEmail: genFor.email,
-      empTitle: genFor.title || genFor.role,
-      month,
-      workDays, presentDays, absentDays, lateDays, paidLeaveDays, unpaidLeaveDays,
-      basic, allowance, bonus, absentDeduction, unpaidLeaveDeduction, otherDeduction, net,
-      note: genForm.note,
-      bank: genFor.bank || null,
-      generatedBy: currentUser.name,
-      generatedOn: new Date().toLocaleDateString(),
-      status: "generated",
-    };
+    setGeneratingId(u.id);
     try {
-      const saved = await apiCreatePayroll(slip);
+      const saved = await apiGeneratePayrollSlip({ userId: u.id, month });
       if (!saved) throw new Error("Salary slip was not saved.");
       setPayroll(p => [
         ...p.filter(s => !(s && s.userId === saved.userId && s.month === saved.month)),
         saved,
       ]);
-      setGenFor(null);
       setSlipView(saved);
     } catch (e) {
       setGenErr(e?.message || String(e));
+    } finally {
+      setGeneratingId(null);
+    }
+  }
+
+  async function generateAll() {
+    if (!isExec) return;
+    const count = staff.length;
+    if (!window.confirm(`Generate payslips for ${count} employee${count === 1 ? "" : "s"} for ${monthLabel(month)}?`)) {
+      return;
+    }
+    setGeneratingAll(true);
+    setGenErr("");
+    try {
+      const result = await apiGenerateAllPayroll(month);
+      const list = await apiGetPayroll({ month });
+      setPayroll(list);
+      window.alert(
+        `Generated ${result.generated} slips.\nGross: ${money(result.totalGross, cur)}\nDeductions: ${money(result.totalDeductions, cur)}\nNet: ${money(result.totalNet, cur)}`
+      );
+    } catch (e) {
+      setGenErr(e?.message || String(e));
+    } finally {
+      setGeneratingAll(false);
+    }
+  }
+
+  async function downloadBank() {
+    if (!isExec) return;
+    setDownloadingBank(true);
+    setGenErr("");
+    try {
+      await apiDownloadBankSheet(month);
+    } catch (e) {
+      setGenErr(e?.message || String(e));
+    } finally {
+      setDownloadingBank(false);
     }
   }
 
   async function markPaid(id) {
-    const today = new Date().toLocaleDateString();
     const slip = payroll.find(s => s && s.id === id) || (slipView && slipView.id === id ? slipView : null);
     if (!slip) return;
     try {
-      const saved = await apiUpdatePayroll(id, { ...slip, status: "paid", paidOn: today });
+      const saved = await apiUpdatePayroll(id, {
+        ...slip,
+        status: "paid",
+        paidOn: new Date().toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }),
+      });
       if (!saved) throw new Error("Update failed.");
       setPayroll(p => p.map(s => (s && s.id === id ? saved : s)));
-      setSlipView(v => v && v.id === id ? saved : v);
+      setSlipView(v => (v && v.id === id ? saved : v));
     } catch (e) {
-      console.error("markPaid failed:", e?.message || e);
       setGenErr(e?.message || String(e));
     }
   }
@@ -142,75 +272,17 @@ export function PayrollPage({ currentUser, users, attendance: _attendanceProp, p
     }
   }
 
-  const cur = company.currency || "PKR";
-
-  /* ---------- Salary slip modal (shared) ---------- */
   const SlipModal = () => slipView && (
     <Modal open={true} onClose={() => setSlipView(null)} title="Salary slip" wide>
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
-        {/* Slip header */}
-        <div className="p-5 flex items-center justify-between" style={{ background: B.dark }}>
-          <AdforceLogo boxWidth={180} boxHeight={40} />
-          <div className="text-right text-white">
-            <div className="text-sm font-bold">Salary Slip</div>
-            <div className="text-xs opacity-70">{monthLabel(slipView.month)}</div>
-          </div>
-        </div>
-        {/* Employee info */}
-        <div className="p-5 grid grid-cols-2 gap-3 text-sm border-b border-slate-100">
-          <div><div className="text-xs text-slate-400">Employee</div><div className="font-medium text-slate-800">{slipView.empName}</div></div>
-          <div><div className="text-xs text-slate-400">Designation</div><div className="font-medium text-slate-800">{slipView.empTitle}</div></div>
-          <div><div className="text-xs text-slate-400">Email</div><div className="font-medium text-slate-800 text-xs">{slipView.empEmail}</div></div>
-          <div><div className="text-xs text-slate-400">Status</div>
-            {slipView.status === "paid"
-              ? <Pill tone="green"><Check size={12} />Paid{slipView.paidOn ? ` · ${slipView.paidOn}` : ""}</Pill>
-              : <Pill tone="amber"><Timer size={12} />Generated (unpaid)</Pill>}
-          </div>
-        </div>
-        {/* Attendance summary */}
-        <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center border-b border-slate-100 bg-slate-50">
-          {[["Working days", slipView.workDays], ["Present", slipView.presentDays], ["Paid leave", slipView.paidLeaveDays ?? 0], ["Absent", slipView.absentDays], ["Late", slipView.lateDays]].map(([l, v]) => (
-            <div key={l}><div className="text-xs text-slate-400">{l}</div><div className="text-sm font-bold tabular-nums" style={{ color: B.dark }}>{v}</div></div>
-          ))}
-        </div>
-        {/* Amounts */}
-        <div className="p-5 space-y-2 text-sm">
-          {[
-            ["Basic salary",        slipView.basic,           false],
-            ["Allowance",           slipView.allowance,       false],
-            ["Bonus",               slipView.bonus,           false],
-            ["Absent deduction",    -(slipView.absentDeduction || 0), true],
-            [`Unpaid leave deduction (${slipView.unpaidLeaveDays || 0} days)`, -(slipView.unpaidLeaveDeduction || 0), true],
-            ["Other deduction",     -(slipView.otherDeduction || 0),  true],
-          ].filter(([, v]) => v !== 0).map(([l, v, isDed]) => (
-            <div key={l} className="flex justify-between border-b border-slate-50 pb-2">
-              <span className="text-slate-500">{l}</span>
-              <span className={`font-medium tabular-nums ${isDed ? "text-red-600" : "text-slate-800"}`}>
-                {v < 0 ? "-" : ""}{cur} {Math.abs(v).toLocaleString()}
-              </span>
-            </div>
-          ))}
-          <div className="flex justify-between pt-2">
-            <span className="font-bold" style={{ color: B.dark }}>Net salary</span>
-            <span className="font-bold text-lg tabular-nums" style={{ color: B.dark }}>{cur} {slipView.net.toLocaleString()}</span>
-          </div>
-          {slipView.note && <div className="text-xs text-slate-400 italic pt-1">Note: {slipView.note}</div>}
-        </div>
-        {/* Bank details */}
-        {slipView.bank && (slipView.bank.bankName || slipView.bank.accountNo) && (
-          <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-2">
-            <Landmark size={13} />
-            {slipView.bank.bankName} · {slipView.bank.accountTitle} · {slipView.bank.iban || slipView.bank.accountNo}
-          </div>
-        )}
-        <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-400 flex justify-between">
-          <span>Generated by {slipView.generatedBy} on {slipView.generatedOn}</span>
-          <span>Adforce Solutions</span>
-        </div>
-      </div>
+      <PayslipCard slip={slipView} currency={cur} />
       <div className="flex gap-2 mt-4 flex-wrap">
         {canManage && slipView.status !== "paid" && (
           <Btn onClick={() => markPaid(slipView.id)}><Check size={14} />Mark as paid</Btn>
+        )}
+        {canManage && (
+          <Btn variant="ghost" onClick={() => generateOne({ id: slipView.userId, name: slipView.empName }, { regenerate: true })}>
+            Regenerate
+          </Btn>
         )}
         <Btn variant="ghost" onClick={() => window.print()}><Receipt size={14} />Print / Save PDF</Btn>
         {canManage && (
@@ -225,136 +297,83 @@ export function PayrollPage({ currentUser, users, attendance: _attendanceProp, p
   if (!canManage && !canViewOrgPayroll) {
     return (
       <div className="max-w-2xl space-y-4">
-        <Card className="overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200">
-            <h3 className="text-sm font-semibold" style={{ color: B.dark }}>My salary slips</h3>
-          </div>
-          {mySlips.length === 0
-            ? <div className="p-8 text-center text-slate-400 text-sm">No salary slips yet. Slips appear here once HR generates them.</div>
-            : (
-              <div className="divide-y divide-slate-100">
-                {mySlips.map(s => (
-                  <button key={s.id} onClick={() => setSlipView(s)}
-                    className="w-full px-5 py-3 flex items-center gap-3 hover:bg-slate-50 text-left">
-                    <div className="p-2 rounded-lg" style={{ background: B.darkLight, color: B.dark }}><Wallet size={16} /></div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-slate-800">{monthLabel(s.month)}</div>
-                      <div className="text-xs text-slate-400">{s.presentDays}/{s.workDays} days present</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold tabular-nums" style={{ color: B.dark }}>{cur} {s.net.toLocaleString()}</div>
-                      {s.status === "paid" ? <Pill tone="green">Paid</Pill> : <Pill tone="amber">Pending</Pill>}
-                    </div>
-                    <ChevronRight size={16} className="text-slate-300" />
-                  </button>
-                ))}
-              </div>
-            )
-          }
+        <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
+          <STitle>My payslip</STitle>
+          <select
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-300 rounded-lg"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
         </Card>
+
+        {myMonthSlip ? (
+          <PayslipCard slip={myMonthSlip} currency={cur} />
+        ) : (
+          <Card className="p-8 text-center text-sm text-slate-400">
+            Payslip for {monthLabel(month)} has not been generated yet.
+          </Card>
+        )}
+
+        {mySlips.length > 1 && (
+          <Card className="overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-200">
+              <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Past slips</h3>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {mySlips.filter(s => s.month !== month).map(s => (
+                <button key={s.id} type="button" onClick={() => { setMonth(s.month); setSlipView(s); }}
+                  className="w-full px-5 py-3 flex items-center gap-3 hover:bg-slate-50 text-left">
+                  <div className="p-2 rounded-lg" style={{ background: B.darkLight, color: B.dark }}><Wallet size={16} /></div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-slate-800">{monthLabel(s.month)}</div>
+                    <div className="text-xs text-slate-400">{s.presentDays}/{s.workDays} days present</div>
+                  </div>
+                  <div className="text-sm font-bold tabular-nums" style={{ color: B.dark }}>{money(s.net, cur)}</div>
+                  <ChevronRight size={16} className="text-slate-300" />
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
         <SlipModal />
       </div>
     );
   }
 
-  /* ---------- EXECUTIVE READ-ONLY ORG VIEW ---------- */
-  if (canViewOrgPayroll && !canManage) {
-    return (
-      <div className="space-y-5">
-        <div className="p-4 rounded-xl text-sm flex gap-3 items-start" style={{ background: B.darkLight, color: B.dark, border: `1px solid ${B.darkBorder}` }}>
-          <Eye size={16} className="mt-0.5 shrink-0" />
-          <div><b>View only.</b> Review salary slips and payroll records for employees and HR Admin. Generating or editing slips is restricted to HR Admin.</div>
-        </div>
-        <Card className="p-5">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <STitle>Payroll month</STitle>
-            <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-              className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none" />
-          </div>
-          <div className="mt-2 grid grid-cols-3 gap-3">
-            {[
-              ["People", staff.length],
-              ["Slips generated", monthSlips.length],
-              ["Total payout", cur + " " + monthSlips.reduce((s, x) => s + x.net, 0).toLocaleString()],
-            ].map(([l, v]) => (
-              <div key={l} className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <div className="text-xs text-slate-400">{l}</div>
-                <div className="text-lg font-bold tabular-nums" style={{ color: B.dark }}>{v}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card className="overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200">
-            <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Salary slips — {monthLabel(month)}</h3>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-                {["Name", "Role", "Listed salary", "Present / Working", "Late", "Slip", ""].map(h => (
-                  <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {staff.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No active people on file.</td></tr>
-              ) : attendanceLoading ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading attendance for {monthLabel(month)}…</td></tr>
-              ) : staff.map(u => {
-                const slip = monthSlips.find(s => s.userId === u.id);
-                const present = presentDaysInMonth(monthAttendance, u.id, month, holidays);
-                const late = lateDaysInMonth(monthAttendance, u.id, month, users, holidays);
-                const workDays = workingDaysInMonth(month, holidays);
-                return (
-                  <tr key={u.id} className="border-b border-slate-100 last:border-0">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <Avatar name={u.name} size={7} />
-                        <UserDisplayName user={u} />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3"><Pill tone={isHrAdminRole(u.role) ? "dark" : "slate"}>{u.role}</Pill></td>
-                    <td className="px-4 py-3 text-slate-600">{u.salary || "—"}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{present} / {workDays}</td>
-                    <td className="px-4 py-3">
-                      {late > 0 ? <Pill tone="amber">{late} late</Pill> : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      {slip
-                        ? (slip.status === "paid" ? <Pill tone="green"><Check size={12} />Paid</Pill> : <Pill tone="blue">Generated</Pill>)
-                        : <Pill tone="slate">Not generated</Pill>}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {slip && (
-                        <Btn size="sm" variant="ghost" onClick={() => setSlipView(slip)}>View slip</Btn>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
-        <SlipModal />
-      </div>
-    );
-  }
-
-  /* ---------- ADMIN VIEW ---------- */
+  /* ---------- EXECUTIVE / HR MANAGE VIEW ---------- */
   return (
     <div className="space-y-5">
+      {genErr && <ErrBox msg={genErr} />}
+
       <Card className="p-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <STitle>Payroll month</STitle>
-          <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-            className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none" />
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="month" value={month} onChange={e => setMonth(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none" />
+            {isExec && (
+              <>
+                <Btn onClick={generateAll} disabled={generatingAll || attendanceLoading}>
+                  {generatingAll ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />}
+                  {generatingAll ? "Generating…" : "Generate All Slips"}
+                </Btn>
+                {monthSlips.length > 0 && (
+                  <Btn variant="ghost" onClick={downloadBank} disabled={downloadingBank}>
+                    {downloadingBank ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    Download Bank Sheet
+                  </Btn>
+                )}
+              </>
+            )}
+          </div>
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-3">
+        <div className="mt-3 grid grid-cols-3 gap-3">
           {[
             ["Employees", staff.length],
             ["Slips generated", monthSlips.length],
-            ["Total payout", cur + " " + monthSlips.reduce((s, x) => s + x.net, 0).toLocaleString()],
+            ["Total payout", money(monthSlips.reduce((s, x) => s + (Number(x.net) || 0), 0), cur)],
           ].map(([l, v]) => (
             <div key={l} className="p-3 rounded-lg bg-slate-50 border border-slate-100">
               <div className="text-xs text-slate-400">{l}</div>
@@ -366,85 +385,79 @@ export function PayrollPage({ currentUser, users, attendance: _attendanceProp, p
 
       <Card className="overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200">
-          <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Generate slips — {monthLabel(month)}</h3>
+          <h3 className="text-sm font-semibold" style={{ color: B.dark }}>Salary slips — {monthLabel(month)}</h3>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
-              {["Employee", "Present / Working", "Late days", "Slip", ""].map(h => (
-                <th key={h} className="px-4 py-2.5 font-medium">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {staff.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No active employees.</td></tr>
-            ) : attendanceLoading ? (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading attendance for {monthLabel(month)}…</td></tr>
-            ) : staff.map(u => {
-              const slip = monthSlips.find(s => s.userId === u.id);
-              const present = presentDaysInMonth(monthAttendance, u.id, month, holidays);
-              const late = lateDaysInMonth(monthAttendance, u.id, month, users, holidays);
-              const workDays = workingDaysInMonth(month, holidays);
-              return (
-                <tr key={u.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Avatar name={u.name} size={7} />
-                      <div>
-                        <UserDisplayName user={u} />
-                        <div className="text-xs text-slate-400">{u.title || u.role}</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[960px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 bg-slate-50 border-b border-slate-200">
+                {["Employee", "Gross", "Fuel", "Mobile", "Tax", "Deductions", "Net", "Slip", ""].map(h => (
+                  <th key={h || "actions"} className="px-4 py-2.5 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {staff.length === 0 ? (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No active employees.</td></tr>
+              ) : attendanceLoading ? (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Loading attendance…</td></tr>
+              ) : staff.map(u => {
+                const slip = monthSlips.find(s => s.userId === u.id);
+                const isOwnHr = isHrEmployeeRole(currentUser.role) && u.id === currentUser.id;
+                const gross = slip
+                  ? (slip.grossSalary ?? slip.gross ?? 0)
+                  : parseSalaryAmount(u.salary);
+                const fuel = slip ? (slip.fuelAllowance ?? 0) : (u.fuelAllowance || 0);
+                const mobile = slip ? (slip.mobilePackage ?? 0) : (u.mobilePackage || 0);
+                const tax = slip?.incomeTax ?? "—";
+                const ded = slip?.totalDeductions ?? "—";
+                const net = slip?.net ?? "—";
+                return (
+                  <tr key={u.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={u.name} size={7} />
+                        <div>
+                          <UserDisplayName user={u} />
+                          <div className="text-xs text-slate-400">{u.title || u.role}</div>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 tabular-nums text-slate-600">{present} / {workDays}</td>
-                  <td className="px-4 py-3">
-                    {late > 0 ? <Pill tone="amber">{late} late</Pill> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {slip
-                      ? (slip.status === "paid" ? <Pill tone="green"><Check size={12} />Paid</Pill> : <Pill tone="blue">Generated</Pill>)
-                      : <Pill tone="slate">Not generated</Pill>}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Btn size="sm" variant={slip ? "ghost" : "primary"} onClick={() => openGenerate(u)} disabled={!slip && attendanceLoading}>
-                      {slip ? "View slip" : "Generate"}
-                    </Btn>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    </td>
+                    <td className="px-4 py-3 tabular-nums">{Number(gross).toLocaleString()}</td>
+                    <td className="px-4 py-3 tabular-nums">{Number(fuel).toLocaleString()}</td>
+                    <td className="px-4 py-3 tabular-nums">{Number(mobile).toLocaleString()}</td>
+                    <td className="px-4 py-3 tabular-nums">{tax === "—" ? "—" : Number(tax).toLocaleString()}</td>
+                    <td className="px-4 py-3 tabular-nums">{ded === "—" ? "—" : Number(ded).toLocaleString()}</td>
+                    <td className="px-4 py-3 tabular-nums font-medium">{net === "—" ? "—" : Number(net).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      {slip
+                        ? (slip.status === "paid"
+                          ? <Pill tone="green"><Check size={12} />Paid</Pill>
+                          : <Pill tone="blue">Generated ✅</Pill>)
+                        : <Pill tone="slate">Not generated</Pill>}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {slip && (
+                        <Btn size="sm" variant="ghost" onClick={() => setSlipView(slip)}>View</Btn>
+                      )}
+                      {canManage && !isOwnHr && (
+                        <Btn
+                          size="sm"
+                          variant={slip ? "ghost" : "primary"}
+                          onClick={() => generateOne(u)}
+                          disabled={generatingId === u.id || generatingAll}
+                        >
+                          {generatingId === u.id ? "…" : (slip ? "Regen" : "Generate")}
+                        </Btn>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
-
-      {/* Generate modal */}
-      {genFor && (
-        <Modal open={true} onClose={() => setGenFor(null)} title={`Generate slip — ${genFor.name} (${monthLabel(month)})`}>
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg text-xs grid grid-cols-3 gap-2 text-center" style={{ background: B.darkLight, color: B.dark }}>
-              <div><b>{workingDaysInMonth(month, holidays)}</b><br />working days</div>
-              <div><b>{attendanceLoading ? "…" : presentDaysInMonth(monthAttendance, genFor.id, month, holidays)}</b><br />present</div>
-              <div><b>{attendanceLoading ? "…" : lateDaysInMonth(monthAttendance, genFor.id, month, users, holidays)}</b><br />late</div>
-            </div>
-            <TextInput label={`Basic salary (${cur})`} type="number" value={genForm.basic} onChange={v => setGenForm({ ...genForm, basic: v })} required placeholder="e.g. 80000" />
-            <div className="grid grid-cols-3 gap-3">
-              <TextInput label="Allowance" type="number" value={genForm.allowance} onChange={v => setGenForm({ ...genForm, allowance: v })} />
-              <TextInput label="Bonus" type="number" value={genForm.bonus} onChange={v => setGenForm({ ...genForm, bonus: v })} />
-              <TextInput label="Deduction" type="number" value={genForm.deduction} onChange={v => setGenForm({ ...genForm, deduction: v })} />
-            </div>
-            <TextInput label="Note (optional)" value={genForm.note} onChange={v => setGenForm({ ...genForm, note: v })} placeholder="e.g. Eid bonus included" />
-            <div className="p-3 rounded-lg text-xs bg-amber-50 border border-amber-200 text-amber-800">
-              Absent days are deducted automatically: (basic ÷ working days) × absent days. Sundays are off.
-            </div>
-            {genErr && <ErrBox msg={genErr} />}
-            <div className="flex gap-2">
-              <Btn onClick={generateSlip}><Wallet size={14} />Generate slip</Btn>
-              <Btn variant="ghost" onClick={() => setGenFor(null)}>Cancel</Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
 
       <SlipModal />
     </div>

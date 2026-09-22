@@ -262,6 +262,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_history JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_team_lead BOOLEAN DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS team_lead_id TEXT DEFAULT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS fuel_allowance NUMERIC DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_package NUMERIC DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_title TEXT DEFAULT '';
 
 -- Daily attendance view (processed first/last scan — not raw punches)
 CREATE OR REPLACE VIEW daily_attendance AS

@@ -2121,7 +2121,33 @@ export function latePenaltiesByEmployee(penalties) {
   return map;
 }
 
-/** Count approved paid/unpaid leave working days overlapping a payroll month. */
+export function calculateAnnualTax(annualGross) {
+  const income = Math.max(0, Number(annualGross) || 0);
+  if (income <= 600000) return 0;
+  if (income <= 1200000) return (income - 600000) * 0.05;
+  if (income <= 2400000) return 30000 + (income - 1200000) * 0.15;
+  if (income <= 3600000) return 210000 + (income - 2400000) * 0.25;
+  if (income <= 6000000) return 510000 + (income - 3600000) * 0.3;
+  return 1230000 + (income - 6000000) * 0.35;
+}
+
+/** Monthly Pakistan income tax from monthly gross salary (PKR). */
+export function calculateMonthlyTax(grossMonthlySalary) {
+  const monthly = Math.max(0, Number(grossMonthlySalary) || 0);
+  return Math.round((calculateAnnualTax(monthly * 12) / 12) * 100) / 100;
+}
+
+export function parseSalaryAmount(value) {
+  if (value == null) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const n = parseFloat(String(value).replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function basicSalaryFromTotal(totalSalary, fuelAllowance = 0, mobilePackage = 0) {
+  return Math.max(0, parseSalaryAmount(totalSalary) - (Number(fuelAllowance) || 0) - (Number(mobilePackage) || 0));
+}
+
 export function leaveDaysInMonth(leaveRequests, userId, monthKey, kind = "paid", holidays = []) {
   let count = 0;
   for (const r of (leaveRequests || []).filter(x =>

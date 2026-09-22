@@ -50,6 +50,7 @@ export function PeoplePage({
   const blank = {
     name: "", email: "", phone: "", title: "", dept: "", team: "", type: "Full-time", hired: "", salary: "",
     status: "active", role: "Employee", designation: "", bankName: "", bankBranch: "", bankAccount: "", bankIban: "",
+    accountTitle: "", fuelAllowance: 0, mobilePackage: 0,
     guardianName: "", emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelation: "", cnic: "",
     graceMinutes: 15, breakMinutes: 60, checkoutGraceMinutes: 20,
     weeklySchedule: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
@@ -726,7 +727,7 @@ export function PeoplePage({
               )}
               {selTab === "Bank" && (
                 <div className="space-y-3">
-                  {[["Bank name", sel.bankName || "—"], ["Branch", sel.bankBranch || "—"], ["Account number", sel.bankAccount || "—"], ["IBAN", sel.bankIban || "—"]].map(([k, v]) => (
+                  {[["Bank name", sel.bankName || "—"], ["Account title", sel.accountTitle || "—"], ["Account number", sel.bankAccount || "—"], ["Branch", sel.bankBranch || "—"], ["IBAN", sel.bankIban || "—"]].map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-slate-50 pb-2 gap-4">
                       <span className="text-slate-400 shrink-0">{k}</span>
                       <span className="font-medium text-slate-800 text-right break-all">{v}</span>
@@ -836,6 +837,12 @@ export function PeoplePage({
                   <div className="flex justify-between border-b border-slate-50 pb-2">
                     <span className="text-slate-400">Listed salary</span>
                     <span className="font-medium text-slate-800">{sel.salary || "—"}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Fuel / Mobile</span>
+                    <span className="font-medium text-slate-800">
+                      {(Number(sel.fuelAllowance) || 0).toLocaleString()} / {(Number(sel.mobilePackage) || 0).toLocaleString()}
+                    </span>
                   </div>
                   <div>
                     <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Salary slips</div>

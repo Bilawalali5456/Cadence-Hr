@@ -144,6 +144,10 @@ const userToJs = (r) => ({
   bankBranch: r.bank_branch || "",
   bankAccount: r.bank_account || "",
   bankIban: r.bank_iban || "",
+  accountTitle: r.account_title || "",
+  accountNumber: r.bank_account || "",
+  fuelAllowance: r.fuel_allowance != null ? Number(r.fuel_allowance) : 0,
+  mobilePackage: r.mobile_package != null ? Number(r.mobile_package) : 0,
   shift: r.shift || undefined,
   shiftId: r.shift_id || undefined,
   shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
@@ -1078,7 +1082,7 @@ registerTeamMembersRoutes(app, pool, requireAuth);
 registerBadgesRoutes(app, pool, requireAuth);
 registerLatePenaltiesRoutes(app, pool, requireAuth);
 registerAnnouncementsRoutes(app, pool, requireAuth, requireHrOps);
-registerPayrollRoutes(app, pool, requireAuth, requireHrOps);
+registerPayrollRoutes(app, pool, requireAuth, requireHrOps, requireExecutive);
 registerHolidaysRoutes(app, pool, requireAuth, requireHrOps);
 registerPoliciesRoutes(app, pool, requireAuth, requireHrOps);
 registerAssetsRoutes(app, pool, requireAuth, requireAssetManager);

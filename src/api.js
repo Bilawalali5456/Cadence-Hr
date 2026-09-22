@@ -369,6 +369,55 @@ export async function apiCreatePayroll(slip) {
   return body.slip || null;
 }
 
+export async function apiGeneratePayrollSlip({ userId, month }) {
+  const res = await apiFetch(`${API_URL}/payroll/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ userId, month }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Generate payroll failed (${res.status})`);
+  return body.slip || null;
+}
+
+export async function apiGenerateAllPayroll(month) {
+  const res = await apiFetch(`${API_URL}/payroll/generate-all?month=${encodeURIComponent(month)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ month }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Generate all failed (${res.status})`);
+  return body;
+}
+
+export async function apiDownloadBankSheet(month) {
+  const res = await apiFetch(`${API_URL}/payroll/bank-sheet?month=${encodeURIComponent(month)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let msg = `Bank sheet download failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const fileName = match?.[1] || `Bank_Sheet_${month}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return fileName;
+}
+
 export async function apiUpdatePayroll(id, patch) {
   const res = await apiFetch(`${API_URL}/payroll/${encodeURIComponent(id)}`, {
     method: "PUT",

@@ -18,7 +18,10 @@ export const USER_SELECT_SQL = `
   SELECT id, name, email, password, role, designation, title, dept, team, type, hired, salary, phone, status,
     leave_balance, sick_balance, skills, first_login, temp_password, cnic_enc, marital_status,
     guardian_name, emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-    bank_name, bank_branch, bank_account, bank_iban, shift, shift_id, shift_history,
+    bank_name, bank_branch, bank_account, bank_iban, account_title,
+    COALESCE(fuel_allowance, 0) AS fuel_allowance,
+    COALESCE(mobile_package, 0) AS mobile_package,
+    shift, shift_id, shift_history,
     COALESCE(is_team_lead, false) AS is_team_lead, team_lead_id
   FROM users`;
 
@@ -61,12 +64,43 @@ function userRowToJs(r) {
     bankBranch: r.bank_branch || "",
     bankAccount: r.bank_account || "",
     bankIban: r.bank_iban || "",
+    accountTitle: r.account_title || "",
+    accountNumber: r.bank_account || "",
+    fuelAllowance: r.fuel_allowance != null ? Number(r.fuel_allowance) : 0,
+    mobilePackage: r.mobile_package != null ? Number(r.mobile_package) : 0,
     shift: r.shift || undefined,
     shiftId: r.shift_id || undefined,
     shiftHistory: parseShiftHistory(r.shift_history ?? r.shiftHistory),
     isTeamLead: !!r.is_team_lead,
     teamLeadId: r.team_lead_id || null,
   };
+}
+
+/** Persist salary breakdown + account title after main user upsert. */
+async function applyPayrollProfileFields(pool, userId, body, { canHr }) {
+  if (!canHr || !userId) return;
+  const sets = [];
+  const params = [];
+  if (body.fuelAllowance !== undefined || body.fuel_allowance !== undefined) {
+    params.push(Math.max(0, Number(body.fuelAllowance ?? body.fuel_allowance) || 0));
+    sets.push(`fuel_allowance = $${params.length}`);
+  }
+  if (body.mobilePackage !== undefined || body.mobile_package !== undefined) {
+    params.push(Math.max(0, Number(body.mobilePackage ?? body.mobile_package) || 0));
+    sets.push(`mobile_package = $${params.length}`);
+  }
+  if (body.accountTitle !== undefined || body.account_title !== undefined) {
+    params.push(String(body.accountTitle ?? body.account_title ?? "").trim());
+    sets.push(`account_title = $${params.length}`);
+  }
+  // accountNumber alias → bank_account
+  if (body.accountNumber !== undefined || body.account_number !== undefined) {
+    params.push(String(body.accountNumber ?? body.account_number ?? "").trim());
+    sets.push(`bank_account = $${params.length}`);
+  }
+  if (!sets.length) return;
+  params.push(userId);
+  await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
 }
 
 /** Persist Team Lead flags after main user upsert (forward-only columns). */
@@ -327,6 +361,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       );
 
       await applyTeamLeadFields(pool, u.id, u, { canHr: true });
+      await applyPayrollProfileFields(pool, u.id, u, { canHr: true });
 
       const { rows: created } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [u.id]);
       logShiftHistoryRaw(created[0], "POST /api/users");
@@ -364,6 +399,10 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
         body = { ...bodyRaw };
         delete body.role;
         delete body.salary;
+        delete body.fuelAllowance;
+        delete body.fuel_allowance;
+        delete body.mobilePackage;
+        delete body.mobile_package;
         if (actor.role === "HR Employee") {
           // Keep password reset for self via settings elsewhere; strip elevated fields.
           delete body.password;
@@ -451,6 +490,7 @@ export function registerUsersRoutes(app, pool, requireAuth, requireHrAdmin) {
       );
 
       await applyTeamLeadFields(pool, targetId, body, { canHr });
+      await applyPayrollProfileFields(pool, targetId, body, { canHr });
 
       const { rows: updated } = await pool.query(`${USER_SELECT_SQL} WHERE id = $1 LIMIT 1`, [targetId]);
       logShiftHistoryRaw(updated[0], "PUT /api/users/:id");
