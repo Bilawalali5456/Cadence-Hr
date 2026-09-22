@@ -485,11 +485,19 @@ export function formatDayScheduleLine(daySchedule) {
 export function requiredMsForShiftDay(user, dateKey) {
   const bounds = getShiftBounds(user, dateKey);
   if (bounds.off || !bounds.start || !bounds.end) return 0;
-  // Forward-only: required = shift duration, capped at 8h 30m (break not subtracted).
+  // Display/target: shift duration capped at 8h 30m (no break deduction).
+  // Applied for any date — monthly totals and UI targets only; does not rewrite stored rows.
+  const shiftDurationMs = Math.max(0, bounds.end - bounds.start);
+  return Math.min(shiftDurationMs, REQUIRED_WORKING_MS);
+}
+
+/** Required ms used for Present / Short Hours status (forward-only new rule). */
+function requiredMsForDayStatus(user, dateKey) {
   if (usesNewAttendanceHoursPolicy(dateKey)) {
-    const shiftDurationMs = Math.max(0, bounds.end - bounds.start);
-    return Math.min(shiftDurationMs, REQUIRED_WORKING_MS);
+    return requiredMsForShiftDay(user, dateKey);
   }
+  const bounds = getShiftBounds(user, dateKey);
+  if (bounds.off || !bounds.start || !bounds.end) return 0;
   const s = getUserShift(user, dateKey);
   return Math.max(0, bounds.end - bounds.start - (s.breakMinutes || 0) * 60000);
 }
@@ -883,7 +891,7 @@ export function computeDayStatus(user, record, holidays = [], now = new Date()) 
   }
 
   const net = calcNetWorkingMs(record);
-  const expectedNet = requiredMsForShiftDay(user, dateKey);
+  const expectedNet = requiredMsForDayStatus(user, dateKey);
   if (expectedNet > 0 && net < expectedNet) return "Short Hours";
   return "Present";
 }
