@@ -126,7 +126,7 @@ async function applyTeamLeadFields(pool, userId, body, { canHr }) {
   const role = String(rows[0].role || "");
   const canBeTeamLead = role === "Employee" || role === "Executive" || role === "Manager";
 
-  const nextIsTl = isTeamLead !== undefined ? isTeamLead : !!rows[0].is_team_lead;
+  let nextIsTl = isTeamLead !== undefined ? isTeamLead : !!rows[0].is_team_lead;
   let nextTlId = teamLeadId !== undefined ? teamLeadId : (rows[0].team_lead_id || null);
 
   // HR Employee / Admin cannot be Team Lead, but may be assigned under one.
