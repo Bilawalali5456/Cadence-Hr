@@ -43,6 +43,7 @@ import {
 } from "./lib/auth.js";
 import { createRequireHrOps, createRequireAssetManager, createRequireExecutive, canViewAllAttendance } from "./lib/rbac.js";
 import { registerLeadsRoutes } from "./routes/leads.js";
+import { registerFinanceRoutes } from "./routes/finance.js";
 import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
 
 dotenv.config();
@@ -1092,6 +1093,7 @@ registerCompanyRoutes(app, pool, requireAuth, requireHrOps);
 registerRolesRoutes(app, pool, requireAuth, requireHrOps);
 registerUsersRoutes(app, pool, requireAuth, requireHrOps);
 registerLeadsRoutes(app, pool, requireAuth, requireExecutive);
+registerFinanceRoutes(app, pool, requireAuth, requireExecutive);
 
 /* ─── Production: serve built frontend ─── */
 app.use(express.static(distPath));

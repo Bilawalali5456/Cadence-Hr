@@ -776,3 +776,56 @@ WHERE NOT EXISTS (SELECT 1 FROM lead_channels c WHERE c.name = v.name);
 DELETE FROM lead_channels
 WHERE name IN ('Jobs.pk', 'CSR')
   AND id IN ('lead-ch-jobspk', 'lead-ch-csr');
+
+-- ═══════════════════════════════════════════════════════════
+-- FINANCE — expense categories + expenses (Executive P&L)
+-- ═══════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id          TEXT PRIMARY KEY,
+  name        TEXT UNIQUE NOT NULL,
+  is_default  BOOLEAN NOT NULL DEFAULT false,
+  created_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id             TEXT PRIMARY KEY,
+  category       TEXT NOT NULL,
+  amount         NUMERIC NOT NULL CHECK (amount >= 0),
+  currency       TEXT NOT NULL DEFAULT 'PKR',
+  description    TEXT DEFAULT '',
+  date           DATE NOT NULL,
+  added_by       TEXT REFERENCES users(id) ON DELETE SET NULL,
+  is_auto        BOOLEAN NOT NULL DEFAULT false,
+  payroll_month  TEXT,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses (date);
+CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses (category);
+CREATE INDEX IF NOT EXISTS idx_expenses_payroll_month ON expenses (payroll_month);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_auto_payroll_month
+  ON expenses (payroll_month)
+  WHERE is_auto = true AND payroll_month IS NOT NULL;
+
+DROP TRIGGER IF EXISTS trg_expenses_updated_at ON expenses;
+CREATE TRIGGER trg_expenses_updated_at
+  BEFORE UPDATE ON expenses
+  FOR EACH ROW EXECUTE PROCEDURE touch_updated_at_column();
+
+INSERT INTO expense_categories (id, name, is_default) VALUES
+  ('exp-cat-salaries', 'Salaries', true),
+  ('exp-cat-office-rent', 'Office Rent', true),
+  ('exp-cat-utilities', 'Utilities', true),
+  ('exp-cat-equipment', 'Equipment', true),
+  ('exp-cat-software', 'Software', true),
+  ('exp-cat-marketing', 'Marketing', true),
+  ('exp-cat-travel', 'Travel', true),
+  ('exp-cat-food', 'Food', true),
+  ('exp-cat-personal', 'Personal', true),
+  ('exp-cat-miscellaneous', 'Miscellaneous', true)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  is_default = true;

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint, ClipboardList, Target } from "lucide-react";
+import { Users, Clock, Plane, Wallet, Briefcase, Megaphone, LayoutDashboard, Settings, AlertTriangle, Timer, LogOut, User, ChevronDown, RefreshCw, FileText, Package, Calendar, BarChart3, Fingerprint, ClipboardList, Target, Landmark } from "lucide-react";
 import { B, AdforceLogo } from "./brand.jsx";
 import { SESSION_STORAGE_KEY, HOLIDAYS_STORAGE_KEY, SESSION_EXPIRED_EVENT, apiBootstrap, apiHealthCheck, apiFetchNotifications, apiFetchUsers, apiFetchAttendance, apiFetchLeave, apiFetchShortLeave, apiFetchPayroll, apiFetchHolidays, apiFetchPolicies, apiFetchAssets, apiFetchAnnouncements, apiFetchWarnings, apiFetchCompany, apiFetchBadges, apiMarkBadgeSeen, apiFetchLeads, loadSession, loadHolidays, sanitizeHolidays, sanitizeAttendance, sanitizeLeaveRequests, sanitizeShortLeaveRequests, sanitizeAnnouncements, sanitizeNotifications, sanitizeWarnings, persistSessionToken } from "./api.js";
 import { DEFAULT_COMPANY, can, isStaffRole, isAdminRole, isHrEmployeeRole, isExecutiveRole, hasOwnAttendance, hasStaffPortalRole, hasAdminPortalAccess, canAccessAssetsModule, isManagerDesignation, isTeamLeadUser, applyAutoCheckouts, monthKey } from "./utils.js";
@@ -25,6 +25,7 @@ import { BiometricPage } from "./pages/BiometricPage.jsx";
 import { WeeklyReportPage } from "./pages/WeeklyReportPage.jsx";
 import { TeamReportsPage } from "./pages/TeamReportsPage.jsx";
 import { LeadsPage } from "./pages/LeadsPage.jsx";
+import { FinancePage } from "./pages/FinancePage.jsx";
 
 const ADMIN_SIDEBAR_IDS = new Set(["assets"]);
 const HOME_NAV = { id: "home", label: "Home", icon: LayoutDashboard };
@@ -48,6 +49,7 @@ const NAV = [
   { id: "payroll",       label: "Payroll",        icon: Wallet,          permission: "view_payroll" },
   { id: "leave",         label: "Leave",          icon: Plane,           permission: "view_leave" },
   { id: "leads",         label: "Leads",          icon: Target,          roles: ["Executive"] },
+  { id: "finance",       label: "Finance",        icon: Landmark,        roles: ["Executive"] },
   { id: "myleads",       label: "My Leads",       icon: Target,          staffExtra: "myleads" },
   { id: "weeklyreport",  label: "Weekly Report",  icon: ClipboardList,   staffExtra: "weeklyreport" },
   { id: "teamreports",   label: "Team Reports",   icon: FileText,        staffExtra: "teamreports" },
@@ -70,6 +72,7 @@ const TITLES = {
   shortleave:    ["Short Leave",     "Partial-day leave requests"],
   leave:         ["Leave",           "Requests and approvals"],
   leads:         ["Leads",           "Sales pipeline and deal tracking"],
+  finance:       ["Finance",         "Profit & loss, expenses, and revenue"],
   myleads:       ["My Leads",        "Leads assigned to you"],
   weeklyreport:  ["Weekly Report",   "Submit your weekly work summary"],
   teamreports:   ["Team Reports",    "Weekly reports from your team"],
@@ -419,6 +422,9 @@ export default function App() {
     if (route === "leads" && !isExecutiveRole(user.role)) {
       setRoute("home");
     }
+    if (route === "finance" && !isExecutiveRole(user.role)) {
+      setRoute("home");
+    }
   }, [route, session?.userId, users, roles, hasMyLeads]);
 
   /* ── Staff: detect assigned leads for "My Leads" sidebar tab ── */
@@ -729,6 +735,12 @@ export default function App() {
           {route === "payroll"       && <PayrollPage    currentUser={currentUser} users={users} attendance={attendance} payroll={payroll} setPayroll={setPayroll} company={company} roles={roles} leaveRequests={leaveRequests} holidays={holidays} />}
           {route === "leave"         && <LeavePage      currentUser={currentUser} requests={leaveRequests} setRequests={setLeaveRequests} users={users} setUsers={setUsers} roles={roles} notifications={notifications} setNotifications={setNotifications} setAttendance={setAttendance} shortLeaveRequests={shortLeaveRequests} />}
           {route === "leads"         && isExecutiveRole(role) && <LeadsPage currentUser={currentUser} users={rosterUsers} mode="executive" />}
+          {route === "finance"       && isExecutiveRole(role) && (
+            <FinancePage
+              currentUser={currentUser}
+              onOpenLead={() => setRoute("leads")}
+            />
+          )}
           {route === "myleads"       && hasStaffPortalRole(role) && hasMyLeads && <LeadsPage currentUser={currentUser} users={users} mode="employee" />}
           {route === "weeklyreport"  && hasAssignedTeamLead && !isTl && <WeeklyReportPage currentUser={currentUser} />}
           {route === "teamreports"   && isTl && <TeamReportsPage currentUser={currentUser} />}

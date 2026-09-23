@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { HR_OPS_ROLES } from "../lib/rbac.js";
 import { buildPayslip, monthToRange, MONTH_NAMES } from "../lib/payrollCalc.js";
+import { syncAutoSalaryExpense } from "../lib/financeSalary.js";
 
 function slipToJs(data) {
   return data && typeof data === "object" ? data : null;
@@ -163,6 +164,11 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin, re
         actor.name || actor.email || "HR"
       );
       const saved = await upsertSlip(pool, slip);
+      try {
+        await syncAutoSalaryExpense(pool, month, actor.id);
+      } catch (syncErr) {
+        console.error("syncAutoSalaryExpense (generate) error:", syncErr.message);
+      }
       res.json({ slip: saved });
     } catch (e) {
       console.error("POST /api/payroll/generate error:", e.message);
@@ -212,6 +218,12 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin, re
         totalGross += Number(saved.grossSalary || saved.gross || 0);
         totalDeductions += Number(saved.totalDeductions || 0);
         totalNet += Number(saved.net || 0);
+      }
+
+      try {
+        await syncAutoSalaryExpense(pool, month, actor.id);
+      } catch (syncErr) {
+        console.error("syncAutoSalaryExpense (generate-all) error:", syncErr.message);
       }
 
       res.json({
@@ -361,7 +373,15 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin, re
     if (!id) return res.status(400).json({ error: "id is required" });
     try {
       const { rows } = await pool.query("DELETE FROM payroll WHERE id = $1 RETURNING data", [id]);
-      res.json({ ok: true, deleted: rows[0] ? slipToJs(rows[0].data) : null });
+      const deleted = rows[0] ? slipToJs(rows[0].data) : null;
+      if (deleted?.month) {
+        try {
+          await syncAutoSalaryExpense(pool, deleted.month, req.authUser?.id || null);
+        } catch (syncErr) {
+          console.error("syncAutoSalaryExpense (delete) error:", syncErr.message);
+        }
+      }
+      res.json({ ok: true, deleted });
     } catch (e) {
       console.error("DELETE /api/payroll/:id error:", e.message);
       res.status(500).json({ error: e.message });

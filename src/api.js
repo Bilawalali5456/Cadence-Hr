@@ -418,6 +418,109 @@ export async function apiDownloadBankSheet(month) {
   return fileName;
 }
 
+/* ── Finance (Executive) ── */
+
+export async function apiFetchFinanceSummary(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiGetJson(`/finance/summary${q}`);
+}
+
+export async function apiFetchFinanceYearly(year) {
+  const q = year ? `?year=${encodeURIComponent(year)}` : "";
+  return apiGetJson(`/finance/yearly${q}`);
+}
+
+export async function apiFetchExpenses(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  const data = await apiGetJson(`/expenses${q}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateExpense(payload) {
+  const res = await apiFetch(`${API_URL}/expenses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create expense failed (${res.status})`);
+  return body;
+}
+
+export async function apiUpdateExpense(id, payload) {
+  const res = await apiFetch(`${API_URL}/expenses/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Update expense failed (${res.status})`);
+  return body;
+}
+
+export async function apiDeleteExpense(id) {
+  const res = await apiFetch(`${API_URL}/expenses/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete expense failed (${res.status})`);
+  return body;
+}
+
+export async function apiFetchExpenseCategories() {
+  const data = await apiGetJson(`/expense-categories`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function apiCreateExpenseCategory(name) {
+  const res = await apiFetch(`${API_URL}/expense-categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ name }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Create category failed (${res.status})`);
+  return body;
+}
+
+export async function apiDeleteExpenseCategory(id) {
+  const res = await apiFetch(`${API_URL}/expense-categories/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Delete category failed (${res.status})`);
+  return body;
+}
+
+export async function apiDownloadFinanceReport(month) {
+  const res = await apiFetch(`${API_URL}/finance/export?month=${encodeURIComponent(month)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let msg = `Finance export failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const fileName = match?.[1] || `Finance_${month}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return fileName;
+}
+
 export async function apiUpdatePayroll(id, patch) {
   const res = await apiFetch(`${API_URL}/payroll/${encodeURIComponent(id)}`, {
     method: "PUT",
