@@ -26,7 +26,7 @@ import { registerWarningsRoutes } from "./routes/warnings.js";
 import { registerShiftsRoutes } from "./routes/shifts.js";
 import { registerCompanyRoutes } from "./routes/company.js";
 import { registerRolesRoutes } from "./routes/roles.js";
-import { startAttendanceSyncProcessor, syncAttendanceFromLogs, isLateCheckIn } from "./lib/attendanceSync.js";
+import { startAttendanceSyncProcessor, syncAttendanceFromLogs, isLateCheckIn, getUserShift, REQUIRED_WORKING_MS } from "./lib/attendanceSync.js";
 import { parseShiftHistory } from "./lib/shiftHistory.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -44,7 +44,7 @@ import {
 import { createRequireHrOps, createRequireAssetManager, createRequireExecutive, canViewAllAttendance } from "./lib/rbac.js";
 import { registerLeadsRoutes } from "./routes/leads.js";
 import { registerFinanceRoutes } from "./routes/finance.js";
-import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp } from "./lib/admsHelpers.js";
+import { karachiTimestampText, parseAttLogLine, normalizeWallClockTimestamp, karachiDateKey } from "./lib/admsHelpers.js";
 
 dotenv.config();
 
@@ -1589,6 +1589,156 @@ async function migrateSep2026GraceForAllEmployees() {
   );
 }
 
+function clockMins(hhmm) {
+  const raw = String(hhmm || "00:00").trim();
+  const [h, m] = raw.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+/** Required ms = min(shift duration, 8h30m) for the employee's shift on dateKey (weekly schedule aware). */
+function requiredMsFromCurrentShiftHistory(user, dateKey) {
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return 0;
+  const startM = clockMins(shift.shiftStart);
+  const endM = clockMins(shift.shiftEnd);
+  if (startM == null || endM == null) return 0;
+  let durM = endM - startM;
+  if (durM <= 0) durM += 24 * 60; // overnight
+  return Math.min(durM * 60000, REQUIRED_WORKING_MS);
+}
+
+/** Approved short-leave ms overlapping [checkIn, checkOut]. */
+function shortLeaveOverlapMs(shortLeaves, checkIn, checkOut) {
+  const workStart = new Date(checkIn).getTime();
+  const workEnd = new Date(checkOut).getTime();
+  if (!Number.isFinite(workStart) || !Number.isFinite(workEnd) || workEnd <= workStart) return 0;
+  return parseJsonArrayLoose(shortLeaves)
+    .filter((sl) => !sl?.status || sl.status === "approved")
+    .reduce((sum, sl) => {
+      const startRaw = sl?.start || sl?.startIso;
+      const endRaw = sl?.end || sl?.endIso;
+      if (!startRaw || !endRaw) return sum;
+      const slStart = new Date(startRaw).getTime();
+      const slEnd = new Date(endRaw).getTime();
+      if (!Number.isFinite(slStart) || !Number.isFinite(slEnd) || slEnd <= slStart) return sum;
+      const overlapStart = Math.max(slStart, workStart);
+      const overlapEnd = Math.min(slEnd, workEnd);
+      const ms = overlapEnd - overlapStart;
+      return sum + (ms > 0 ? ms : 0);
+    }, 0);
+}
+
+const PROTECTED_SEP_STATUSES = new Set(["On Leave", "WFH", "Missing Checkout", "Working", "Absent"]);
+
+/**
+ * One-time: recalc September working_ms (no break deduction) + Present/Short Hours;
+ * past "Working" without checkout → Missing Checkout.
+ */
+async function migrateSep2026RecalcAttendance() {
+  const migrationKey = "migration_fix_manual_sep2026";
+  const already = await pool.query("SELECT value FROM app_meta WHERE key = $1 LIMIT 1", [migrationKey]);
+  if (already.rows.length) return;
+
+  const today = karachiDateKey(new Date());
+  let recalculated = 0;
+  let statusesFixed = 0;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, shift, shift_history FROM users`
+  );
+  const userById = new Map(
+    users.map((u) => [
+      u.id,
+      {
+        id: u.id,
+        shift: parseShiftObjectLoose(u.shift),
+        shift_history: parseShiftHistory(u.shift_history),
+      },
+    ])
+  );
+
+  const { rows: sepRows } = await pool.query(
+    `SELECT id, user_id, date, check_in, check_out, status, working_ms, short_leaves
+     FROM attendance
+     WHERE date >= '2026-09-01' AND date <= '2026-09-30'`
+  );
+
+  for (const row of sepRows) {
+    const dateKey = String(row.date).slice(0, 10);
+    const user = userById.get(row.user_id);
+    const status = row.status != null ? String(row.status).trim() : "";
+
+    // Step 1+2: records with both check-in and check-out
+    if (row.check_in && row.check_out) {
+      const gross = new Date(row.check_out) - new Date(row.check_in);
+      let workingMs = Number.isFinite(gross) && gross > 0 ? gross : 0;
+      workingMs = Math.max(0, workingMs - shortLeaveOverlapMs(row.short_leaves, row.check_in, row.check_out));
+
+      let nextStatus = status;
+      // On Leave / WFH / Missing Checkout / Working / Absent keep status.
+      // Early Leave and all other day statuses → Present or Short Hours.
+      if (!PROTECTED_SEP_STATUSES.has(status)) {
+        const requiredMs = user ? requiredMsFromCurrentShiftHistory(user, dateKey) : REQUIRED_WORKING_MS;
+        if (requiredMs > 0 && workingMs < requiredMs) nextStatus = "Short Hours";
+        else nextStatus = "Present";
+      }
+
+      const workingChanged = Number(row.working_ms) !== workingMs;
+      const statusChanged = nextStatus !== status;
+      if (workingChanged || statusChanged) {
+        await pool.query(
+          `UPDATE attendance
+           SET working_ms = $1,
+               status = $2,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [workingMs, nextStatus || status, row.id]
+        );
+      }
+      recalculated += 1;
+      if (statusChanged) statusesFixed += 1;
+      continue;
+    }
+
+    // Step 3: past "Working" with no checkout → Missing Checkout
+    if (status === "Working" && !row.check_out && dateKey < today) {
+      await pool.query(
+        `UPDATE attendance SET status = 'Missing Checkout', updated_at = NOW() WHERE id = $1`,
+        [row.id]
+      );
+      statusesFixed += 1;
+    }
+  }
+
+  // Also catch Working + no checkout on any past date (not only September), per Step 3 wording.
+  const { rowCount: pastWorkingFixed } = await pool.query(
+    `UPDATE attendance
+     SET status = 'Missing Checkout', updated_at = NOW()
+     WHERE status = 'Working'
+       AND check_out IS NULL
+       AND date < $1::date
+       AND date < '2026-09-01'`,
+    [today]
+  );
+  // September past Working already handled above; only add non-Sep counts here.
+  if (pastWorkingFixed) statusesFixed += pastWorkingFixed;
+
+  await pool.query(
+    `INSERT INTO app_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [migrationKey, JSON.stringify({
+      appliedAt: new Date().toISOString(),
+      recalculated,
+      statusesFixed,
+      today,
+    })]
+  );
+
+  console.log(`Migration: Recalculated ${recalculated} September records, fixed ${statusesFixed} statuses`);
+}
+
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
@@ -1609,6 +1759,9 @@ ensureSchema()
   }))
   .then(() => migrateSep2026GraceForAllEmployees().catch((e) => {
     console.error("Sep 2026 grace-for-all migration failed (continuing startup):", e.message);
+  }))
+  .then(() => migrateSep2026RecalcAttendance().catch((e) => {
+    console.error("Sep 2026 attendance recalc migration failed (continuing startup):", e.message);
   }))
   .then(() => {
     startAttendanceSyncProcessor(pool);
