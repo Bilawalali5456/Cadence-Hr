@@ -1717,7 +1717,7 @@ async function migrateSep2026RecalcAttendance() {
      SET status = 'Missing Checkout', updated_at = NOW()
      WHERE status = 'Working'
        AND check_out IS NULL
-       AND date < $1::date
+       AND date < $1
        AND date < '2026-09-01'`,
     [today]
   );
