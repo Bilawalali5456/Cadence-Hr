@@ -60,6 +60,72 @@ function workingDaysInMonth(month, holidays) {
   ).length;
 }
 
+/** Faizan Ahmad only — Short Hours payroll deduction (expand later if needed). */
+const SHORT_HOURS_DEDUCTION_USER_IDS = new Set(["u-1gqiwc6"]);
+const SHORT_HOURS_MON_THU_REQUIRED_MS = 7 * 3600000;  // 25_200_000
+const SHORT_HOURS_FRI_REQUIRED_MS = 8 * 3600000;      // 28_800_000
+
+function shortHoursRequiredMsForDate(dateKey) {
+  const d = new Date(`${dateKey}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return 0;
+  const dow = d.getDay(); // 0=Sun … 5=Fri
+  if (dow === 5) return SHORT_HOURS_FRI_REQUIRED_MS;
+  if (dow >= 1 && dow <= 4) return SHORT_HOURS_MON_THU_REQUIRED_MS;
+  return 0;
+}
+
+/** Total scheduled required hours in month (Mon–Thu 7h, Fri 8h; skip weekend/PH). */
+function totalRequiredHoursInMonth(month, holidays) {
+  const range = monthToRange(month);
+  if (!range) return 0;
+  let ms = 0;
+  for (const d of eachDateInRange(range.start, range.end)) {
+    if (isWeekend(d) || isPublicHoliday(d, holidays)) continue;
+    ms += shortHoursRequiredMsForDate(d);
+  }
+  return ms / 3600000;
+}
+
+function computeShortHoursDeduction(userId, month, attendanceRows, holidays, grossSalary) {
+  if (!SHORT_HOURS_DEDUCTION_USER_IDS.has(String(userId || ""))) {
+    return {
+      shortHoursDeduction: 0,
+      shortHoursDeficitHours: 0,
+      shortHoursDays: 0,
+      shortHoursPerHourRate: 0,
+    };
+  }
+
+  const shortDays = (attendanceRows || []).filter(r =>
+    r
+    && r.user_id === userId
+    && String(r.status || "").trim() === "Short Hours"
+    && r.check_out
+    && String(r.date || "").startsWith(month)
+  );
+
+  let deficitMs = 0;
+  for (const r of shortDays) {
+    const dateKey = String(r.date).slice(0, 10);
+    const requiredMs = shortHoursRequiredMsForDate(dateKey);
+    if (requiredMs <= 0) continue;
+    const workingMs = Math.max(0, Number(r.working_ms) || 0);
+    deficitMs += Math.max(0, requiredMs - workingMs);
+  }
+
+  const deficitHours = deficitMs / 3600000;
+  const totalRequiredHours = totalRequiredHoursInMonth(month, holidays);
+  const perHour = totalRequiredHours > 0 ? grossSalary / totalRequiredHours : 0;
+  const deduction = Math.round(deficitHours * perHour);
+
+  return {
+    shortHoursDeduction: deduction,
+    shortHoursDeficitHours: Math.round(deficitHours * 100) / 100,
+    shortHoursDays: shortDays.length,
+    shortHoursPerHourRate: Math.round(perHour * 100) / 100,
+  };
+}
+
 function approvedLeaveDates(leaveRows, userId, month, holidays) {
   const range = monthToRange(month);
   if (!range) return { paid: new Set(), unpaid: new Set(), all: new Set() };
@@ -131,7 +197,18 @@ export function buildPayslip({
   const salaryDeductionDays = Number(latePenalty?.salary_deductions ?? latePenalty?.salaryDeductions ?? 0) || 0;
   const latePenaltyDeduction = Math.round(perDay * salaryDeductionDays);
   const incomeTax = calculateMonthlyTax(grossSalary);
-  const totalDeductions = Math.round(absentDeduction + latePenaltyDeduction + incomeTax);
+
+  const shortHours = computeShortHoursDeduction(
+    user.id,
+    month,
+    attendanceRows,
+    holidays,
+    grossSalary
+  );
+
+  const totalDeductions = Math.round(
+    absentDeduction + latePenaltyDeduction + incomeTax + shortHours.shortHoursDeduction
+  );
   const net = Math.round(grossSalary - totalDeductions);
 
   const mm = monthToRange(month);
@@ -170,6 +247,10 @@ export function buildPayslip({
     latePenaltyDays: salaryDeductionDays,
     latePenaltyDeduction,
     incomeTax,
+    shortHoursDeduction: shortHours.shortHoursDeduction,
+    shortHoursDeficitHours: shortHours.shortHoursDeficitHours,
+    shortHoursDays: shortHours.shortHoursDays,
+    shortHoursPerHourRate: shortHours.shortHoursPerHourRate,
     otherDeduction: 0,
     totalDeductions,
     deduction: totalDeductions, // legacy

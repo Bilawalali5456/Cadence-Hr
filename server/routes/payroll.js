@@ -28,7 +28,7 @@ async function loadAttendanceForMonth(pool, month) {
   const range = monthToRange(month);
   if (!range) return [];
   const { rows } = await pool.query(
-    `SELECT user_id, date, check_in, late FROM attendance
+    `SELECT user_id, date, check_in, check_out, late, status, working_ms FROM attendance
      WHERE date >= $1 AND date <= $2`,
     [range.start, range.end]
   );

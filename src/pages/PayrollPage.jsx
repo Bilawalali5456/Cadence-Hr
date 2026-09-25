@@ -26,9 +26,11 @@ function PayslipCard({ slip, currency = "PKR" }) {
   const gross = Number(slip.grossSalary ?? slip.gross ?? (basic + fuel + mobile));
   const absentDed = Number(slip.absentDeduction || 0);
   const lateDed = Number(slip.latePenaltyDeduction || 0);
+  const shortHoursDed = Number(slip.shortHoursDeduction || 0);
   const tax = Number(slip.incomeTax || 0);
-  const totalDed = Number(slip.totalDeductions ?? (absentDed + lateDed + tax));
+  const totalDed = Number(slip.totalDeductions ?? (absentDed + lateDed + shortHoursDed + tax));
   const net = Number(slip.net || 0);
+  const shortHoursLabel = Number(slip.shortHoursDeficitHours || 0).toFixed(1);
 
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
@@ -80,6 +82,13 @@ function PayslipCard({ slip, currency = "PKR" }) {
             value={`-${money(lateDed, cur)}`}
             danger
           />
+          {shortHoursDed > 0 && (
+            <Row
+              label={`Short Hours (${shortHoursLabel}h)`}
+              value={`-${money(shortHoursDed, cur)}`}
+              danger
+            />
+          )}
           <Row label="Income Tax" value={money(tax, cur)} danger={tax > 0} />
           <Row label="Total Deductions" value={`-${money(totalDed, cur)}`} bold danger />
         </div>
