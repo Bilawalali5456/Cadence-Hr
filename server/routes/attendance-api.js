@@ -35,18 +35,21 @@ function computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut) {
     }, 0);
 }
 
-/** Net working ms = gross − overlapping short leave. Break deducted only for past (legacy) days. */
+/** Net working ms = gross − overlapping short leave. Break deducted only for pre-2026-09-01 days. */
 function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null, dateKey = null) {
   if (!checkIn || !checkOut) return null;
-  const gross = new Date(checkOut) - new Date(checkIn);
-  if (!(gross > 0)) return null;
+  const ciMs = new Date(checkIn).getTime();
+  const coMs = new Date(checkOut).getTime();
+  if (!Number.isFinite(ciMs) || !Number.isFinite(coMs) || !(coMs > ciMs)) return null;
+  const shortLeaveMs = computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut);
   const key = dateKey || karachiDateKey(new Date(checkIn));
-  let ms = gross;
-  if (!usesNewAttendanceHoursPolicy(key)) {
-    ms -= computeBreakMs(breaks, breakStart, breakEnd);
+  // From 2026-09-01: working hours = presence − short leave only (break is display-only).
+  if (usesNewAttendanceHoursPolicy(key)) {
+    return Math.max(0, coMs - ciMs - shortLeaveMs);
   }
-  ms -= computeShortLeaveOverlapMs(shortLeaves, checkIn, checkOut);
-  return Math.max(0, ms);
+  // Legacy: also deduct break.
+  const totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
+  return Math.max(0, coMs - ciMs - totalBreakMs - shortLeaveMs);
 }
 
 function genAttId() {
@@ -296,12 +299,13 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
 
       // Recalculate metrics from the corrected times (do not trust stale client values).
       const { rows: userRows } = await c.query(
-        `SELECT id, shift FROM users WHERE id = $1 LIMIT 1`,
+        `SELECT id, shift, shift_history FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const user = userRows[0] || null;
       totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
       if (checkIn && checkOut) {
+        // usesNewAttendanceHoursPolicy(dateKey): Sep 2026+ → no break deduction.
         workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, dateKey);
       } else if (checkIn && user) {
         workingMs = computeNetWorkingMs(checkIn, new Date().toISOString(), breaks, shortLeaves, breakStart, breakEnd, dateKey);
@@ -321,6 +325,32 @@ export function registerAttendanceRestRoutes(app, pool, requireAuth, requireHrAd
           })
         : (checkOut ? "Present" : (checkIn ? "Missing Checkout" : "Absent"));
       late = user ? isLateCheckIn(checkIn, user, dateKey, shortLeaves) : false;
+    } else if (checkIn && checkOut) {
+      // Manual add / non-correction upsert: recompute working_ms with policy (ignore client break deduction).
+      totalBreakMs = computeBreakMs(breaks, breakStart, breakEnd);
+      workingMs = computeNetWorkingMs(checkIn, checkOut, breaks, shortLeaves, breakStart, breakEnd, dateKey);
+      if (usesNewAttendanceHoursPolicy(dateKey) && (status === "Early Leave" || !status)) {
+        const { rows: userRows } = await c.query(
+          `SELECT id, shift, shift_history FROM users WHERE id = $1 LIMIT 1`,
+          [userId]
+        );
+        const user = userRows[0] || null;
+        if (user) {
+          status = computeBiometricDayStatus(user, checkIn, checkOut, {
+            breaks,
+            shortLeaves,
+            breakStart,
+            breakEnd,
+            dateKey,
+            now: new Date(),
+            netWorkingMs: workingMs,
+            source: r.source || "manual",
+          });
+          late = isLateCheckIn(checkIn, user, dateKey, shortLeaves);
+        } else if (status === "Early Leave") {
+          status = "Present";
+        }
+      }
     }
 
     // Prefer the existing (user_id, date) row so corrections never land on a
