@@ -348,8 +348,8 @@ export function computeShortLeaveMs(shortLeaves) {
 
 /**
  * Net working ms = (check-out − check-in) − approved short leaves.
- * Break is NOT deducted under the new policy (from today forward).
- * Past dates keep legacy formula: gross − breaks − short leaves.
+ * Break is NOT deducted from 2026-09-01 onward.
+ * Pre-2026-09-01: gross − breaks − short leaves.
  */
 export function computeNetWorkingMs(checkIn, checkOut, breaks = [], shortLeaves = [], breakStart = null, breakEnd = null, dateKey = null) {
   const gross = computeWorkingMs(checkIn, checkOut);
@@ -392,11 +392,17 @@ export function requiredDutyMs(user, dateKey) {
 /** Cap on required duty: 8 hours 30 minutes (510 minutes). */
 export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
 
-/** New working-hours / status policy applies from today (PKT) forward only. */
-export function usesNewAttendanceHoursPolicy(dateKey, now = new Date()) {
+/** New hours/status policy (no Early Leave, no break deduction, 8h30m cap) from this date forward. */
+export const NEW_ATTENDANCE_HOURS_POLICY_FROM = "2026-09-01";
+
+/**
+ * New working-hours / status policy applies from 2026-09-01 (PKT) forward.
+ * Dates before that keep legacy Early Leave + break-deduction behavior.
+ */
+export function usesNewAttendanceHoursPolicy(dateKey, _now = new Date()) {
   const key = String(dateKey || "").slice(0, 10);
   if (!key) return true;
-  return key >= dateKeyFromDate(now);
+  return key >= NEW_ATTENDANCE_HOURS_POLICY_FROM;
 }
 
 /**
@@ -476,8 +482,8 @@ export function isShortHours(checkIn, checkOut, user, options = {}) {
 
 /**
  * Status priority after finalization:
- * Absent → Missing Checkout → (legacy Early Leave) → Short Hours → Present
- * New policy (from today): no Early Leave — status is Present or Short Hours by 8h30m.
+ * Absent → Missing Checkout → (legacy Early Leave, pre-2026-09-01) → Short Hours → Present
+ * From 2026-09-01: no Early Leave — Present or Short Hours by min(shift, 8h30m).
  * Late check-in alone does NOT set day status to Late when duty is completed.
  * Until shift end + 30 min with check-in: Working
  * Auto Checkout is removed — never returned.
@@ -493,9 +499,9 @@ export function computeBiometricDayStatus(user, checkIn, checkOut, options = {})
   if (!shouldFinalizeAttendance(user, dateKey, now)) return "Working";
 
   if (!checkOut) return "Missing Checkout";
-  // Legacy only: Early Leave beats Short Hours when both apply.
+  // Pre-2026-09-01 only: Early Leave beats Short Hours when both apply.
   if (!usesNewAttendanceHoursPolicy(dateKey) && isEarlyLeave(checkOut, user, dateKey)) return "Early Leave";
-  // Late check-in + completed hours → Present (or Short Hours). Not "Late".
+  // From 2026-09-01: Present if working_ms >= required, else Short Hours.
   if (isShortHours(checkIn, checkOut, user, { ...options, dateKey })) return "Short Hours";
   return "Present";
 }

@@ -805,14 +805,17 @@ export function calcShortLeaveMs(record, workEndOverride = null) {
     }, 0);
 }
 
-/** Cap on required duty: 8 hours 30 minutes (510 minutes). Forward-only from today. */
+/** Cap on required duty: 8 hours 30 minutes (510 minutes). Forward from 2026-09-01. */
 export const REQUIRED_WORKING_MS = 510 * 60 * 1000;
 
-/** New working-hours / status policy applies from today (PKT) forward only. */
-export function usesNewAttendanceHoursPolicy(dateKey, now = new Date()) {
+/** New hours/status policy (no Early Leave, no break deduction, 8h30m cap) from this date forward. */
+export const NEW_ATTENDANCE_HOURS_POLICY_FROM = "2026-09-01";
+
+/** New working-hours / status policy applies from 2026-09-01 (PKT) forward. */
+export function usesNewAttendanceHoursPolicy(dateKey, _now = new Date()) {
   const key = String(dateKey || "").slice(0, 10);
   if (!key) return true;
-  return key >= todayKey(now);
+  return key >= NEW_ATTENDANCE_HOURS_POLICY_FROM;
 }
 
 /**
