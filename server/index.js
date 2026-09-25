@@ -26,7 +26,7 @@ import { registerWarningsRoutes } from "./routes/warnings.js";
 import { registerShiftsRoutes } from "./routes/shifts.js";
 import { registerCompanyRoutes } from "./routes/company.js";
 import { registerRolesRoutes } from "./routes/roles.js";
-import { startAttendanceSyncProcessor, syncAttendanceFromLogs } from "./lib/attendanceSync.js";
+import { startAttendanceSyncProcessor, syncAttendanceFromLogs, isLateCheckIn } from "./lib/attendanceSync.js";
 import { parseShiftHistory } from "./lib/shiftHistory.js";
 import { createDatabaseBackup } from "./lib/dbBackup.js";
 import { deleteEmployeeCascade } from "./lib/deleteEmployee.js";
@@ -1466,6 +1466,129 @@ async function migrateSep2026ShiftHistoryAttendanceFix() {
   }
 }
 
+function parseShiftObjectLoose(shift) {
+  if (!shift) return {};
+  if (typeof shift === "string") {
+    try {
+      const parsed = JSON.parse(shift);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof shift === "object" ? shift : {};
+}
+
+function sepGraceHistoryMatchesCurrent(history, currentShift) {
+  const list = parseShiftHistory(history);
+  const entry = list.find((e) => String(e?.from ?? e?.from_date ?? "").slice(0, 10) === "2026-09-01");
+  if (!entry?.shift) return false;
+  const hist = parseShiftObjectLoose(entry.shift);
+  const cur = parseShiftObjectLoose(currentShift);
+  return (
+    Number(hist.graceMinutes ?? 15) === Number(cur.graceMinutes ?? 15)
+    && String(hist.shiftStart || "") === String(cur.shiftStart || "")
+    && String(hist.shiftEnd || "") === String(cur.shiftEnd || "")
+  );
+}
+
+function parseJsonArrayLoose(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/**
+ * One-time: apply each active employee's CURRENT shift (incl. grace) to shift_history
+ * from 2026-09-01, then recalc September late flags only (status/working_ms untouched).
+ */
+async function migrateSep2026GraceForAllEmployees() {
+  const migrationKey = "migration_grace_sep2026_all";
+  const already = await pool.query("SELECT value FROM app_meta WHERE key = $1 LIMIT 1", [migrationKey]);
+  if (already.rows.length) return;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, name, role, shift, shift_history
+     FROM users
+     WHERE status = 'active'
+       AND role IS DISTINCT FROM 'Admin'
+       AND role IS DISTINCT FROM 'HR Admin'
+     ORDER BY LOWER(name)`
+  );
+
+  let employeesUpdated = 0;
+  let lateRecordsUpdated = 0;
+
+  for (const row of users) {
+    const currentShift = parseShiftObjectLoose(row.shift);
+    if (!currentShift.shiftStart && !currentShift.weeklySchedule) {
+      continue;
+    }
+
+    if (!sepGraceHistoryMatchesCurrent(row.shift_history, currentShift)) {
+      const newHistory = rewriteShiftHistoryForSep2026(row.shift_history, currentShift);
+      await pool.query(
+        `UPDATE users SET shift_history = $1::jsonb WHERE id = $2`,
+        [JSON.stringify(newHistory), row.id]
+      );
+      employeesUpdated += 1;
+      row.shift_history = newHistory;
+    }
+
+    const userForLate = {
+      id: row.id,
+      shift: currentShift,
+      shift_history: row.shift_history,
+    };
+
+    const { rows: attRows } = await pool.query(
+      `SELECT id, date, check_in, late, short_leaves
+       FROM attendance
+       WHERE user_id = $1
+         AND date >= '2026-09-01'
+         AND date <= '2026-09-30'
+         AND check_in IS NOT NULL`,
+      [row.id]
+    );
+
+    for (const att of attRows) {
+      const dateKey = String(att.date).slice(0, 10);
+      const shortLeaves = parseJsonArrayLoose(att.short_leaves);
+      const shouldBeLate = isLateCheckIn(att.check_in, userForLate, dateKey, shortLeaves);
+      const wasLate = !!att.late;
+      if (shouldBeLate === wasLate) continue;
+      await pool.query(
+        `UPDATE attendance SET late = $1, updated_at = NOW() WHERE id = $2`,
+        [shouldBeLate, att.id]
+      );
+      lateRecordsUpdated += 1;
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO app_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [migrationKey, JSON.stringify({
+      appliedAt: new Date().toISOString(),
+      employeesUpdated,
+      lateRecordsUpdated,
+      scannedEmployees: users.length,
+    })]
+  );
+
+  console.log(
+    `Migration: Applied current grace to September for ${employeesUpdated} employees, ${lateRecordsUpdated} late records updated`
+  );
+}
+
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
@@ -1483,6 +1606,9 @@ ensureSchema()
   }))
   .then(() => migrateSep2026ShiftHistoryAttendanceFix().catch((e) => {
     console.error("Sep 2026 shift-history migration failed (continuing startup):", e.message);
+  }))
+  .then(() => migrateSep2026GraceForAllEmployees().catch((e) => {
+    console.error("Sep 2026 grace-for-all migration failed (continuing startup):", e.message);
   }))
   .then(() => {
     startAttendanceSyncProcessor(pool);
