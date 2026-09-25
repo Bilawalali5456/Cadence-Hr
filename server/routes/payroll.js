@@ -140,7 +140,8 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin, re
         `SELECT id, name, email, role, title, designation, salary, status,
                 bank_name, bank_branch, bank_account, bank_iban, account_title,
                 COALESCE(fuel_allowance, 0) AS fuel_allowance,
-                COALESCE(mobile_package, 0) AS mobile_package
+                COALESCE(mobile_package, 0) AS mobile_package,
+                shift, shift_history
          FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
@@ -187,7 +188,8 @@ export function registerPayrollRoutes(app, pool, requireAuth, requireHrAdmin, re
         `SELECT id, name, email, role, title, designation, salary, status,
                 bank_name, bank_branch, bank_account, bank_iban, account_title,
                 COALESCE(fuel_allowance, 0) AS fuel_allowance,
-                COALESCE(mobile_package, 0) AS mobile_package
+                COALESCE(mobile_package, 0) AS mobile_package,
+                shift, shift_history
          FROM users
          WHERE status = 'active'
            AND role IS DISTINCT FROM 'Admin'

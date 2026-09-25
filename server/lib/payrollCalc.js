@@ -1,4 +1,5 @@
 import { calculateMonthlyTax, parseSalaryAmount } from "./tax.js";
+import { getUserShift, REQUIRED_WORKING_MS } from "./attendanceSync.js";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -60,74 +61,94 @@ function workingDaysInMonth(month, holidays) {
   ).length;
 }
 
-/** Faizan Ahmad only — Short Hours payroll deduction (expand later if needed). */
-const SHORT_HOURS_DEDUCTION_USER_IDS = new Set(["u-1gqiwc6"]);
-/** Deduction applies from August 2026 onward (was Sep-only; extended to include Aug). */
-const SHORT_HOURS_DEDUCTION_FROM = "2026-08-01";
-const SHORT_HOURS_MON_THU_REQUIRED_MS = 7 * 3600000;  // 25_200_000
-const SHORT_HOURS_FRI_REQUIRED_MS = 8 * 3600000;      // 28_800_000
+/** Short Hours payroll deduction — all employees from Sep 2026; Faizan also Aug 2026. */
+const FAIZAN_SHORT_HOURS_USER_ID = "u-1gqiwc6";
+const SHORT_HOURS_DEDUCTION_FROM_ALL = "2026-09-01";
+const SHORT_HOURS_DEDUCTION_FROM_FAIZAN = "2026-08-01";
 
-function shortHoursRequiredMsForDate(dateKey) {
-  const d = new Date(`${dateKey}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return 0;
-  const dow = d.getDay(); // 0=Sun … 5=Fri
-  if (dow === 5) return SHORT_HOURS_FRI_REQUIRED_MS;
-  if (dow >= 1 && dow <= 4) return SHORT_HOURS_MON_THU_REQUIRED_MS;
-  return 0;
+function shortHoursDeductionFromDate(userId) {
+  return String(userId) === FAIZAN_SHORT_HOURS_USER_ID
+    ? SHORT_HOURS_DEDUCTION_FROM_FAIZAN
+    : SHORT_HOURS_DEDUCTION_FROM_ALL;
 }
 
-/** Total scheduled required hours in month (Mon–Thu 7h, Fri 8h; skip weekend/PH). */
-function totalRequiredHoursInMonth(month, holidays) {
+function clockMins(hhmm) {
+  const raw = String(hhmm || "00:00").trim();
+  const [h, m] = raw.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+/** required_ms = min(shift_duration, 8h 30m) using employee weeklySchedule for that date. */
+function requiredMsForShortHoursDay(user, dateKey) {
+  if (!user) return 0;
+  const shift = getUserShift(user, dateKey);
+  if (shift.off) return 0;
+  const startM = clockMins(shift.shiftStart);
+  const endM = clockMins(shift.shiftEnd);
+  if (startM == null || endM == null) return 0;
+  let durM = endM - startM;
+  if (durM <= 0) durM += 24 * 60; // overnight
+  return Math.min(durM * 60000, REQUIRED_WORKING_MS);
+}
+
+/** Sum of required hours for all scheduled work days in the month (employee shift aware). */
+function totalRequiredHoursInMonth(user, month, holidays) {
   const range = monthToRange(month);
-  if (!range) return 0;
+  if (!range || !user) return 0;
   let ms = 0;
   for (const d of eachDateInRange(range.start, range.end)) {
-    if (isWeekend(d) || isPublicHoliday(d, holidays)) continue;
-    ms += shortHoursRequiredMsForDate(d);
+    if (isPublicHoliday(d, holidays)) continue;
+    ms += requiredMsForShortHoursDay(user, d);
   }
   return ms / 3600000;
 }
 
-function computeShortHoursDeduction(userId, month, attendanceRows, holidays, grossSalary) {
-  if (!SHORT_HOURS_DEDUCTION_USER_IDS.has(String(userId || ""))) {
-    return {
-      shortHoursDeduction: 0,
-      shortHoursDeficitHours: 0,
-      shortHoursDays: 0,
-      shortHoursPerHourRate: 0,
-    };
+function isShortHoursDayForDeduction(status, dateKey, userId) {
+  const st = String(status || "").trim();
+  if (st === "Short Hours") return true;
+  // Faizan August exception: Early Leave still counts as short hours for deduction.
+  if (
+    String(userId) === FAIZAN_SHORT_HOURS_USER_ID
+    && st === "Early Leave"
+    && dateKey >= SHORT_HOURS_DEDUCTION_FROM_FAIZAN
+  ) {
+    return true;
   }
-  // Only months on/after August 2026
-  if (String(month || "") < "2026-08") {
-    return {
-      shortHoursDeduction: 0,
-      shortHoursDeficitHours: 0,
-      shortHoursDays: 0,
-      shortHoursPerHourRate: 0,
-    };
-  }
+  return false;
+}
+
+function computeShortHoursDeduction(user, month, attendanceRows, holidays, grossSalary) {
+  const empty = {
+    shortHoursDeduction: 0,
+    shortHoursDeficitHours: 0,
+    shortHoursDays: 0,
+    shortHoursPerHourRate: 0,
+  };
+  if (!user?.id) return empty;
+
+  const fromDate = shortHoursDeductionFromDate(user.id);
+  if (String(month || "") < fromDate.slice(0, 7)) return empty;
 
   const shortDays = (attendanceRows || []).filter(r => {
-    if (!r || r.user_id !== userId || !r.check_out) return false;
+    if (!r || r.user_id !== user.id || !r.check_out) return false;
     const dateKey = String(r.date || "").slice(0, 10);
     if (!dateKey.startsWith(month)) return false;
-    if (dateKey < SHORT_HOURS_DEDUCTION_FROM) return false;
-    const st = String(r.status || "").trim();
-    // August may still be stored as Early Leave; treat as short hours for this deduction.
-    return st === "Short Hours" || st === "Early Leave";
+    if (dateKey < fromDate) return false;
+    return isShortHoursDayForDeduction(r.status, dateKey, user.id);
   });
 
   let deficitMs = 0;
   for (const r of shortDays) {
     const dateKey = String(r.date).slice(0, 10);
-    const requiredMs = shortHoursRequiredMsForDate(dateKey);
+    const requiredMs = requiredMsForShortHoursDay(user, dateKey);
     if (requiredMs <= 0) continue;
     const workingMs = Math.max(0, Number(r.working_ms) || 0);
-    deficitMs += Math.max(0, requiredMs - workingMs);
+    if (workingMs < requiredMs) deficitMs += requiredMs - workingMs;
   }
 
   const deficitHours = deficitMs / 3600000;
-  const totalRequiredHours = totalRequiredHoursInMonth(month, holidays);
+  const totalRequiredHours = totalRequiredHoursInMonth(user, month, holidays);
   const perHour = totalRequiredHours > 0 ? grossSalary / totalRequiredHours : 0;
   const deduction = Math.round(deficitHours * perHour);
 
@@ -212,7 +233,7 @@ export function buildPayslip({
   const incomeTax = calculateMonthlyTax(grossSalary);
 
   const shortHours = computeShortHoursDeduction(
-    user.id,
+    user,
     month,
     attendanceRows,
     holidays,
