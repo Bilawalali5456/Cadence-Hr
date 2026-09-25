@@ -70,8 +70,7 @@ export function PeoplePage({
   ));
 
   function teamLeadNameFor(u) {
-    if (u.isTeamLead) return "— (Team Lead)";
-    if (!u.teamLeadId) return "—";
+    if (!u.teamLeadId) return u.isTeamLead ? "— (Team Lead)" : "—";
     const tl = users.find(x => x.id === u.teamLeadId);
     if (!tl) return "—";
     return tl.role === "Executive" ? `${tl.name} (Executive)` : tl.name;
@@ -133,7 +132,7 @@ export function PeoplePage({
     const newUser = {
       ...rest, name: form.name.trim(), email, role, designation,
       isTeamLead: !!form.isTeamLead,
-      teamLeadId: form.isTeamLead ? null : (form.teamLeadId || null),
+      teamLeadId: form.teamLeadId || null,
       cnicEnc: encryptSensitive(cnicDigits),
       shift: buildShiftFromForm({ graceMinutes, breakMinutes, checkoutGraceMinutes, weeklySchedule }),
       shiftId: null,
@@ -189,7 +188,7 @@ export function PeoplePage({
       role: isHrAdminRole(editTgt.role) ? "Admin" : rest.role,
       designation: rest.role === "Employee" ? String(designation || "").trim() : "",
       isTeamLead: !!form.isTeamLead,
-      teamLeadId: form.isTeamLead ? null : (form.teamLeadId || null),
+      teamLeadId: form.teamLeadId || null,
       cnicEnc: encryptSensitive(cnicDigits),
       shift: newShift,
       shiftId: null,
@@ -476,7 +475,7 @@ export function PeoplePage({
                   </div>
                 </td>
                 <td className="px-4 py-3 hidden lg:table-cell text-slate-600 text-xs">
-                  {u.isTeamLead ? <span className="text-slate-400">—</span> : teamLeadNameFor(u)}
+                  {teamLeadNameFor(u)}
                 </td>
                 <td className="px-4 py-3 hidden xl:table-cell text-slate-500 text-xs tabular-nums">{formatShiftRange(u)}</td>
                 <td className="px-4 py-3 hidden sm:table-cell">
@@ -638,7 +637,7 @@ export function PeoplePage({
             <div className="flex-1 overflow-y-auto p-5 text-sm">
               {selTab === "Overview" && (
                 <div className="space-y-3">
-                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Role", sel.role], ["Team Lead", sel.isTeamLead ? "Yes" : "No"], ["Assigned Team Lead", sel.isTeamLead ? "—" : teamLeadNameFor(sel)], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
+                  {[["Email", sel.email], ["Phone", sel.phone || "—"], ["CNIC", getUserCnic(sel) || "—"], ["Role", sel.role], ["Team Lead", sel.isTeamLead ? "Yes" : "No"], ["Assigned Team Lead", teamLeadNameFor(sel)], ["Team", sel.team || "—"], ["Type", sel.type], ["Hired", sel.hired || "—"], ["Status", sel.status], ...(readOnly && sel.salary ? [["Salary", sel.salary]] : [])].map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-slate-50 pb-2">
                       <span className="text-slate-400">{k}</span>
                       <span className="font-medium text-slate-800">{v}</span>

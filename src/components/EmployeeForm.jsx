@@ -114,8 +114,9 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
               designation: v === "Employee" ? (form.designation || "") : "",
               // HR Employee / Admin cannot be Team Lead; Employee & Executive can.
               isTeamLead: canBeTl ? !!form.isTeamLead : false,
-              // Employee, Executive, and HR Employee may be assigned under a Team Lead.
-              teamLeadId: canHaveTl && !(canBeTl && form.isTeamLead) ? (form.teamLeadId || null) : null,
+              // Employee, Executive, and HR Employee may be assigned under a Team Lead
+              // (including Employee Team Leads under an Executive Team Lead).
+              teamLeadId: canHaveTl ? (form.teamLeadId || null) : null,
             });
           }}
             options={roleOptions || [
@@ -142,7 +143,16 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             onChange={v => setForm({
               ...form,
               isTeamLead: v === "yes",
-              teamLeadId: v === "yes" ? null : (form.teamLeadId || null),
+              // Keep assigned TL when becoming a TL — filtered to Executive TLs below.
+              // Clear only if current assignment is not an Executive TL.
+              teamLeadId: (() => {
+                const becomingTl = v === "yes";
+                const current = form.teamLeadId || null;
+                if (!becomingTl) return current;
+                if (!current) return null;
+                const assigned = (teamLeadOptions || []).find(u => u.id === current);
+                return assigned && assigned.role === "Executive" ? current : null;
+              })(),
             })}
             options={[
               { value: "no", label: "No" },
@@ -150,7 +160,7 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
             ]}
           />
         )}
-        {(form.role === "Employee" || form.role === "Executive" || form.role === "HR Employee") && !form.isTeamLead && (
+        {(form.role === "Employee" || form.role === "Executive" || form.role === "HR Employee") && (
           <SelectInput
             label="Assigned Team Lead"
             value={form.teamLeadId || ""}
@@ -159,6 +169,8 @@ export function EmployeeForm({ form, setForm, ferr, lockRole = false, roleOption
               { value: "", label: "— None —" },
               ...(teamLeadOptions || [])
                 .filter(u => u.id !== form.id)
+                // Team Leads may only sit under an Executive Team Lead (no Employee→Employee TL chains).
+                .filter(u => !form.isTeamLead || u.role === "Executive")
                 .map(u => ({
                   value: u.id,
                   label: u.role === "Executive" ? `${u.name} (Executive)` : u.name,

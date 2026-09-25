@@ -131,7 +131,6 @@ async function applyTeamLeadFields(pool, userId, body, { canHr }) {
 
   // HR Employee / Admin cannot be Team Lead, but may be assigned under one.
   if (!canBeTeamLead) nextIsTl = false;
-  if (nextIsTl) nextTlId = null; // Team Leads are not assigned under another TL
   if (nextTlId && String(nextTlId) === String(userId)) nextTlId = null;
 
   if (nextTlId) {
@@ -145,6 +144,18 @@ async function applyTeamLeadFields(pool, userId, body, { canHr }) {
     );
     if (!tlRows[0]) {
       throw new Error("Assigned Team Lead must be an Employee or Executive marked as Team Lead");
+    }
+    // Team Leads may only report to an Executive Team Lead (no Employee→Employee TL chains).
+    if (nextIsTl && tlRows[0].role !== "Executive") {
+      throw new Error("A Team Lead can only be assigned under an Executive Team Lead");
+    }
+    // Block immediate circular assignment (A under B when B is already under A).
+    const { rows: parentRows } = await pool.query(
+      `SELECT team_lead_id FROM users WHERE id = $1 LIMIT 1`,
+      [nextTlId]
+    );
+    if (parentRows[0]?.team_lead_id && String(parentRows[0].team_lead_id) === String(userId)) {
+      throw new Error("Circular Team Lead assignment is not allowed");
     }
   }
 
