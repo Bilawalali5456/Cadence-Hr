@@ -1264,6 +1264,208 @@ async function applyBiometricTimezoneFix() {
   console.log(`✓ Biometric timezone fix applied (${logsFixed} attendance log timestamps corrected, ${attendanceTextFixed} attendance text rows, ${logsFailed} skipped)`);
 }
 
+/**
+ * One-time data fix (idempotent): Ayesha / Amna / Tahreem — shift_history for Sep 2026
+ * was still the old shift, so attendanceSync overwrote status to Early Leave.
+ * 1) Cap overlapping history at 2026-08-31 and attach current shift from 2026-09-01
+ * 2) Recalc Sep attendance Present/Short Hours from working_ms (leave/WFH untouched)
+ */
+function buildFixedShiftSpec({ shiftStart, shiftEnd, graceMinutes, breakMinutes, checkoutGraceMinutes }) {
+  const work = { off: false, shiftStart, shiftEnd };
+  const off = { off: true, shiftStart, shiftEnd };
+  return {
+    shiftStart,
+    shiftEnd,
+    graceMinutes,
+    breakMinutes,
+    checkoutGraceMinutes,
+    weeklySchedule: {
+      monday: { ...work },
+      tuesday: { ...work },
+      wednesday: { ...work },
+      thursday: { ...work },
+      friday: { ...work },
+      saturday: { ...off },
+      sunday: { ...off },
+    },
+  };
+}
+
+function shiftHistoryHasSep2026Fix(history, expectedShiftEnd) {
+  const list = parseShiftHistory(history);
+  return list.some((e) => {
+    const from = String(e?.from ?? e?.from_date ?? "").slice(0, 10);
+    if (from !== "2026-09-01") return false;
+    const shift = e?.shift && typeof e.shift === "object" ? e.shift : {};
+    const end = String(shift.shiftEnd || shift?.weeklySchedule?.monday?.shiftEnd || "").trim();
+    return end === expectedShiftEnd;
+  });
+}
+
+function rewriteShiftHistoryForSep2026(rawHistory, newShift) {
+  const fromKey = "2026-09-01";
+  const cutoff = "2026-08-31";
+  const history = parseShiftHistory(rawHistory);
+  const next = [];
+
+  for (const entry of history) {
+    const from = String(entry?.from ?? entry?.from_date ?? "").slice(0, 10);
+    if (!from) continue;
+    // Drop entries that start on/after Sep 1 — replaced by the correct current-shift entry.
+    if (from >= fromKey) continue;
+
+    const toRaw = entry?.to ?? entry?.to_date;
+    const to = toRaw == null || toRaw === "" ? null : String(toRaw).slice(0, 10);
+
+    // Fully before September — keep
+    if (to && to < fromKey) {
+      next.push({ ...entry, from, to });
+      continue;
+    }
+
+    // Overlaps September (open-ended or to >= Sep 1) — close at Aug 31
+    next.push({ ...entry, from, to: cutoff });
+  }
+
+  next.push({
+    from: fromKey,
+    to: null,
+    shift: newShift,
+  });
+  return next;
+}
+
+async function migrateSep2026ShiftHistoryAttendanceFix() {
+  const migrationKey = "sep2026_shift_history_ayesha_amna_tahreem_v1";
+  const already = await pool.query("SELECT value FROM app_meta WHERE key = $1 LIMIT 1", [migrationKey]);
+  if (already.rows.length) return;
+
+  const FIXES = [
+    {
+      id: "u-wk5dkcy",
+      name: "Ayesha Nadeem",
+      requiredMs: 27900000, // 7h 45m
+      shift: buildFixedShiftSpec({
+        shiftStart: "14:00",
+        shiftEnd: "21:45",
+        graceMinutes: 30,
+        breakMinutes: 60,
+        checkoutGraceMinutes: 20,
+      }),
+    },
+    {
+      id: "u-7l437to",
+      name: "Amna Sajid",
+      requiredMs: 14400000, // 4h
+      shift: buildFixedShiftSpec({
+        shiftStart: "18:00",
+        shiftEnd: "22:00",
+        graceMinutes: 30,
+        breakMinutes: 60,
+        checkoutGraceMinutes: 20,
+      }),
+    },
+    {
+      id: "u-0h0ypni",
+      name: "Tahreem Khan",
+      requiredMs: 14400000, // 4h
+      shift: buildFixedShiftSpec({
+        shiftStart: "18:00",
+        shiftEnd: "22:00",
+        graceMinutes: 30,
+        breakMinutes: 60,
+        checkoutGraceMinutes: 20,
+      }),
+    },
+  ];
+
+  // Data-level idempotency: if all three already have the Sep-01 history entry, mark done and skip.
+  let allFixed = true;
+  for (const fix of FIXES) {
+    const { rows } = await pool.query(
+      `SELECT shift_history FROM users WHERE id = $1 LIMIT 1`,
+      [fix.id]
+    );
+    if (!rows[0] || !shiftHistoryHasSep2026Fix(rows[0].shift_history, fix.shift.shiftEnd)) {
+      allFixed = false;
+      break;
+    }
+  }
+  if (allFixed) {
+    await pool.query(
+      `INSERT INTO app_meta (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [migrationKey, JSON.stringify({ skipped: true, reason: "already_fixed_in_data" })]
+    );
+    console.log("Migration: Fixed shift history for Ayesha/Amna/Tahreem (already applied)");
+    return;
+  }
+
+  const results = [];
+  for (const fix of FIXES) {
+    const { rows } = await pool.query(
+      `SELECT id, name, shift, shift_history FROM users WHERE id = $1 LIMIT 1`,
+      [fix.id]
+    );
+    const user = rows[0];
+    if (!user) {
+      results.push({ id: fix.id, name: fix.name, ok: false, reason: "user_not_found" });
+      continue;
+    }
+
+    const newHistory = rewriteShiftHistoryForSep2026(user.shift_history, fix.shift);
+    await pool.query(
+      `UPDATE users
+       SET shift = $1::jsonb,
+           shift_history = $2::jsonb
+       WHERE id = $3`,
+      [JSON.stringify(fix.shift), JSON.stringify(newHistory), fix.id]
+    );
+
+    // Recalc Sep 2026 statuses from stored working_ms (do not rewrite leave/WFH/open days).
+    const { rowCount } = await pool.query(
+      `UPDATE attendance
+       SET status = CASE
+             WHEN working_ms IS NOT NULL AND working_ms >= $2 THEN 'Present'
+             WHEN working_ms IS NOT NULL AND working_ms < $2 THEN 'Short Hours'
+             ELSE status
+           END,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND date >= '2026-09-01'
+         AND date <= '2026-09-30'
+         AND check_out IS NOT NULL
+         AND status IS DISTINCT FROM 'On Leave'
+         AND status IS DISTINCT FROM 'WFH'`,
+      [fix.id, fix.requiredMs]
+    );
+
+    results.push({
+      id: fix.id,
+      name: fix.name,
+      ok: true,
+      attendanceRowsUpdated: rowCount || 0,
+    });
+  }
+
+  await pool.query(
+    `INSERT INTO app_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [migrationKey, JSON.stringify({ appliedAt: new Date().toISOString(), results })]
+  );
+
+  console.log("Migration: Fixed shift history for Ayesha/Amna/Tahreem");
+  for (const r of results) {
+    if (r.ok) {
+      console.log(`  ✓ ${r.name} (${r.id}) — Sep attendance rows updated: ${r.attendanceRowsUpdated}`);
+    } else {
+      console.log(`  ✗ ${r.name} (${r.id}) — ${r.reason}`);
+    }
+  }
+}
+
 const PORT = process.env.PORT || 4000;
 
 ensureSchema()
@@ -1278,6 +1480,9 @@ ensureSchema()
   .then(() => migrateHrAdminToAdminRole())
   .then(() => applyBiometricTimezoneFix().catch((e) => {
     console.error("Biometric timezone fix failed (continuing startup):", e.message);
+  }))
+  .then(() => migrateSep2026ShiftHistoryAttendanceFix().catch((e) => {
+    console.error("Sep 2026 shift-history migration failed (continuing startup):", e.message);
   }))
   .then(() => {
     startAttendanceSyncProcessor(pool);
