@@ -62,6 +62,8 @@ function workingDaysInMonth(month, holidays) {
 
 /** Faizan Ahmad only — Short Hours payroll deduction (expand later if needed). */
 const SHORT_HOURS_DEDUCTION_USER_IDS = new Set(["u-1gqiwc6"]);
+/** Deduction applies from August 2026 onward (was Sep-only; extended to include Aug). */
+const SHORT_HOURS_DEDUCTION_FROM = "2026-08-01";
 const SHORT_HOURS_MON_THU_REQUIRED_MS = 7 * 3600000;  // 25_200_000
 const SHORT_HOURS_FRI_REQUIRED_MS = 8 * 3600000;      // 28_800_000
 
@@ -95,14 +97,25 @@ function computeShortHoursDeduction(userId, month, attendanceRows, holidays, gro
       shortHoursPerHourRate: 0,
     };
   }
+  // Only months on/after August 2026
+  if (String(month || "") < "2026-08") {
+    return {
+      shortHoursDeduction: 0,
+      shortHoursDeficitHours: 0,
+      shortHoursDays: 0,
+      shortHoursPerHourRate: 0,
+    };
+  }
 
-  const shortDays = (attendanceRows || []).filter(r =>
-    r
-    && r.user_id === userId
-    && String(r.status || "").trim() === "Short Hours"
-    && r.check_out
-    && String(r.date || "").startsWith(month)
-  );
+  const shortDays = (attendanceRows || []).filter(r => {
+    if (!r || r.user_id !== userId || !r.check_out) return false;
+    const dateKey = String(r.date || "").slice(0, 10);
+    if (!dateKey.startsWith(month)) return false;
+    if (dateKey < SHORT_HOURS_DEDUCTION_FROM) return false;
+    const st = String(r.status || "").trim();
+    // August may still be stored as Early Leave; treat as short hours for this deduction.
+    return st === "Short Hours" || st === "Early Leave";
+  });
 
   let deficitMs = 0;
   for (const r of shortDays) {
