@@ -88,12 +88,16 @@ export function FinancePage({ currentUser, onOpenLead }) {
     setLoading(true);
     setError("");
     try {
-      const [sum, cats] = await Promise.all([
+      const [sum, cats] = await Promise.allSettled([
         apiFetchFinanceSummary(month),
         apiFetchExpenseCategories(),
       ]);
-      setSummary(sum);
-      setCategories(cats);
+      if (sum.status === "fulfilled") setSummary(sum.value);
+      else {
+        setSummary(null);
+        setError(sum.reason?.message || "Failed to load finance summary");
+      }
+      if (cats.status === "fulfilled") setCategories(cats.value);
     } catch (e) {
       setError(e?.message || "Failed to load finance data");
       setSummary(null);
@@ -103,6 +107,15 @@ export function FinancePage({ currentUser, onOpenLead }) {
   }, [month]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Categories load independently of month/summary so Manage Categories always works.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetchExpenseCategories()
+      .then(list => { if (!cancelled) setCategories(list); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (tab !== "yearly") return;
